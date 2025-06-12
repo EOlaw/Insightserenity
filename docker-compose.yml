@@ -1,0 +1,320 @@
+version: '3.8'
+
+services:
+  # Next.js Frontend Application
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: development
+    container_name: insightserenity-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - ./next.config.js:/app/next.config.js
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./tailwind.config.js:/app/tailwind.config.js
+      - ./postcss.config.mjs:/app/postcss.config.mjs
+      - ./components.json:/app/components.json
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - NEXT_PUBLIC_RECRUITMENT_API_URL=http://localhost:8000/api/external/recruitment
+      - NEXT_PUBLIC_ORGANIZATIONS_API_URL=http://localhost:8000/api/organizations
+      - DATABASE_URL=postgresql://insightserenity:password123@postgres:5432/insightserenity_db
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_SECRET=your-nextauth-secret-key-here
+      - NEXTAUTH_URL=http://localhost:3000
+    depends_on:
+      - backend
+      - postgres
+      - redis
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Node.js Backend Server
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      target: development
+    container_name: insightserenity-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./server:/app/server
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - /app/node_modules
+      - uploads:/app/uploads
+    environment:
+      - NODE_ENV=development
+      - PORT=8000
+      - DATABASE_URL=postgresql://insightserenity:password123@postgres:5432/insightserenity_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=your-jwt-secret-key-here
+      - ENCRYPTION_KEY=your-encryption-key-here
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - SMTP_USER=
+      - SMTP_PASS=
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_REGION=us-east-1
+      - AWS_S3_BUCKET=insightserenity-uploads
+      - S3_ENDPOINT=http://minio:9000
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - STRIPE_SECRET_KEY=sk_test_your_stripe_secret_key
+      - STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+      - minio
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: insightserenity-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=insightserenity_db
+      - POSTGRES_USER=insightserenity
+      - POSTGRES_PASSWORD=password123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insightserenity -d insightserenity_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache and Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: insightserenity-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Elasticsearch for Search Functionality
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: insightserenity-elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO S3-Compatible Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: insightserenity-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: insightserenity-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MailHog for Development Email Testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: insightserenity-mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: insightserenity-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: insightserenity-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+
+  # Background Job Processor
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: insightserenity-worker
+    volumes:
+      - ./server:/app/server
+      - uploads:/app/uploads
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://insightserenity:password123@postgres:5432/insightserenity_db
+      - REDIS_URL=redis://redis:6379
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - S3_ENDPOINT=http://minio:9000
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+      - minio
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+
+  # Scheduler for Cron Jobs
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.scheduler
+    container_name: insightserenity-scheduler
+    volumes:
+      - ./server:/app/server
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://insightserenity:password123@postgres:5432/insightserenity_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - insightserenity-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  minio_data:
+    driver: local
+  uploads:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  insightserenity-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
