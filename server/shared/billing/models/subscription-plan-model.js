@@ -45,20 +45,20 @@ const subscriptionPlanSchema = new mongoose.Schema({
   // Plan Type and Category
   type: {
     type: String,
-    enum: ['free', 'basic', 'professional', 'enterprise', 'custom'],
+    enum: constants.BILLING.PLAN_TYPES_ENUM,
     required: true,
     index: true
   },
   
   category: {
     type: String,
-    enum: ['individual', 'team', 'organization', 'platform'],
+    enum: constants.BILLING.PLAN_CATEGORIES_ENUM,
     required: true
   },
   
   targetAudience: {
     type: String,
-    enum: ['consultants', 'organizations', 'job_seekers', 'recruiters', 'all'],
+    enum: constants.BILLING.TARGET_AUDIENCES_ENUM,
     required: true
   },
   
@@ -66,6 +66,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
   pricing: {
     currency: {
       type: String,
+      enum: constants.BILLING.CURRENCIES_ENUM,
       default: 'USD',
       uppercase: true
     },
@@ -132,7 +133,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
   features: [{
     category: {
       type: String,
-      enum: ['core', 'advanced', 'support', 'integration', 'security', 'analytics']
+      enum: constants.BILLING.FEATURE_CATEGORIES_ENUM
     },
     name: {
       type: String,
@@ -146,7 +147,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
     value: mongoose.Schema.Types.Mixed,
     type: {
       type: String,
-      enum: ['boolean', 'number', 'string', 'array']
+      enum: constants.BILLING.FEATURE_VALUE_TYPES_ENUM
     },
     unit: String,
     displayValue: String,
@@ -189,20 +190,23 @@ const subscriptionPlanSchema = new mongoose.Schema({
   support: {
     level: {
       type: String,
-      enum: ['community', 'email', 'priority', 'dedicated', 'phone', 'white_glove'],
+      enum: constants.BILLING.SUPPORT_LEVELS_ENUM,
       required: true
     },
     responseTime: {
       value: Number,
-      unit: { type: String, enum: ['minutes', 'hours', 'days'] }
+      unit: { 
+        type: String, 
+        enum: constants.BILLING.TIME_UNITS_ENUM 
+      }
     },
     availability: {
       type: String,
-      enum: ['business_hours', 'extended', '24x5', '24x7']
+      enum: constants.BILLING.SUPPORT_AVAILABILITY_ENUM
     },
     channels: [{
       type: String,
-      enum: ['email', 'chat', 'phone', 'slack', 'teams', 'dedicated_manager']
+      enum: constants.BILLING.SUPPORT_CHANNELS_ENUM
     }],
     includedHours: Number,
     additionalHourPrice: Number
@@ -215,7 +219,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
       value: { type: Number, default: 14 },
       unit: {
         type: String,
-        enum: ['days', 'weeks', 'months'],
+        enum: constants.BILLING.TRIAL_DURATION_UNITS_ENUM,
         default: 'days'
       }
     },
@@ -233,7 +237,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
     order: { type: Number, default: 0 },
     visibility: {
       type: String,
-      enum: ['public', 'hidden', 'beta', 'invite_only'],
+      enum: constants.BILLING.PLAN_VISIBILITY_ENUM,
       default: 'public'
     },
     recommended: { type: Boolean, default: false },
@@ -262,7 +266,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
     },
     userTypes: [{
       type: String,
-      enum: constants.USER_TYPES
+      enum: constants.USER.TYPES_ENUM
     }],
     maxSubscriptions: Number,
     currentSubscriptions: { type: Number, default: 0 },
@@ -327,7 +331,7 @@ const subscriptionPlanSchema = new mongoose.Schema({
   // Status and Lifecycle
   status: {
     type: String,
-    enum: ['draft', 'active', 'inactive', 'deprecated', 'beta', 'sunset'],
+    enum: constants.BILLING.PLAN_STATUS_ENUM,
     default: 'draft',
     index: true
   },

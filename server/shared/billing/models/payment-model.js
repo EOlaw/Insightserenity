@@ -56,14 +56,14 @@ const paymentSchema = new mongoose.Schema({
   // Payment Details
   type: {
     type: String,
-    enum: ['payment', 'refund', 'partial_refund', 'chargeback', 'adjustment', 'credit'],
+    enum: constants.BILLING.PAYMENT_TYPES_ENUM,
     default: 'payment',
     required: true
   },
   
   status: {
     type: String,
-    enum: ['pending', 'processing', 'succeeded', 'failed', 'cancelled', 'refunded', 'disputed', 'requires_action'],
+    enum: constants.BILLING.PAYMENT_STATUS_ENUM,
     required: true,
     default: 'pending',
     index: true
@@ -79,6 +79,7 @@ const paymentSchema = new mongoose.Schema({
     
     currency: {
       type: String,
+      enum: constants.BILLING.CURRENCIES_ENUM,
       required: true,
       default: 'USD',
       uppercase: true
@@ -129,7 +130,7 @@ const paymentSchema = new mongoose.Schema({
   method: {
     type: {
       type: String,
-      enum: ['card', 'bank_account', 'paypal', 'crypto', 'check', 'wire_transfer', 'cash', 'credit_balance', 'other'],
+      enum: constants.BILLING.PAYMENT_METHOD_TYPES_ENUM,
       required: true
     },
     
@@ -137,7 +138,7 @@ const paymentSchema = new mongoose.Schema({
     card: {
       brand: {
         type: String,
-        enum: ['visa', 'mastercard', 'amex', 'discover', 'diners', 'jcb', 'unionpay', 'other']
+        enum: constants.BILLING.CARD_BRANDS_ENUM
       },
       lastFourDigits: String,
       expiryMonth: Number,
@@ -147,7 +148,7 @@ const paymentSchema = new mongoose.Schema({
       country: String,
       funding: {
         type: String,
-        enum: ['credit', 'debit', 'prepaid', 'unknown']
+        enum: constants.BILLING.CARD_FUNDING_TYPES_ENUM
       },
       threeDSecure: {
         used: Boolean,
@@ -160,7 +161,7 @@ const paymentSchema = new mongoose.Schema({
     bankAccount: {
       accountType: {
         type: String,
-        enum: ['checking', 'savings']
+        enum: constants.BILLING.BANK_ACCOUNT_TYPES_ENUM
       },
       lastFourDigits: String,
       routingNumber: String,
@@ -168,7 +169,7 @@ const paymentSchema = new mongoose.Schema({
       accountHolderName: String,
       accountHolderType: {
         type: String,
-        enum: ['individual', 'company']
+        enum: constants.BILLING.ACCOUNT_HOLDER_TYPES_ENUM
       }
     },
     
@@ -183,7 +184,7 @@ const paymentSchema = new mongoose.Schema({
     crypto: {
       type: {
         type: String,
-        enum: ['bitcoin', 'ethereum', 'litecoin', 'usdc', 'usdt', 'other']
+        enum: constants.BILLING.CRYPTO_TYPES_ENUM
       },
       address: String,
       transactionHash: String,
@@ -210,7 +211,7 @@ const paymentSchema = new mongoose.Schema({
   gateway: {
     provider: {
       type: String,
-      enum: ['stripe', 'paypal', 'square', 'authorize_net', 'braintree', 'manual', 'other'],
+      enum: constants.BILLING.GATEWAY_PROVIDERS_ENUM,
       required: true
     },
     
@@ -268,8 +269,7 @@ const paymentSchema = new mongoose.Schema({
     amount: Number,
     reason: {
       type: String,
-      enum: ['duplicate', 'fraudulent', 'requested_by_customer', 'product_not_received', 
-              'product_unacceptable', 'subscription_cancelled', 'other']
+      enum: constants.BILLING.REFUND_REASONS_ENUM
     },
     
     description: String,
@@ -292,16 +292,12 @@ const paymentSchema = new mongoose.Schema({
   dispute: {
     status: {
       type: String,
-      enum: ['warning_needs_response', 'warning_under_review', 'warning_closed', 
-              'needs_response', 'under_review', 'charge_refunded', 'won', 'lost']
+      enum: constants.BILLING.DISPUTE_STATUS_ENUM
     },
     
     reason: {
       type: String,
-      enum: ['duplicate', 'fraudulent', 'subscription_canceled', 'product_unacceptable',
-              'product_not_received', 'unrecognized', 'credit_not_processed', 'general',
-              'incorrect_account_details', 'insufficient_funds', 'bank_cannot_process',
-              'debit_not_authorized', 'customer_initiated']
+      enum: constants.BILLING.DISPUTE_REASONS_ENUM
     },
     
     amount: Number,
@@ -336,7 +332,7 @@ const paymentSchema = new mongoose.Schema({
   source: {
     type: {
       type: String,
-      enum: ['checkout', 'recurring', 'manual', 'api', 'mobile', 'pos', 'import'],
+      enum: constants.BILLING.PAYMENT_SOURCE_TYPES_ENUM,
       default: 'checkout'
     },
     
@@ -413,7 +409,7 @@ const paymentSchema = new mongoose.Schema({
       score: Number,
       level: {
         type: String,
-        enum: ['low', 'medium', 'high', 'critical']
+        enum: constants.BILLING.RISK_LEVELS_ENUM
       },
       
       factors: [{
@@ -526,7 +522,7 @@ const paymentSchema = new mongoose.Schema({
   reconciliation: {
     status: {
       type: String,
-      enum: ['pending', 'matched', 'unmatched', 'disputed', 'resolved'],
+      enum: constants.BILLING.RECONCILIATION_STATUS_ENUM,
       default: 'pending'
     },
     
@@ -552,8 +548,7 @@ const paymentSchema = new mongoose.Schema({
   history: [{
     event: {
       type: String,
-      enum: ['created', 'processed', 'succeeded', 'failed', 'refunded', 
-              'disputed', 'cancelled', 'updated', 'reconciled']
+      enum: constants.AUTH.LOGIN_HISTORY_EVENT_TYPES_ENUM
     },
     timestamp: { type: Date, default: Date.now },
     actor: {
@@ -647,6 +642,8 @@ paymentSchema.methods.markAsSucceeded = function(gatewayResponse) {
     changes: { status: 'succeeded' }
   });
   
+  // Continuing payment-model.js...
+
   return this.save();
 };
 

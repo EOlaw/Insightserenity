@@ -22,6 +22,9 @@ const Constants = {
       PLATFORM_ADMIN: 'platform_admin'
     },
     
+    // Array version for Mongoose enums
+    TYPES_ENUM: ['core_consultant', 'hosted_org_user', 'recruitment_partner', 'job_seeker', 'platform_admin'],
+    
     ROLES: {
       // Core business roles
       CORE_BUSINESS: {
@@ -64,6 +67,26 @@ const Constants = {
       }
     },
     
+    // Combined roles array for Mongoose enums
+    ROLES_ENUM: [
+      // Core business roles
+      'client', 'prospect', 'junior_consultant', 'consultant', 'senior_consultant',
+      'principal_consultant', 'manager', 'senior_manager', 'director', 'partner',
+      // Hosted organization roles
+      'org_owner', 'org_admin', 'org_manager', 'org_member', 'org_viewer',
+      // Recruitment roles
+      'recruitment_admin', 'recruitment_partner', 'recruiter', 'hiring_manager', 'candidate',
+      // Platform roles
+      'super_admin', 'platform_admin', 'support_agent', 'content_manager'
+    ],
+    
+    // Separate role arrays by category
+    CORE_BUSINESS_ROLES_ENUM: ['client', 'prospect', 'junior_consultant', 'consultant', 'senior_consultant',
+                               'principal_consultant', 'manager', 'senior_manager', 'director', 'partner'],
+    HOSTED_ORGANIZATION_ROLES_ENUM: ['org_owner', 'org_admin', 'org_manager', 'org_member', 'org_viewer'],
+    RECRUITMENT_ROLES_ENUM: ['recruitment_admin', 'recruitment_partner', 'recruiter', 'hiring_manager', 'candidate'],
+    PLATFORM_ROLES_ENUM: ['super_admin', 'platform_admin', 'support_agent', 'content_manager'],
+    
     STATUS: {
       PENDING: 'pending',
       ACTIVE: 'active',
@@ -72,12 +95,16 @@ const Constants = {
       DELETED: 'deleted'
     },
     
+    STATUS_ENUM: ['pending', 'active', 'inactive', 'suspended', 'deleted'],
+    
     ACCOUNT_STATUS: {
       UNVERIFIED: 'unverified',
       VERIFIED: 'verified',
       LOCKED: 'locked',
       BANNED: 'banned'
-    }
+    },
+    
+    ACCOUNT_STATUS_ENUM: ['unverified', 'verified', 'locked', 'banned']
   },
   
   /**
@@ -90,6 +117,8 @@ const Constants = {
       RECRUITMENT_PARTNER: 'recruitment_partner'
     },
     
+    TYPES_ENUM: ['core_business', 'hosted_business', 'recruitment_partner'],
+    
     STATUS: {
       PENDING_SETUP: 'pending_setup',
       ACTIVE: 'active',
@@ -97,6 +126,8 @@ const Constants = {
       EXPIRED: 'expired',
       TERMINATED: 'terminated'
     },
+    
+    STATUS_ENUM: ['pending_setup', 'active', 'suspended', 'expired', 'terminated'],
     
     SUBSCRIPTION_TIERS: {
       TRIAL: 'trial',
@@ -106,6 +137,8 @@ const Constants = {
       CUSTOM: 'custom'
     },
     
+    SUBSCRIPTION_TIERS_ENUM: ['trial', 'starter', 'professional', 'enterprise', 'custom'],
+    
     SIZE_RANGES: {
       MICRO: '1-10',
       SMALL: '11-50',
@@ -113,7 +146,9 @@ const Constants = {
       LARGE: '201-500',
       ENTERPRISE: '501-1000',
       CORPORATION: '1000+'
-    }
+    },
+    
+    SIZE_RANGES_ENUM: ['1-10', '11-50', '51-200', '201-500', '501-1000', '1000+']
   },
   
   /**
@@ -128,6 +163,8 @@ const Constants = {
       INVITATION: 'invitation'
     },
     
+    TOKEN_TYPES_ENUM: ['access', 'refresh', 'reset', 'verification', 'invitation'],
+    
     PROVIDERS: {
       LOCAL: 'local',
       GOOGLE: 'google',
@@ -138,6 +175,8 @@ const Constants = {
       PASSKEY: 'passkey'
     },
     
+    PROVIDERS_ENUM: ['local', 'google', 'github', 'linkedin', 'microsoft', 'saml', 'passkey'],
+    
     TWO_FACTOR_METHODS: {
       TOTP: 'totp',
       SMS: 'sms',
@@ -145,11 +184,26 @@ const Constants = {
       BACKUP_CODES: 'backup_codes'
     },
     
+    TWO_FACTOR_METHODS_ENUM: ['totp', 'sms', 'email', 'backup_codes'],
+    
     SESSION_TYPES: {
       WEB: 'web',
       API: 'api',
       MOBILE: 'mobile'
-    }
+    },
+    
+    SESSION_TYPES_ENUM: ['web', 'api', 'mobile'],
+    
+    // Additional auth-specific enums for the auth model
+    MFA_METHOD_TYPES_ENUM: ['totp', 'sms', 'email', 'backup_codes', 'push', 'biometric'],
+    
+    SUSPICIOUS_ACTIVITY_TYPES_ENUM: ['unusual_location', 'multiple_failed_attempts', 'password_spray', 
+                                     'credential_stuffing', 'account_takeover_attempt'],
+    
+    LOGIN_HISTORY_EVENT_TYPES_ENUM: ['created', 'processed', 'succeeded', 'failed', 'refunded', 
+                                     'disputed', 'cancelled', 'updated', 'reconciled'],
+    
+    SOURCE_TYPES_ENUM: ['web', 'mobile', 'api', 'admin', 'import', 'migration']
   },
   
   /**
@@ -165,6 +219,11 @@ const Constants = {
       CHECK: 'check'
     },
     
+    PAYMENT_METHODS_ENUM: ['credit_card', 'debit_card', 'bank_account', 'paypal', 'wire_transfer', 'check'],
+    
+    // Extended payment method types for payment model
+    PAYMENT_METHOD_TYPES_ENUM: ['card', 'bank_account', 'paypal', 'crypto', 'check', 'wire_transfer', 'cash', 'credit_balance', 'other'],
+    
     TRANSACTION_TYPES: {
       PAYMENT: 'payment',
       REFUND: 'refund',
@@ -174,6 +233,11 @@ const Constants = {
       FEE: 'fee'
     },
     
+    TRANSACTION_TYPES_ENUM: ['payment', 'refund', 'credit', 'debit', 'commission', 'fee'],
+    
+    // Extended transaction types for payment model
+    PAYMENT_TYPES_ENUM: ['payment', 'refund', 'partial_refund', 'chargeback', 'adjustment', 'credit'],
+    
     TRANSACTION_STATUS: {
       PENDING: 'pending',
       PROCESSING: 'processing',
@@ -182,6 +246,11 @@ const Constants = {
       CANCELLED: 'cancelled',
       REFUNDED: 'refunded'
     },
+    
+    TRANSACTION_STATUS_ENUM: ['pending', 'processing', 'completed', 'failed', 'cancelled', 'refunded'],
+    
+    // Extended payment status for payment model
+    PAYMENT_STATUS_ENUM: ['pending', 'processing', 'succeeded', 'failed', 'cancelled', 'refunded', 'disputed', 'requires_action'],
     
     INVOICE_STATUS: {
       DRAFT: 'draft',
@@ -193,6 +262,24 @@ const Constants = {
       REFUNDED: 'refunded'
     },
     
+    INVOICE_STATUS_ENUM: ['draft', 'sent', 'viewed', 'paid', 'overdue', 'cancelled', 'refunded'],
+    
+    // Extended invoice status for invoice model
+    INVOICE_STATUS_EXTENDED_ENUM: ['draft', 'pending', 'sent', 'viewed', 'paid', 'partial', 'overdue', 
+                                   'cancelled', 'refunded', 'disputed', 'written_off'],
+    
+    // Invoice types
+    INVOICE_TYPES_ENUM: ['subscription', 'one_time', 'addon', 'overage', 'manual', 'credit_note', 'proforma'],
+    
+    // Invoice item types
+    INVOICE_ITEM_TYPES_ENUM: ['subscription', 'addon', 'usage', 'fee', 'discount', 'tax', 'credit', 'adjustment'],
+    
+    // Discount types
+    DISCOUNT_TYPES_ENUM: ['percentage', 'fixed'],
+    
+    // Payment terms
+    PAYMENT_TERMS_ENUM: ['immediate', 'net_15', 'net_30', 'net_45', 'net_60', 'custom'],
+    
     BILLING_CYCLES: {
       MONTHLY: 'monthly',
       QUARTERLY: 'quarterly',
@@ -201,13 +288,142 @@ const Constants = {
       CUSTOM: 'custom'
     },
     
+    BILLING_CYCLES_ENUM: ['monthly', 'quarterly', 'semi_annual', 'annual', 'custom'],
+    
+    // Extended billing cycles for subscriptions
+    SUBSCRIPTION_BILLING_CYCLES_ENUM: ['monthly', 'quarterly', 'yearly', 'lifetime', 'custom'],
+    
     CURRENCIES: {
       USD: 'USD',
       EUR: 'EUR',
       GBP: 'GBP',
       CAD: 'CAD',
       AUD: 'AUD'
-    }
+    },
+    
+    CURRENCIES_ENUM: ['USD', 'EUR', 'GBP', 'CAD', 'AUD'],
+    
+    // Payment card brands
+    CARD_BRANDS_ENUM: ['visa', 'mastercard', 'amex', 'discover', 'diners', 'jcb', 'unionpay', 'other'],
+    
+    // Card funding types
+    CARD_FUNDING_TYPES_ENUM: ['credit', 'debit', 'prepaid', 'unknown'],
+    
+    // Bank account types
+    BANK_ACCOUNT_TYPES_ENUM: ['checking', 'savings'],
+    
+    // Account holder types
+    ACCOUNT_HOLDER_TYPES_ENUM: ['individual', 'company'],
+    
+    // Cryptocurrency types
+    CRYPTO_TYPES_ENUM: ['bitcoin', 'ethereum', 'litecoin', 'usdc', 'usdt', 'other'],
+    
+    // Payment gateway providers
+    GATEWAY_PROVIDERS_ENUM: ['stripe', 'paypal', 'square', 'authorize_net', 'braintree', 'manual', 'other'],
+    
+    // Risk levels
+    RISK_LEVELS_ENUM: ['low', 'medium', 'high', 'critical'],
+    
+    // Refund reasons
+    REFUND_REASONS_ENUM: ['duplicate', 'fraudulent', 'requested_by_customer', 'product_not_received', 
+                          'product_unacceptable', 'subscription_cancelled', 'other'],
+    
+    // Dispute statuses
+    DISPUTE_STATUS_ENUM: ['warning_needs_response', 'warning_under_review', 'warning_closed', 
+                          'needs_response', 'under_review', 'charge_refunded', 'won', 'lost'],
+    
+    // Dispute reasons
+    DISPUTE_REASONS_ENUM: ['duplicate', 'fraudulent', 'subscription_canceled', 'product_unacceptable',
+                           'product_not_received', 'unrecognized', 'credit_not_processed', 'general',
+                           'incorrect_account_details', 'insufficient_funds', 'bank_cannot_process',
+                           'debit_not_authorized', 'customer_initiated'],
+    
+    // Payment source types
+    PAYMENT_SOURCE_TYPES_ENUM: ['checkout', 'recurring', 'manual', 'api', 'mobile', 'pos', 'import'],
+    
+    // Reconciliation statuses
+    RECONCILIATION_STATUS_ENUM: ['pending', 'matched', 'unmatched', 'disputed', 'resolved'],
+    
+    // Subscription statuses
+    SUBSCRIPTION_STATUS_ENUM: ['active', 'trial', 'past_due', 'paused', 'cancelled', 'expired', 'pending'],
+    
+    // Subscription types
+    SUBSCRIPTION_TYPES_ENUM: ['individual', 'organization', 'team'],
+    
+    // Subscription plan types
+    PLAN_TYPES_ENUM: ['free', 'basic', 'professional', 'enterprise', 'custom'],
+    
+    // Plan categories
+    PLAN_CATEGORIES_ENUM: ['individual', 'team', 'organization', 'platform'],
+    
+    // Target audiences
+    TARGET_AUDIENCES_ENUM: ['consultants', 'organizations', 'job_seekers', 'recruiters', 'all'],
+    
+    // Plan visibility
+    PLAN_VISIBILITY_ENUM: ['public', 'hidden', 'beta', 'invite_only'],
+    
+    // Plan status
+    PLAN_STATUS_ENUM: ['draft', 'active', 'inactive', 'deprecated', 'beta', 'sunset'],
+    
+    // Support levels
+    SUPPORT_LEVELS_ENUM: ['community', 'email', 'priority', 'dedicated', 'phone', 'white_glove'],
+    
+    // Support availability
+    SUPPORT_AVAILABILITY_ENUM: ['business_hours', 'extended', '24x5', '24x7'],
+    
+    // Support channels
+    SUPPORT_CHANNELS_ENUM: ['email', 'chat', 'phone', 'slack', 'teams', 'dedicated_manager'],
+    
+    // Feature categories
+    FEATURE_CATEGORIES_ENUM: ['core', 'advanced', 'support', 'integration', 'security', 'analytics'],
+    
+    // Feature value types
+    FEATURE_VALUE_TYPES_ENUM: ['boolean', 'number', 'string', 'array'],
+    
+    // Trial duration units
+    TRIAL_DURATION_UNITS_ENUM: ['days', 'weeks', 'months'],
+    
+    // Trial types
+    TRIAL_TYPES_ENUM: ['standard', 'extended', 'special', 'promotional'],
+    
+    // Time units
+    TIME_UNITS_ENUM: ['minutes', 'hours', 'days'],
+    
+    // Discount sources
+    DISCOUNT_SOURCES_ENUM: ['promotion', 'loyalty', 'referral', 'partner', 'manual'],
+    
+    // Discount feature types
+    DISCOUNT_FEATURE_TYPES_ENUM: ['percentage', 'fixed', 'trial_extension', 'feature_unlock'],
+    
+    // Addon statuses
+    ADDON_STATUS_ENUM: ['active', 'pending', 'cancelled'],
+    
+    // Cancellation reasons
+    CANCELLATION_REASONS_ENUM: ['too_expensive', 'missing_features', 'not_using', 'switching_competitor', 
+                                'technical_issues', 'customer_service', 'other'],
+    
+    // Subscription event types
+    SUBSCRIPTION_EVENT_TYPES_ENUM: ['created', 'activated', 'upgraded', 'downgraded', 'renewed', 
+                                   'paused', 'resumed', 'cancelled', 'expired', 'reactivated',
+                                   'payment_failed', 'payment_succeeded', 'addon_added', 'addon_removed',
+                                   'discount_applied', 'limit_increased', 'trial_extended'],
+    
+    // Note types
+    NOTE_TYPES_ENUM: ['general', 'support', 'billing', 'retention'],
+    
+    // Invoice event types
+    INVOICE_EVENT_TYPES_ENUM: ['created', 'updated', 'sent', 'viewed', 'paid', 'partial_payment', 
+                               'overdue', 'reminder_sent', 'disputed', 'written_off', 'cancelled', 
+                               'refunded', 'credited'],
+    
+    // Invoice source types
+    INVOICE_SOURCE_TYPES_ENUM: ['system', 'manual', 'api', 'recurring', 'import'],
+    
+    // Invoice template types
+    INVOICE_TEMPLATE_TYPES_ENUM: ['default', 'modern', 'classic', 'minimal', 'detailed', 'custom'],
+    
+    // Invoice notification channels
+    INVOICE_NOTIFICATION_CHANNELS_ENUM: ['email', 'sms', 'in_app', 'push']
   },
   
   /**
@@ -223,12 +439,16 @@ const Constants = {
       WEBHOOK: 'webhook'
     },
     
+    CHANNELS_ENUM: ['email', 'sms', 'push', 'in_app', 'slack', 'webhook'],
+    
     PRIORITIES: {
       LOW: 'low',
       MEDIUM: 'medium',
       HIGH: 'high',
       URGENT: 'urgent'
     },
+    
+    PRIORITIES_ENUM: ['low', 'medium', 'high', 'urgent'],
     
     CATEGORIES: {
       SYSTEM: 'system',
@@ -240,6 +460,8 @@ const Constants = {
       MARKETING: 'marketing'
     },
     
+    CATEGORIES_ENUM: ['system', 'security', 'billing', 'project', 'recruitment', 'organization', 'marketing'],
+    
     STATUS: {
       PENDING: 'pending',
       QUEUED: 'queued',
@@ -248,7 +470,9 @@ const Constants = {
       READ: 'read',
       FAILED: 'failed',
       BOUNCED: 'bounced'
-    }
+    },
+    
+    STATUS_ENUM: ['pending', 'queued', 'sent', 'delivered', 'read', 'failed', 'bounced']
   },
   
   /**
@@ -265,6 +489,8 @@ const Constants = {
       ARCHIVED: 'archived'
     },
     
+    STATUS_ENUM: ['draft', 'planning', 'in_progress', 'on_hold', 'completed', 'cancelled', 'archived'],
+    
     PRIORITY: {
       LOW: 'low',
       MEDIUM: 'medium',
@@ -272,13 +498,17 @@ const Constants = {
       CRITICAL: 'critical'
     },
     
+    PRIORITY_ENUM: ['low', 'medium', 'high', 'critical'],
+    
     PHASES: {
       INITIATION: 'initiation',
       PLANNING: 'planning',
       EXECUTION: 'execution',
       MONITORING: 'monitoring',
       CLOSURE: 'closure'
-    }
+    },
+    
+    PHASES_ENUM: ['initiation', 'planning', 'execution', 'monitoring', 'closure']
   },
   
   /**
@@ -294,6 +524,8 @@ const Constants = {
       EXPIRED: 'expired'
     },
     
+    JOB_STATUS_ENUM: ['draft', 'active', 'paused', 'filled', 'cancelled', 'expired'],
+    
     APPLICATION_STATUS: {
       SUBMITTED: 'submitted',
       REVIEWING: 'reviewing',
@@ -306,6 +538,9 @@ const Constants = {
       WITHDRAWN: 'withdrawn'
     },
     
+    APPLICATION_STATUS_ENUM: ['submitted', 'reviewing', 'shortlisted', 'interviewing', 'reference_check', 
+                             'offer_extended', 'hired', 'rejected', 'withdrawn'],
+    
     EMPLOYMENT_TYPES: {
       FULL_TIME: 'full_time',
       PART_TIME: 'part_time',
@@ -314,6 +549,8 @@ const Constants = {
       INTERNSHIP: 'internship',
       FREELANCE: 'freelance'
     },
+    
+    EMPLOYMENT_TYPES_ENUM: ['full_time', 'part_time', 'contract', 'temporary', 'internship', 'freelance'],
     
     EXPERIENCE_LEVELS: {
       ENTRY: 'entry',
@@ -324,11 +561,15 @@ const Constants = {
       EXECUTIVE: 'executive'
     },
     
+    EXPERIENCE_LEVELS_ENUM: ['entry', 'junior', 'mid', 'senior', 'lead', 'executive'],
+    
     WORK_LOCATIONS: {
       ON_SITE: 'on_site',
       REMOTE: 'remote',
       HYBRID: 'hybrid'
-    }
+    },
+    
+    WORK_LOCATIONS_ENUM: ['on_site', 'remote', 'hybrid']
   },
   
   /**
@@ -344,6 +585,8 @@ const Constants = {
       OTHER: 'other'
     },
     
+    TYPES_ENUM: ['document', 'image', 'video', 'audio', 'archive', 'other'],
+    
     CATEGORIES: {
       PROFILE_PHOTO: 'profile_photo',
       RESUME: 'resume',
@@ -354,6 +597,8 @@ const Constants = {
       REPORT: 'report',
       PRESENTATION: 'presentation'
     },
+    
+    CATEGORIES_ENUM: ['profile_photo', 'resume', 'cover_letter', 'portfolio', 'contract', 'invoice', 'report', 'presentation'],
     
     MAX_SIZES: {
       IMAGE: 5 * 1024 * 1024, // 5MB
@@ -371,6 +616,8 @@ const Constants = {
       V1: 'v1',
       V2: 'v2'
     },
+    
+    VERSIONS_ENUM: ['v1', 'v2'],
     
     RATE_LIMITS: {
       PUBLIC: {

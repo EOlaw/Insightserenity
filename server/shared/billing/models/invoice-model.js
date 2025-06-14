@@ -50,13 +50,13 @@ const invoiceSchema = new mongoose.Schema({
   // Invoice Type and Status
   type: {
     type: String,
-    enum: ['subscription', 'one_time', 'addon', 'overage', 'manual', 'credit_note', 'proforma'],
+    enum: constants.BILLING.INVOICE_TYPES_ENUM,
     required: true
   },
   
   status: {
     type: String,
-    enum: ['draft', 'pending', 'sent', 'viewed', 'paid', 'partial', 'overdue', 'cancelled', 'refunded', 'disputed', 'written_off'],
+    enum: constants.BILLING.INVOICE_STATUS_EXTENDED_ENUM,
     default: 'draft',
     index: true
   },
@@ -139,7 +139,7 @@ const invoiceSchema = new mongoose.Schema({
     // Item Details
     type: {
       type: String,
-      enum: ['subscription', 'addon', 'usage', 'fee', 'discount', 'tax', 'credit', 'adjustment']
+      enum: constants.BILLING.INVOICE_ITEM_TYPES_ENUM
     },
     
     category: String,
@@ -162,7 +162,7 @@ const invoiceSchema = new mongoose.Schema({
     amount: { type: Number, required: true },
     
     discount: {
-      type: { type: String, enum: ['percentage', 'fixed'] },
+      type: { type: String, enum: constants.BILLING.DISCOUNT_TYPES_ENUM },
       value: Number,
       amount: Number
     },
@@ -203,7 +203,7 @@ const invoiceSchema = new mongoose.Schema({
     discount: {
       total: { type: Number, default: 0 },
       items: [{
-        type: { type: String, enum: ['percentage', 'fixed'] },
+        type: { type: String, enum: constants.BILLING.DISCOUNT_TYPES_ENUM },
         code: String,
         description: String,
         amount: Number
@@ -248,6 +248,7 @@ const invoiceSchema = new mongoose.Schema({
     // Currency
     currency: {
       type: String,
+      enum: constants.BILLING.CURRENCIES_ENUM,
       default: 'USD',
       uppercase: true
     },
@@ -264,12 +265,12 @@ const invoiceSchema = new mongoose.Schema({
   payment: {
     method: {
       type: String,
-      enum: ['card', 'bank_transfer', 'paypal', 'check', 'cash', 'crypto', 'credit', 'other']
+      enum: constants.BILLING.PAYMENT_METHOD_TYPES_ENUM
     },
     
     terms: {
       type: String,
-      enum: ['immediate', 'net_15', 'net_30', 'net_45', 'net_60', 'custom'],
+      enum: constants.BILLING.PAYMENT_TERMS_ENUM,
       default: 'net_30'
     },
     
@@ -385,7 +386,7 @@ const invoiceSchema = new mongoose.Schema({
   display: {
     template: {
       type: String,
-      enum: ['default', 'modern', 'classic', 'minimal', 'detailed', 'custom'],
+      enum: constants.BILLING.INVOICE_TEMPLATE_TYPES_ENUM,
       default: 'default'
     },
     
@@ -415,7 +416,7 @@ const invoiceSchema = new mongoose.Schema({
     
     source: {
       type: String,
-      enum: ['system', 'manual', 'api', 'recurring', 'import'],
+      enum: constants.BILLING.INVOICE_SOURCE_TYPES_ENUM,
       default: 'system'
     },
     
@@ -451,9 +452,7 @@ const invoiceSchema = new mongoose.Schema({
   history: [{
     event: {
       type: String,
-      enum: ['created', 'updated', 'sent', 'viewed', 'paid', 'partial_payment', 
-              'overdue', 'reminder_sent', 'disputed', 'written_off', 'cancelled', 
-              'refunded', 'credited']
+      enum: constants.BILLING.INVOICE_EVENT_TYPES_ENUM
     },
     timestamp: { type: Date, default: Date.now },
     actor: {
@@ -485,6 +484,7 @@ invoiceSchema.virtual('isOverdue').get(function() {
          this.dates.due < new Date() && 
          this.financials.due > 0;
 });
+
 
 // Virtual for days overdue
 invoiceSchema.virtual('daysOverdue').get(function() {

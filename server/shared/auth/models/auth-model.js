@@ -135,7 +135,7 @@ const authSchema = new mongoose.Schema({
     methods: [{
       type: {
         type: String,
-        enum: ['totp', 'sms', 'email', 'backup_codes', 'push', 'biometric'],
+        enum: constants.AUTH.MFA_METHOD_TYPES_ENUM,
         required: true
       },
       enabled: {
@@ -305,7 +305,7 @@ const authSchema = new mongoose.Schema({
     suspiciousActivity: [{
       type: {
         type: String,
-        enum: ['unusual_location', 'multiple_failed_attempts', 'password_spray', 'credential_stuffing', 'account_takeover_attempt']
+        enum: constants.AUTH.SUSPICIOUS_ACTIVITY_TYPES_ENUM
       },
       detectedAt: Date,
       details: mongoose.Schema.Types.Mixed,
@@ -391,7 +391,7 @@ const authSchema = new mongoose.Schema({
     },
     source: {
       type: String,
-      enum: ['web', 'mobile', 'api', 'admin', 'import', 'migration']
+      enum: constants.AUTH.SOURCE_TYPES_ENUM
     },
     migratedFrom: String,
     customFields: mongoose.Schema.Types.Mixed

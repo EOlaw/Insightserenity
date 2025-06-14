@@ -36,14 +36,14 @@ const subscriptionSchema = new mongoose.Schema({
   // Subscription Type
   type: {
     type: String,
-    enum: ['individual', 'organization', 'team'],
+    enum: constants.BILLING.SUBSCRIPTION_TYPES_ENUM,
     required: true
   },
   
   // Status
   status: {
     type: String,
-    enum: ['active', 'trial', 'past_due', 'paused', 'cancelled', 'expired', 'pending'],
+    enum: constants.BILLING.SUBSCRIPTION_STATUS_ENUM,
     required: true,
     default: 'pending',
     index: true
@@ -53,7 +53,7 @@ const subscriptionSchema = new mongoose.Schema({
   billing: {
     cycle: {
       type: String,
-      enum: ['monthly', 'quarterly', 'yearly', 'lifetime', 'custom'],
+      enum: constants.BILLING.SUBSCRIPTION_BILLING_CYCLES_ENUM,
       required: true
     },
     
@@ -66,13 +66,14 @@ const subscriptionSchema = new mongoose.Schema({
     
     currency: {
       type: String,
+      enum: constants.BILLING.CURRENCIES_ENUM,
       default: 'USD',
       uppercase: true
     },
     
     paymentMethod: {
       type: String,
-      enum: ['card', 'bank_transfer', 'paypal', 'invoice', 'crypto', 'credit'],
+      enum: constants.BILLING.PAYMENT_METHOD_TYPES_ENUM,
       required: true
     },
     
@@ -144,11 +145,14 @@ const subscriptionSchema = new mongoose.Schema({
     isActive: { type: Boolean, default: false },
     type: {
       type: String,
-      enum: ['standard', 'extended', 'special', 'promotional']
+      enum: constants.BILLING.TRIAL_TYPES_ENUM
     },
     duration: {
       value: Number,
-      unit: String
+      unit: {
+        type: String,
+        enum: constants.BILLING.TRIAL_DURATION_UNITS_ENUM
+      }
     },
     features: {
       full: { type: Boolean, default: true },
@@ -225,13 +229,13 @@ const subscriptionSchema = new mongoose.Schema({
     code: String,
     type: {
       type: String,
-      enum: ['percentage', 'fixed', 'trial_extension', 'feature_unlock']
+      enum: constants.BILLING.DISCOUNT_FEATURE_TYPES_ENUM
     },
     value: Number,
     description: String,
     source: {
       type: String,
-      enum: ['promotion', 'loyalty', 'referral', 'partner', 'manual']
+      enum: constants.BILLING.DISCOUNT_SOURCES_ENUM
     },
     appliedAt: Date,
     appliedBy: mongoose.Schema.Types.ObjectId,
@@ -261,7 +265,7 @@ const subscriptionSchema = new mongoose.Schema({
     },
     status: {
       type: String,
-      enum: ['active', 'pending', 'cancelled'],
+      enum: constants.BILLING.ADDON_STATUS_ENUM,
       default: 'active'
     },
     startDate: Date,
@@ -283,8 +287,7 @@ const subscriptionSchema = new mongoose.Schema({
   cancellation: {
     reason: {
       type: String,
-      enum: ['too_expensive', 'missing_features', 'not_using', 'switching_competitor', 
-              'technical_issues', 'customer_service', 'other']
+      enum: constants.BILLING.CANCELLATION_REASONS_ENUM
     },
     feedback: String,
     competitor: String,
@@ -351,7 +354,7 @@ const subscriptionSchema = new mongoose.Schema({
       sentAt: Date,
       channel: {
         type: String,
-        enum: ['email', 'sms', 'in_app', 'push']
+        enum: constants.NOTIFICATION.CHANNELS_ENUM
       },
       status: String,
       error: String
@@ -362,7 +365,7 @@ const subscriptionSchema = new mongoose.Schema({
   metadata: {
     source: {
       type: String,
-      enum: ['website', 'admin', 'api', 'migration', 'import', 'trial_conversion']
+      enum: constants.BILLING.INVOICE_SOURCE_TYPES_ENUM
     },
     campaign: String,
     referrer: String,
@@ -383,7 +386,7 @@ const subscriptionSchema = new mongoose.Schema({
       addedAt: Date,
       type: {
         type: String,
-        enum: ['general', 'support', 'billing', 'retention']
+        enum: constants.BILLING.NOTE_TYPES_ENUM
       }
     }],
     
@@ -394,10 +397,7 @@ const subscriptionSchema = new mongoose.Schema({
   history: [{
     event: {
       type: String,
-      enum: ['created', 'activated', 'upgraded', 'downgraded', 'renewed', 
-              'paused', 'resumed', 'cancelled', 'expired', 'reactivated',
-              'payment_failed', 'payment_succeeded', 'addon_added', 'addon_removed',
-              'discount_applied', 'limit_increased', 'trial_extended']
+      enum: constants.BILLING.SUBSCRIPTION_EVENT_TYPES_ENUM
     },
     timestamp: { type: Date, default: Date.now },
     details: mongoose.Schema.Types.Mixed,
