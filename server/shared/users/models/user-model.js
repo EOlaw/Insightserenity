@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema({
     minlength: 3,
     maxlength: 30,
     validate: {
-      validator: (username) => /^[a-z0-9_-]+$/.test(username),
+      validator: (username) => constants.REGEX.USERNAME.test(username),
       message: 'Username can only contain lowercase letters, numbers, hyphens, and underscores'
     }
   },
@@ -66,7 +66,7 @@ const userSchema = new mongoose.Schema({
   userType: {
     type: String,
     required: true,
-    enum: constants.USER_TYPES,
+    enum: constants.USER.TYPES_ENUM,
     index: true
   },
   
@@ -74,12 +74,12 @@ const userSchema = new mongoose.Schema({
     primary: {
       type: String,
       required: true,
-      enum: constants.USER_ROLES,
+      enum: constants.USER.ROLES_ENUM,
       index: true
     },
     secondary: [{
       type: String,
-      enum: constants.USER_ROLES
+      enum: constants.USER.ROLES_ENUM
     }],
     previousRoles: [{
       role: String,
@@ -287,7 +287,7 @@ const userSchema = new mongoose.Schema({
       costCenter: String,
       employmentType: {
         type: String,
-        enum: ['full_time', 'part_time', 'contract', 'temporary', 'intern']
+        enum: constants.RECRUITMENT.EMPLOYMENT_TYPES_ENUM
       }
     },
     
@@ -315,11 +315,11 @@ const userSchema = new mongoose.Schema({
       preferredLocations: [String],
       preferredJobTypes: [{
         type: String,
-        enum: ['full_time', 'part_time', 'contract', 'temporary', 'internship', 'freelance']
+        enum: constants.RECRUITMENT.EMPLOYMENT_TYPES_ENUM
       }],
       remotePreference: {
         type: String,
-        enum: ['onsite', 'remote', 'hybrid', 'flexible']
+        enum: constants.RECRUITMENT.WORK_LOCATIONS_ENUM
       },
       noticePeriod: {
         value: Number,
@@ -465,6 +465,7 @@ const userSchema = new mongoose.Schema({
     
     currency: {
       type: String,
+      enum: constants.BILLING.CURRENCIES_ENUM,
       default: 'USD'
     },
     
@@ -526,7 +527,7 @@ const userSchema = new mongoose.Schema({
   // Status and Activity
   status: {
     type: String,
-    enum: ['active', 'inactive', 'suspended', 'deleted', 'pending'],
+    enum: constants.USER.STATUS_ENUM,
     default: 'pending',
     index: true
   },
@@ -685,13 +686,13 @@ const userSchema = new mongoose.Schema({
   subscription: {
     plan: {
       type: String,
-      enum: ['free', 'basic', 'professional', 'enterprise', 'custom'],
+      enum: constants.BILLING.PLAN_TYPES_ENUM,
       default: 'free'
     },
     
     status: {
       type: String,
-      enum: ['active', 'trial', 'past_due', 'cancelled', 'expired'],
+      enum: constants.BILLING.SUBSCRIPTION_STATUS_ENUM,
       default: 'active'
     },
     
@@ -712,10 +713,13 @@ const userSchema = new mongoose.Schema({
       lastPaymentDate: Date,
       nextPaymentDate: Date,
       amount: Number,
-      currency: String,
+      currency: {
+        type: String,
+        enum: constants.BILLING.CURRENCIES_ENUM
+      },
       interval: {
         type: String,
-        enum: ['monthly', 'quarterly', 'yearly']
+        enum: constants.BILLING.SUBSCRIPTION_BILLING_CYCLES_ENUM
       }
     },
     
@@ -734,12 +738,81 @@ const userSchema = new mongoose.Schema({
     }]
   },
   
+  // Authentication
+  auth: {
+    provider: {
+      type: String,
+      enum: constants.AUTH.PROVIDERS_ENUM,
+      default: 'local'
+    },
+    
+    providers: [{
+      name: {
+        type: String,
+        enum: constants.AUTH.PROVIDERS_ENUM
+      },
+      providerId: String,
+      email: String,
+      profileData: mongoose.Schema.Types.Mixed,
+      connectedAt: Date,
+      lastUsed: Date
+    }],
+    
+    twoFactor: {
+      enabled: { type: Boolean, default: false },
+      secret: String,
+      backupCodes: [String],
+      methods: [{
+        type: String,
+        enum: constants.AUTH.TWO_FACTOR_METHODS_ENUM
+      }],
+      lastUsed: Date
+    },
+    
+    sessions: [{
+      sessionId: String,
+      type: {
+        type: String,
+        enum: constants.AUTH.SESSION_TYPES_ENUM
+      },
+      device: String,
+      browser: String,
+      ipAddress: String,
+      location: String,
+      createdAt: Date,
+      lastActive: Date,
+      expiresAt: Date
+    }],
+    
+    passwordHistory: [{
+      hash: String,
+      createdAt: Date
+    }],
+    
+    failedAttempts: {
+      count: { type: Number, default: 0 },
+      lastAttempt: Date,
+      lockedUntil: Date
+    },
+    
+    tokens: [{
+      type: {
+        type: String,
+        enum: constants.AUTH.TOKEN_TYPES_ENUM
+      },
+      token: String,
+      expiresAt: Date,
+      usedAt: Date,
+      createdAt: Date
+    }]
+  },
+  
   // Metadata
   metadata: {
     source: {
       type: String,
-      enum: ['organic', 'invitation', 'import', 'oauth', 'admin', 'api'],
-      default: 'organic'
+      enum: constants.AUTH.SOURCE_TYPES_ENUM,
+      default: 'web'
     },
     
     referrer: {
@@ -767,7 +840,17 @@ const userSchema = new mongoose.Schema({
       scheduledFor: Date,
       reason: String,
       token: String
-    }
+    },
+    
+    statusHistory: [{
+      status: {
+        type: String,
+        enum: constants.USER.STATUS_ENUM
+      },
+      changedAt: Date,
+      changedBy: mongoose.Schema.Types.ObjectId,
+      reason: String
+    }]
   }
 }, {
   timestamps: true,
@@ -778,7 +861,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });
 userSchema.index({ 'profile.displayName': 'text', firstName: 'text', lastName: 'text' });
-userSchema.index({ userType: 1, role: 1 });
+userSchema.index({ userType: 1, 'role.primary': 1 });
 userSchema.index({ 'organization.current': 1 });
 userSchema.index({ status: 1, active: 1 });
 userSchema.index({ createdAt: -1 });
@@ -786,6 +869,14 @@ userSchema.index({ 'activity.lastLogin': -1 });
 userSchema.index({ 'profile.professionalInfo.skills.name': 1 });
 userSchema.index({ 'profile.location': 1 });
 userSchema.index({ 'profile.candidateProfile.activelyLooking': 1 });
+userSchema.index({ 'subscription.plan': 1, 'subscription.status': 1 });
+userSchema.index({ 'auth.provider': 1 });
+userSchema.index({ 'metadata.source': 1 });
+
+// Compound indexes
+userSchema.index({ userType: 1, status: 1, active: 1 });
+userSchema.index({ 'organization.current': 1, 'role.primary': 1 });
+userSchema.index({ 'subscription.status': 1, 'subscription.endDate': 1 });
 
 // Virtual fields
 userSchema.virtual('fullName').get(function() {
@@ -809,6 +900,19 @@ userSchema.virtual('age').get(function() {
     age--;
   }
   return age;
+});
+
+userSchema.virtual('isTrialActive').get(function() {
+  if (!this.subscription.trial.isActive) return false;
+  return new Date() < this.subscription.trial.endDate;
+});
+
+userSchema.virtual('subscriptionDaysRemaining').get(function() {
+  if (!this.subscription.endDate) return null;
+  const now = new Date();
+  const endDate = new Date(this.subscription.endDate);
+  const diffTime = endDate - now;
+  return Math.ceil(diffTime / constants.TIME.DAY);
 });
 
 /**
@@ -857,7 +961,7 @@ userSchema.methods.calculateProfileCompleteness = function() {
   });
   
   // Additional checks based on user type
-  if (this.userType === 'job_seeker') {
+  if (this.userType === constants.USER.TYPES.JOB_SEEKER) {
     const candidateFields = [
       'profile.candidateProfile.resume',
       'profile.professionalInfo.experience',
@@ -987,6 +1091,56 @@ userSchema.methods.getAvatarUrl = function() {
   return `https://www.gravatar.com/avatar/${hash}?d=identicon&s=200`;
 };
 
+// Check if subscription is active
+userSchema.methods.hasActiveSubscription = function() {
+  if (!this.subscription.endDate) return false;
+  return new Date() < new Date(this.subscription.endDate) && 
+         this.subscription.status === constants.BILLING.SUBSCRIPTION_STATUS.ACTIVE;
+};
+
+// Check if user has feature access
+userSchema.methods.hasFeatureAccess = function(featureName) {
+  const feature = this.subscription.features.find(f => f.name === featureName);
+  return feature ? feature.enabled : false;
+};
+
+// Add session
+userSchema.methods.addSession = function(sessionData) {
+  this.auth.sessions.push({
+    ...sessionData,
+    createdAt: new Date(),
+    lastActive: new Date()
+  });
+  
+  // Keep only last 10 sessions
+  if (this.auth.sessions.length > 10) {
+    this.auth.sessions = this.auth.sessions.slice(-10);
+  }
+  
+  return this.save();
+};
+
+// Remove session
+userSchema.methods.removeSession = function(sessionId) {
+  this.auth.sessions = this.auth.sessions.filter(s => s.sessionId !== sessionId);
+  return this.save();
+};
+
+// Update status with history
+userSchema.methods.updateStatus = function(newStatus, reason, changedBy) {
+  const oldStatus = this.status;
+  this.status = newStatus;
+  
+  this.metadata.statusHistory.push({
+    status: newStatus,
+    changedAt: new Date(),
+    changedBy,
+    reason: `Changed from ${oldStatus} to ${newStatus}. ${reason || ''}`
+  });
+  
+  return this.save();
+};
+
 /**
  * Static Methods
  */
@@ -1006,7 +1160,7 @@ userSchema.statics.searchUsers = async function(searchTerm, options = {}) {
     userType,
     role,
     organizationId,
-    status = 'active',
+    status = constants.USER.STATUS.ACTIVE,
     limit = 20,
     skip = 0,
     fields
@@ -1038,15 +1192,15 @@ userSchema.statics.searchUsers = async function(searchTerm, options = {}) {
 // Get active users count
 userSchema.statics.getActiveUsersCount = async function(period = 'day') {
   const dateMap = {
-    day: 24 * 60 * 60 * 1000,
-    week: 7 * 24 * 60 * 60 * 1000,
-    month: 30 * 24 * 60 * 60 * 1000
+    day: constants.TIME.DAY,
+    week: constants.TIME.WEEK,
+    month: constants.TIME.MONTH
   };
   
   const since = new Date(Date.now() - dateMap[period]);
   
   return this.countDocuments({
-    status: 'active',
+    status: constants.USER.STATUS.ACTIVE,
     active: true,
     'activity.lastActive': { $gte: since }
   });
@@ -1089,6 +1243,28 @@ userSchema.statics.bulkUpdateStatus = async function(userIds, status, reason) {
   );
 };
 
+// Get users by subscription status
+userSchema.statics.getUsersBySubscriptionStatus = async function(status) {
+  return this.find({
+    'subscription.status': status,
+    status: constants.USER.STATUS.ACTIVE,
+    active: true
+  });
+};
+
+// Get trial users expiring soon
+userSchema.statics.getTrialUsersExpiringSoon = async function(days = 3) {
+  const expiryDate = new Date();
+  expiryDate.setDate(expiryDate.getDate() + days);
+  
+  return this.find({
+    'subscription.trial.isActive': true,
+    'subscription.trial.endDate': { $lte: expiryDate },
+    status: constants.USER.STATUS.ACTIVE,
+    active: true
+  });
+};
+
 // Pre-save middleware
 userSchema.pre('save', async function(next) {
   // Generate display name if not provided
@@ -1104,6 +1280,17 @@ userSchema.pre('save', async function(next) {
   // Update last active
   this.activity.lastActive = new Date();
   
+  // Clean up expired sessions
+  const now = new Date();
+  this.auth.sessions = this.auth.sessions.filter(session => 
+    !session.expiresAt || session.expiresAt > now
+  );
+  
+  // Clean up expired tokens
+  this.auth.tokens = this.auth.tokens.filter(token => 
+    !token.expiresAt || token.expiresAt > now
+  );
+  
   next();
 });
 
@@ -1112,11 +1299,18 @@ userSchema.post('save', function(doc) {
   // Emit user updated event
   if (this.wasNew) {
     // Handle new user created
-    logger.info('New user created', { userId: doc._id, email: doc.email });
+    console.log('New user created', { userId: doc._id, email: doc.email });
   } else {
     // Handle user updated
-    logger.debug('User updated', { userId: doc._id });
+    console.log('User updated', { userId: doc._id });
   }
+});
+
+// Pre-remove middleware
+userSchema.pre('deleteOne', { document: true, query: false }, function(next) {
+  // Log user deletion
+  console.log('User being deleted', { userId: this._id, email: this.email });
+  next();
 });
 
 // Create and export model
