@@ -12,7 +12,7 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.join(__dirname, '../../../.env') });
 
 // Import individual configurations
-const database = require('./database');
+const database = require('../database/database');
 const redis = require('./redis');
 const environment = require('./environment');
 const constants = require('./constants');
