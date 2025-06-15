@@ -160,10 +160,12 @@ const Constants = {
       REFRESH: 'refresh',
       RESET: 'reset',
       VERIFICATION: 'verification',
-      INVITATION: 'invitation'
+      INVITATION: 'invitation',
+      API_KEY: 'api_key',
+      TWO_FACTOR: 'two_factor'
     },
     
-    TOKEN_TYPES_ENUM: ['access', 'refresh', 'reset', 'verification', 'invitation'],
+    TOKEN_TYPES_ENUM: ['access', 'refresh', 'reset', 'verification', 'invitation', 'api_key', 'two_factor'],
     
     PROVIDERS: {
       LOCAL: 'local',
