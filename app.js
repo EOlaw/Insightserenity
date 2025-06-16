@@ -28,23 +28,23 @@ const { AppError } = require('./server/shared/utils/app-error');
 const AuthStrategiesManager = require('./server/shared/security/passport/strategies/auth-strategy-index');
 
 // Import routes
-const docsRoute = require('./modules/documentation/docs-route');
-const authRoutes = require('./modules/auth/routes/auth-routes');
-const userRoutes = require('./modules/users/routes/user-routes');
-const teamRoutes = require('./modules/teams/routes/team-routes');
-const departmentRoutes = require('./modules/departments/routes/department-routes');
-const organizationRoutes = require('./modules/organizations/routes/organization-routes');
-const projectRoutes = require('./modules/projects/routes/project-routes');
-const caseStudyRoutes = require('./modules/case-studies/routes/case-study-routes');
-const newsletterRoutes = require('./modules/newsletter/routes/newsletter-routes');
-const blogRoutes = require('./modules/blog/routes/blog-routes');
-const eventRoutes = require('./modules/events/routes/event-routes');
-const serviceRoutes = require('./modules/services/routes/service-routes');
-const contactFormRoutes = require('./modules/marketing/routes/contact-form-routes');
+// const docsRoute = require('./modules/documentation/docs-route');
+// const authRoutes = require('./modules/auth/routes/auth-routes');
+// const userRoutes = require('./modules/users/routes/user-routes');
+// const teamRoutes = require('./modules/teams/routes/team-routes');
+// const departmentRoutes = require('./modules/departments/routes/department-routes');
+const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
+// const projectRoutes = require('./modules/projects/routes/project-routes');
+// const caseStudyRoutes = require('./modules/case-studies/routes/case-study-routes');
+// const newsletterRoutes = require('./modules/newsletter/routes/newsletter-routes');
+// const blogRoutes = require('./modules/blog/routes/blog-routes');
+// const eventRoutes = require('./modules/events/routes/event-routes');
+// const serviceRoutes = require('./modules/services/routes/service-routes');
+// const contactFormRoutes = require('./modules/marketing/routes/contact-form-routes');
 
 // Middleware imports
-const errorHandler = require('./shared/middleware/error-handler');
-const notFoundHandler = require('./shared/middleware/not-found-handler');
+const errorHandler = require('./server/shared/middleware/error-handler');
+const notFoundHandler = require('./server/shared/middleware/not-found-handler');
 
 /**
  * Application class
@@ -224,7 +224,7 @@ class Application {
         // Session configuration
         if (config.security.session.enabled) {
             const sessionManager = new SessionManager();
-            this.app.use(sessionManager.createSession());
+            this.app.use(sessionManager.getSessionMiddleware());
         }
 
         // Request logging
@@ -268,25 +268,25 @@ class Application {
         });
 
         // Documentation route
-        this.app.use('/docs', docsRoute);
+        // this.app.use('/docs', docsRoute);
 
         // Create API router || Uncomment if you want to mount all routes under a single router
         // This is useful if you want to apply middleware or versioning at the router level
         // const apiRouter = express.Router();
 
         // API routes with versioning
-        this.app.use(`${baseApiPath}/auth`, authRoutes);
-        this.app.use(`${baseApiPath}/users`, userRoutes);
-        this.app.use(`${baseApiPath}/teams`, teamRoutes);
-        this.app.use(`${baseApiPath}/departments`, departmentRoutes);
+        // this.app.use(`${baseApiPath}/auth`, authRoutes);
+        // this.app.use(`${baseApiPath}/users`, userRoutes);
+        // this.app.use(`${baseApiPath}/teams`, teamRoutes);
+        // this.app.use(`${baseApiPath}/departments`, departmentRoutes);
         this.app.use(`${baseApiPath}/organizations`, organizationRoutes);
-        this.app.use(`${baseApiPath}/projects`, projectRoutes);
-        this.app.use(`${baseApiPath}/case-studies`, caseStudyRoutes);
-        this.app.use(`${baseApiPath}/newsletter`, newsletterRoutes);
-        this.app.use(`${baseApiPath}/blog`, blogRoutes);
-        this.app.use(`${baseApiPath}/events`, eventRoutes);
-        this.app.use(`${baseApiPath}/services`, serviceRoutes);
-        this.app.use(`${baseApiPath}/contact`, contactFormRoutes);
+        // this.app.use(`${baseApiPath}/projects`, projectRoutes);
+        // this.app.use(`${baseApiPath}/case-studies`, caseStudyRoutes);
+        // this.app.use(`${baseApiPath}/newsletter`, newsletterRoutes);
+        // this.app.use(`${baseApiPath}/blog`, blogRoutes);
+        // this.app.use(`${baseApiPath}/events`, eventRoutes);
+        // this.app.use(`${baseApiPath}/services`, serviceRoutes);
+        // this.app.use(`${baseApiPath}/contact`, contactFormRoutes);
 
         // Mount versioned API
         // this.app.use(`${apiPrefix}/${apiVersion}`, apiRouter);
@@ -335,7 +335,7 @@ class Application {
         this.app.use(notFoundHandler);
 
         // Global error handler
-        this.app.use(errorHandler);
+        this.app.use(errorHandler.handle);
     }
 
     /**
@@ -346,7 +346,7 @@ class Application {
     async start() {
         try {
             // Connect to the database
-            await Database.connect();
+            await Database.createConnection(); // await Database.createConnection('insightserenity');
             logger.info('Database connected successfully');
 
             // Initialize the application

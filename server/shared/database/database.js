@@ -14,7 +14,7 @@ const mongoose = require('mongoose');
  */
 class DatabaseConfig {
   constructor() {
-    this.url = process.env.DATABASE_URL || 'mongodb://localhost:27017/insightserenity';
+    this.url = process.env.MONGODB_URI || 'mongodb://localhost:27017/insightserenity';
     this.options = {
       useNewUrlParser: true,
       useUnifiedTopology: true,

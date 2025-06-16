@@ -157,6 +157,17 @@ const config = {
         sanitize: {
             enabled: parseBoolean(getEnv('SANITIZE_ENABLED', 'true')),
             replaceWith: getEnv('SANITIZE_REPLACE_WITH', '_')
+        },
+        session: {
+            enabled: parseBoolean(getEnv('SESSION_ENABLED', 'true')),
+            secret: getEnv('SESSION_SECRET', 'your_default_session_secret'),
+            resave: parseBoolean(getEnv('SESSION_RESAVE', 'false')),
+            saveUninitialized: parseBoolean(getEnv('SESSION_SAVE_UNINITIALIZED', 'false')),
+            cookie: {
+                secure: parseBoolean(getEnv('SESSION_COOKIE_SECURE', 'false')),
+                httpOnly: parseBoolean(getEnv('SESSION_COOKIE_HTTP_ONLY', 'true')),
+                maxAge: parseInt(getEnv('SESSION_COOKIE_MAX_AGE', '3600000'), 10) // 1 hour default
+            }
         }
     },
 

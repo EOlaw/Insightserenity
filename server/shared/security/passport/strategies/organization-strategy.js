@@ -6,12 +6,12 @@
  */
 
 const Strategy = require('passport-strategy').Strategy;
-const saml = require('passport-saml');
+const saml = require('@node-saml/passport-saml');
 const jwt = require('jsonwebtoken');
 const logger = require('../../../utils/logger');
 const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
 const UserService = require('../../../users/services/user-service');
-const OrganizationService = require('../../../organizations/services/organization-service');
+const OrganizationService = require('../../../../hosted-organizations/organizations/services/organization-service');
 const AuthService = require('../../../auth/services/auth-service');
 const AuditService = require('../../services/audit-service');
 const config = require('../../../config');

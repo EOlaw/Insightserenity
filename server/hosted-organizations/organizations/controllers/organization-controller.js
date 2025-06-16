@@ -4,11 +4,11 @@
  * @version 2.0.0
  */
 
-const HostedOrganizationService = require('../services/OrganizationService');
-const { catchAsync } = require('../../../shared/utils/errors/catchAsync');
-const { AppError } = require('../../../shared/utils/errors/AppError');
+const HostedOrganizationService = require('../services/organization-service');
+// const { catchAsync } = require('../../../shared/utils/errors/catchAsync');
+const { AppError } = require('../../../shared/utils/app-error');
 const { validateRequest } = require('../../../shared/utils/validation/validator');
-const { sanitizeInput } = require('../../../shared/utils/security/sanitizer');
+const { sanitizeInput } = require('../../../shared/security/sanitizer');
 const logger = require('../../../shared/utils/logger');
 
 class HostedOrganizationController {
@@ -16,7 +16,7 @@ class HostedOrganizationController {
    * Create a new hosted organization
    * @route POST /api/v1/hosted-organizations
    */
-  static createOrganization = catchAsync(async (req, res, next) => {
+  static createOrganization = (async (req, res, next) => {
     logger.debug('Create hosted organization request', {
       userId: req.user._id,
       organizationName: req.body.name,
@@ -76,7 +76,7 @@ class HostedOrganizationController {
    * Get organization by ID
    * @route GET /api/v1/hosted-organizations/:id
    */
-  static getOrganizationById = catchAsync(async (req, res, next) => {
+  static getOrganizationById = (async (req, res, next) => {
     logger.debug('Get organization by ID request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -111,7 +111,7 @@ class HostedOrganizationController {
    * Update organization
    * @route PATCH /api/v1/hosted-organizations/:id
    */
-  static updateOrganization = catchAsync(async (req, res, next) => {
+  static updateOrganization = (async (req, res, next) => {
     logger.debug('Update organization request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -146,7 +146,7 @@ class HostedOrganizationController {
    * Search organizations
    * @route GET /api/v1/hosted-organizations/search
    */
-  static searchOrganizations = catchAsync(async (req, res, next) => {
+  static searchOrganizations = (async (req, res, next) => {
     logger.debug('Search organizations request', {
       userId: req.user._id,
       filters: req.query
@@ -185,7 +185,7 @@ class HostedOrganizationController {
    * Get current organization (from subdomain/domain)
    * @route GET /api/v1/hosted-organizations/current
    */
-  static getCurrentOrganization = catchAsync(async (req, res, next) => {
+  static getCurrentOrganization = (async (req, res, next) => {
     logger.debug('Get current organization request', {
       userId: req.user._id,
       organizationId: req.organization?._id
@@ -207,7 +207,7 @@ class HostedOrganizationController {
    * Update organization subscription
    * @route POST /api/v1/hosted-organizations/:id/subscription
    */
-  static updateSubscription = catchAsync(async (req, res, next) => {
+  static updateSubscription = (async (req, res, next) => {
     logger.info('Update subscription request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -243,7 +243,7 @@ class HostedOrganizationController {
    * Cancel subscription
    * @route DELETE /api/v1/hosted-organizations/:id/subscription
    */
-  static cancelSubscription = catchAsync(async (req, res, next) => {
+  static cancelSubscription = (async (req, res, next) => {
     logger.warn('Cancel subscription request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -277,7 +277,7 @@ class HostedOrganizationController {
    * Add team member
    * @route POST /api/v1/hosted-organizations/:id/team/members
    */
-  static addTeamMember = catchAsync(async (req, res, next) => {
+  static addTeamMember = (async (req, res, next) => {
     logger.debug('Add team member request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -311,7 +311,7 @@ class HostedOrganizationController {
    * Remove team member
    * @route DELETE /api/v1/hosted-organizations/:id/team/members/:userId
    */
-  static removeTeamMember = catchAsync(async (req, res, next) => {
+  static removeTeamMember = (async (req, res, next) => {
     logger.debug('Remove team member request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -340,7 +340,7 @@ class HostedOrganizationController {
    * Get team members
    * @route GET /api/v1/hosted-organizations/:id/team/members
    */
-  static getTeamMembers = catchAsync(async (req, res, next) => {
+  static getTeamMembers = (async (req, res, next) => {
     logger.debug('Get team members request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -368,7 +368,7 @@ class HostedOrganizationController {
    * Update branding
    * @route PATCH /api/v1/hosted-organizations/:id/branding
    */
-  static updateBranding = catchAsync(async (req, res, next) => {
+  static updateBranding = (async (req, res, next) => {
     logger.debug('Update branding request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -399,7 +399,7 @@ class HostedOrganizationController {
    * Add custom domain
    * @route POST /api/v1/hosted-organizations/:id/domains
    */
-  static addCustomDomain = catchAsync(async (req, res, next) => {
+  static addCustomDomain = (async (req, res, next) => {
     logger.debug('Add custom domain request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -440,7 +440,7 @@ class HostedOrganizationController {
    * Verify custom domain
    * @route POST /api/v1/hosted-organizations/:id/domains/:domain/verify
    */
-  static verifyCustomDomain = catchAsync(async (req, res, next) => {
+  static verifyCustomDomain = (async (req, res, next) => {
     logger.debug('Verify custom domain request', {
       userId: req.user._id,
       organizationId: req.params.id,
@@ -466,7 +466,7 @@ class HostedOrganizationController {
    * Get organization analytics
    * @route GET /api/v1/hosted-organizations/:id/analytics
    */
-  static getOrganizationAnalytics = catchAsync(async (req, res, next) => {
+  static getOrganizationAnalytics = (async (req, res, next) => {
     logger.debug('Get organization analytics request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -495,7 +495,7 @@ class HostedOrganizationController {
    * Get organization usage
    * @route GET /api/v1/hosted-organizations/:id/usage
    */
-  static getOrganizationUsage = catchAsync(async (req, res, next) => {
+  static getOrganizationUsage = (async (req, res, next) => {
     logger.debug('Get organization usage request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -522,7 +522,7 @@ class HostedOrganizationController {
    * Update organization settings
    * @route PATCH /api/v1/hosted-organizations/:id/settings
    */
-  static updateSettings = catchAsync(async (req, res, next) => {
+  static updateSettings = (async (req, res, next) => {
     logger.debug('Update organization settings request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -554,7 +554,7 @@ class HostedOrganizationController {
    * Update security settings
    * @route PATCH /api/v1/hosted-organizations/:id/security
    */
-  static updateSecuritySettings = catchAsync(async (req, res, next) => {
+  static updateSecuritySettings = (async (req, res, next) => {
     logger.warn('Update security settings request', {
       userId: req.user._id,
       organizationId: req.params.id
@@ -588,7 +588,7 @@ class HostedOrganizationController {
    * Admin: Get all organizations
    * @route GET /api/v1/hosted-organizations/admin/all
    */
-  static adminGetAllOrganizations = catchAsync(async (req, res, next) => {
+  static adminGetAllOrganizations = (async (req, res, next) => {
     logger.debug('Admin get all organizations request', {
       adminId: req.user._id
     });
@@ -624,7 +624,7 @@ class HostedOrganizationController {
    * Admin: Get organizations at risk
    * @route GET /api/v1/hosted-organizations/admin/at-risk
    */
-  static adminGetOrganizationsAtRisk = catchAsync(async (req, res, next) => {
+  static adminGetOrganizationsAtRisk = (async (req, res, next) => {
     logger.debug('Admin get organizations at risk request', {
       adminId: req.user._id
     });
@@ -644,7 +644,7 @@ class HostedOrganizationController {
    * Admin: Lock organization
    * @route POST /api/v1/hosted-organizations/:id/admin/lock
    */
-  static adminLockOrganization = catchAsync(async (req, res, next) => {
+  static adminLockOrganization = (async (req, res, next) => {
     logger.warn('Admin lock organization request', {
       adminId: req.user._id,
       organizationId: req.params.id,
@@ -682,7 +682,7 @@ class HostedOrganizationController {
    * Admin: Unlock organization
    * @route POST /api/v1/hosted-organizations/:id/admin/unlock
    */
-  static adminUnlockOrganization = catchAsync(async (req, res, next) => {
+  static adminUnlockOrganization = (async (req, res, next) => {
     logger.info('Admin unlock organization request', {
       adminId: req.user._id,
       organizationId: req.params.id
@@ -714,7 +714,7 @@ class HostedOrganizationController {
    * Admin: Feature organization
    * @route POST /api/v1/hosted-organizations/:id/admin/feature
    */
-  static adminFeatureOrganization = catchAsync(async (req, res, next) => {
+  static adminFeatureOrganization = (async (req, res, next) => {
     logger.info('Admin feature organization request', {
       adminId: req.user._id,
       organizationId: req.params.id
@@ -751,7 +751,7 @@ class HostedOrganizationController {
    * System: Process monthly usage reset
    * @route POST /api/v1/hosted-organizations/system/reset-usage
    */
-  static systemResetMonthlyUsage = catchAsync(async (req, res, next) => {
+  static systemResetMonthlyUsage = (async (req, res, next) => {
     logger.info('System reset monthly usage request', {
       adminId: req.user._id
     });

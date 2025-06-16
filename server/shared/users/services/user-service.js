@@ -16,12 +16,12 @@ const {
   ConflictError,
   ForbiddenError 
 } = require('../../utils/app-error');
-const EmailService = require('../../services/email-service');
-const FileService = require('../../utils/file-service');
-const CacheService = require('../../utils/cache-service');
-const AuditService = require('../../security/services/audit-service');
-const config = require('../../config');
-const constants = require('../../config/constants');
+const EmailService = require('../../../shared/services/email-service');
+const FileService = require('../../../shared/utils/helpers/file-helper');
+const CacheService = require('../../../shared/services/cache-service');
+const AuditService = require('../../../shared/security/services/audit-service');
+const config = require('../../../shared/config/config');
+const constants = require('../../../shared/config/constants');
 
 /**
  * User Service Class

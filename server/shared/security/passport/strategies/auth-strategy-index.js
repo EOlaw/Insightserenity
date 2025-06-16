@@ -781,4 +781,4 @@ class AuthStrategiesManager {
 }
 
 // Create and export singleton instance
-module.exports = new AuthStrategiesManager();
+module.exports = AuthStrategiesManager;

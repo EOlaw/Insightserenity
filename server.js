@@ -9,9 +9,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const app = require('./app');
-const logger = require('./shared/utils/logger');
-const config = require('./shared/config/config');
-const Database = require('./shared/config/database');
+const logger = require('./server/shared/utils/logger');
+const config = require('./server/shared/config/config');
+const Database = require('./server/shared/database/database');
 
 /**
  * Server class to handle server initialization and management
