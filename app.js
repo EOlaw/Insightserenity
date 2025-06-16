@@ -21,11 +21,11 @@ const mongoSanitize = require('express-mongo-sanitize');
 const config = require('./server/shared/config/config');
 const logger = require('./server/shared/utils/logger');
 const SessionManager = require('./server/shared/security/session-manager');
-const Database = require('./server/shared/config/database');
+const Database = require('./server/shared/database/database');
 const { AppError } = require('./server/shared/utils/app-error');
 
 // Import the production-grade authentication strategy manager
-const AuthStrategiesManager = require('./shared/security/passport/strategies/auth-strategy-index');
+const AuthStrategiesManager = require('./server/shared/security/passport/strategies/auth-strategy-index');
 
 // Import routes
 const docsRoute = require('./modules/documentation/docs-route');

@@ -18,7 +18,7 @@ const {
   ConflictError,
   PaymentError 
 } = require('../../utils/app-error');
-const EmailService = require('../../notifications/services/email-service');
+const EmailService = require('../../services/email-service');
 const PaymentGatewayService = require('./payment-gateway-service');
 const TaxService = require('./tax-service');
 const AuditService = require('../../security/services/audit-service');

@@ -13,7 +13,7 @@ const { ValidationError, NotFoundError, ForbiddenError } = require('../../utils/
 const { asyncHandler } = require('../../utils/async-handler');
 const logger = require('../../utils/logger');
 const constants = require('../../config/constants');
-const EmailService = require('../../notifications/services/email-service');
+const EmailService = require('../../services/email-service');
 const AuditService = require('../../security/services/audit-service');
 const config = require('../../config');
 

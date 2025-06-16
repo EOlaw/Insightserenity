@@ -889,7 +889,7 @@ const User = require('../../users/models/user-model');
 const TokenBlacklistService = require('../../security/services/token-blacklist-service');
 const EncryptionService = require('../../security/services/encryption-service');
 const AuditService = require('../../security/services/audit-service');
-const EmailService = require('../../notifications/services/email-service');
+const EmailService = require('../../services/email-service');
 const config = require('../../config');
 const constants = require('../../config/constants');
 

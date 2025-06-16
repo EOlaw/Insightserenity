@@ -16,7 +16,7 @@ const OrganizationStrategy = require('./organization-strategy');
 const PasskeyStrategy = require('./passkey-strategy');
 
 const User = require('../../../users/models/user-model');
-const Organization = require('../../../organizations/models/organization-model');
+const Organization = require('../../../../hosted-organizations/organizations/models/organization-model');
 const TokenService = require('../../../auth/services/token-service');
 const TokenBlacklistService = require('../../services/token-blacklist-service');
 const AuditService = require('../../services/audit-service');

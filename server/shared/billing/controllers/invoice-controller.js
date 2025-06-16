@@ -13,7 +13,7 @@ const { asyncHandler } = require('../../utils/async-handler');
 const logger = require('../../utils/logger');
 const constants = require('../../config/constants');
 const PDFService = require('../../utils/pdf-service');
-const EmailService = require('../../notifications/services/email-service');
+const EmailService = require('../../services/email-service');
 
 /**
  * Invoice Controller Class

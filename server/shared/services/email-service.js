@@ -2,31 +2,117 @@
 
 /**
  * @file Email Service
- * @description Comprehensive email sending service with multiple providers
- * @version 1.0.0
+ * @description Comprehensive email sending service with multiple providers and enhanced security
+ * @version 1.1.0
  */
 
 const nodemailer = require('nodemailer');
-const sgMail = require('@sendgrid/mail');
-const ses = require('@aws-sdk/client-ses');
-const mailgun = require('mailgun-js');
 const logger = require('../utils/logger');
-const config = require('../config');
-const emailHelper = require('../utils/helpers/email-helper');
-const queueHelper = require('../utils/helpers/queue-helper');
 const { AppError } = require('../utils/app-error');
+
+// Safe imports with fallbacks for optional dependencies
+let sgMail = null;
+let ses = null;
+let Mailgun = null;
+let config = null;
+let emailHelper = null;
+let queueHelper = null;
+
+try {
+  sgMail = require('@sendgrid/mail');
+} catch (error) {
+  logger.debug('SendGrid package not available', { package: '@sendgrid/mail' });
+}
+
+try {
+  ses = require('@aws-sdk/client-ses');
+} catch (error) {
+  logger.debug('AWS SES package not available', { package: '@aws-sdk/client-ses' });
+}
+
+try {
+  Mailgun = require('mailgun.js');
+} catch (error) {
+  logger.debug('Mailgun package not available', { package: 'mailgun.js' });
+}
+
+try {
+  config = require('../config/config');
+} catch (error) {
+  logger.warn('Config not available, using defaults');
+  config = {
+    email: {
+      provider: 'smtp',
+      defaultFrom: 'noreply@localhost',
+      smtp: {
+        host: 'localhost',
+        port: 587,
+        secure: false,
+        user: '',
+        pass: ''
+      }
+    },
+    app: {
+      url: 'http://localhost:3000'
+    }
+  };
+}
+
+try {
+  emailHelper = require('../utils/helpers/email-helper');
+} catch (error) {
+  logger.debug('Email helper not available');
+  emailHelper = { sendTemplate: () => Promise.reject(new Error('Email helper not configured')) };
+}
+
+try {
+  queueHelper = require('../utils/helpers/queue-helper');
+} catch (error) {
+  logger.debug('Queue helper not available');
+  queueHelper = { addJob: () => Promise.reject(new Error('Queue helper not configured')) };
+}
 
 /**
  * Email Service Class
  */
 class EmailService {
   constructor() {
-    this.provider = config.email.provider || 'smtp';
-    this.from = config.email.defaultFrom;
-    this.replyTo = config.email.replyTo;
+    this.provider = this.determineAvailableProvider();
+    this.from = config.email?.defaultFrom || 'noreply@localhost';
+    this.replyTo = config.email?.replyTo;
     this.templates = new Map();
     
     this.initializeProvider();
+  }
+  
+  /**
+   * Determine which email provider is available and configured
+   */
+  determineAvailableProvider() {
+    const requestedProvider = config.email?.provider || 'smtp';
+    
+    switch (requestedProvider) {
+      case 'sendgrid':
+        if (sgMail && config.email?.sendgrid?.apiKey) {
+          return 'sendgrid';
+        }
+        logger.warn('SendGrid requested but not available, falling back to SMTP');
+        break;
+      case 'ses':
+        if (ses && config.email?.ses) {
+          return 'ses';
+        }
+        logger.warn('AWS SES requested but not available, falling back to SMTP');
+        break;
+      case 'mailgun':
+        if (Mailgun && config.email?.mailgun?.apiKey) {
+          return 'mailgun';
+        }
+        logger.warn('Mailgun requested but not available, falling back to SMTP');
+        break;
+    }
+    
+    return 'smtp';
   }
   
   /**
@@ -49,10 +135,20 @@ class EmailService {
           this.initializeSMTP();
       }
       
-      logger.info(`Email service initialized with provider: ${this.provider}`);
+      logger.info('Email service initialized successfully', { 
+        provider: this.provider,
+        from: this.from
+      });
     } catch (error) {
-      logger.error('Failed to initialize email service:', error);
-      throw new AppError('Email service initialization failed', 500);
+      logger.error('Failed to initialize email service', { error: error.message });
+      
+      if (this.provider !== 'smtp') {
+        logger.warn('Falling back to SMTP provider');
+        this.provider = 'smtp';
+        this.initializeSMTP();
+      } else {
+        throw new AppError('Email service initialization failed completely', 500);
+      }
     }
   }
   
@@ -60,38 +156,63 @@ class EmailService {
    * Initialize SendGrid
    */
   initializeSendGrid() {
-    if (!config.email.sendgrid.apiKey) {
+    if (!sgMail) {
+      throw new Error('SendGrid package not installed');
+    }
+    
+    if (!config.email?.sendgrid?.apiKey) {
       throw new Error('SendGrid API key not configured');
     }
     
     sgMail.setApiKey(config.email.sendgrid.apiKey);
     this.sendgridClient = sgMail;
+    logger.info('SendGrid initialized successfully');
   }
   
   /**
    * Initialize AWS SES
    */
   initializeSES() {
+    if (!ses) {
+      throw new Error('AWS SES package not installed');
+    }
+    
     const { defaultProvider } = require('@aws-sdk/credential-provider-node');
     
     this.sesClient = new ses.SES({
-      region: config.email.ses.region || 'us-east-1',
+      region: config.email?.ses?.region || 'us-east-1',
       credentials: defaultProvider()
     });
+    
+    logger.info('AWS SES initialized successfully');
   }
   
   /**
-   * Initialize Mailgun
+   * Initialize Mailgun with the secure mailgun.js package
    */
   initializeMailgun() {
-    if (!config.email.mailgun.apiKey || !config.email.mailgun.domain) {
-      throw new Error('Mailgun configuration incomplete');
+    if (!Mailgun) {
+      throw new Error('Mailgun package not installed. Install with: npm install mailgun.js');
     }
     
-    this.mailgunClient = mailgun({
-      apiKey: config.email.mailgun.apiKey,
-      domain: config.email.mailgun.domain,
-      host: config.email.mailgun.host || 'api.mailgun.net'
+    if (!config.email?.mailgun?.apiKey || !config.email?.mailgun?.domain) {
+      throw new Error('Mailgun configuration incomplete - API key and domain required');
+    }
+    
+    // Initialize the new mailgun.js client
+    const mailgun = new Mailgun({});
+    
+    this.mailgunClient = mailgun.client({
+      username: 'api',
+      key: config.email.mailgun.apiKey,
+      url: config.email.mailgun.host || 'https://api.mailgun.net'
+    });
+    
+    this.mailgunDomain = config.email.mailgun.domain;
+    
+    logger.info('Mailgun initialized successfully', { 
+      domain: this.mailgunDomain,
+      host: config.email.mailgun.host || 'https://api.mailgun.net'
     });
   }
   
@@ -99,26 +220,41 @@ class EmailService {
    * Initialize SMTP
    */
   initializeSMTP() {
-    this.transporter = nodemailer.createTransporter({
-      host: config.email.smtp.host,
-      port: config.email.smtp.port,
-      secure: config.email.smtp.secure,
-      auth: {
-        user: config.email.smtp.user,
-        pass: config.email.smtp.pass
-      },
+    const smtpConfig = config.email?.smtp || {
+      host: 'localhost',
+      port: 587,
+      secure: false,
+      user: '',
+      pass: ''
+    };
+    
+    this.transporter = nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: smtpConfig.port,
+      secure: smtpConfig.secure,
+      auth: smtpConfig.user && smtpConfig.pass ? {
+        user: smtpConfig.user,
+        pass: smtpConfig.pass
+      } : undefined,
       pool: true,
-      maxConnections: config.email.smtp.maxConnections || 5,
-      maxMessages: config.email.smtp.maxMessages || 100
+      maxConnections: smtpConfig.maxConnections || 5,
+      maxMessages: smtpConfig.maxMessages || 100
     });
     
-    // Verify connection
-    this.transporter.verify((error) => {
-      if (error) {
-        logger.error('SMTP connection verification failed:', error);
-      } else {
-        logger.info('SMTP server ready to send emails');
-      }
+    // Verify connection in development only
+    if (config.env === 'development' && smtpConfig.host !== 'localhost') {
+      this.transporter.verify((error) => {
+        if (error) {
+          logger.warn('SMTP connection verification failed', { error: error.message });
+        } else {
+          logger.info('SMTP server ready to send emails');
+        }
+      });
+    }
+    
+    logger.info('SMTP initialized successfully', { 
+      host: smtpConfig.host, 
+      port: smtpConfig.port 
     });
   }
   
@@ -129,13 +265,9 @@ class EmailService {
    */
   async send(options) {
     try {
-      // Prepare email data
       const emailData = this.prepareEmailData(options);
-      
-      // Validate email data
       this.validateEmailData(emailData);
       
-      // Send based on provider
       let result;
       switch (this.provider) {
         case 'sendgrid':
@@ -152,12 +284,15 @@ class EmailService {
           result = await this.sendViaSMTP(emailData);
       }
       
-      // Log success
       this.logEmailSent(emailData, result);
-      
       return result;
     } catch (error) {
-      logger.error('Email send failed:', error);
+      logger.error('Email send failed', { 
+        error: error.message, 
+        provider: this.provider,
+        to: options.to,
+        subject: options.subject
+      });
       throw new AppError('Failed to send email', 500);
     }
   }
@@ -188,8 +323,8 @@ class EmailService {
         dynamicTemplateData: emailData.dynamicTemplateData 
       }),
       trackingSettings: {
-        clickTracking: { enable: config.email.tracking.clicks },
-        openTracking: { enable: config.email.tracking.opens }
+        clickTracking: { enable: config.email?.tracking?.clicks || false },
+        openTracking: { enable: config.email?.tracking?.opens || false }
       }
     };
     
@@ -254,34 +389,38 @@ class EmailService {
   }
   
   /**
-   * Send via Mailgun
+   * Send via Mailgun using the secure mailgun.js package
    */
   async sendViaMailgun(emailData) {
-    const data = {
+    const messageData = {
       from: emailData.from,
-      to: Array.isArray(emailData.to) ? emailData.to.join(',') : emailData.to,
+      to: Array.isArray(emailData.to) ? emailData.to : [emailData.to],
       subject: emailData.subject,
       text: emailData.text,
       html: emailData.html,
-      ...(emailData.cc && { cc: Array.isArray(emailData.cc) ? emailData.cc.join(',') : emailData.cc }),
-      ...(emailData.bcc && { bcc: Array.isArray(emailData.bcc) ? emailData.bcc.join(',') : emailData.bcc }),
+      ...(emailData.cc && { cc: Array.isArray(emailData.cc) ? emailData.cc : [emailData.cc] }),
+      ...(emailData.bcc && { bcc: Array.isArray(emailData.bcc) ? emailData.bcc : [emailData.bcc] }),
       ...(emailData.replyTo && { 'h:Reply-To': emailData.replyTo }),
-      ...(emailData.attachments && { attachment: emailData.attachments }),
-      ...(config.email.tracking.opens && { 'o:tracking-opens': 'yes' }),
-      ...(config.email.tracking.clicks && { 'o:tracking-clicks': 'yes' })
+      ...(config.email?.tracking?.opens && { 'o:tracking-opens': 'yes' }),
+      ...(config.email?.tracking?.clicks && { 'o:tracking-clicks': 'yes' })
     };
     
-    const response = await new Promise((resolve, reject) => {
-      this.mailgunClient.messages().send(data, (error, body) => {
-        if (error) reject(error);
-        else resolve(body);
-      });
-    });
+    // Handle attachments if present
+    if (emailData.attachments && emailData.attachments.length > 0) {
+      messageData.attachment = emailData.attachments.map(att => ({
+        filename: att.filename,
+        data: att.content
+      }));
+    }
+    
+    // Send using the new mailgun.js API
+    const response = await this.mailgunClient.messages.create(this.mailgunDomain, messageData);
     
     return {
       messageId: response.id,
       status: 200,
-      provider: 'mailgun'
+      provider: 'mailgun',
+      message: response.message
     };
   }
   
@@ -326,8 +465,7 @@ class EmailService {
    */
   async sendTemplate(templateName, options) {
     try {
-      // If using SendGrid dynamic templates
-      if (this.provider === 'sendgrid' && config.email.sendgrid.templates[templateName]) {
+      if (this.provider === 'sendgrid' && config.email?.sendgrid?.templates?.[templateName]) {
         return this.send({
           ...options,
           templateId: config.email.sendgrid.templates[templateName],
@@ -335,10 +473,12 @@ class EmailService {
         });
       }
       
-      // Otherwise use local templates
       return emailHelper.sendTemplate(templateName, options);
     } catch (error) {
-      logger.error(`Failed to send templated email ${templateName}:`, error);
+      logger.error('Failed to send templated email', { 
+        template: templateName, 
+        error: error.message 
+      });
       throw error;
     }
   }
@@ -350,18 +490,16 @@ class EmailService {
    * @returns {Promise<Object>} Bulk send results
    */
   async sendBulk(recipients, commonOptions) {
-    const batchSize = config.email.bulkBatchSize || 50;
+    const batchSize = config.email?.bulkBatchSize || 50;
     const results = {
       successful: 0,
       failed: 0,
       errors: []
     };
     
-    // Process in batches
     for (let i = 0; i < recipients.length; i += batchSize) {
       const batch = recipients.slice(i, i + batchSize);
       
-      // Queue batch for processing
       const jobs = batch.map(recipient => {
         const emailOptions = {
           ...commonOptions,
@@ -375,7 +513,6 @@ class EmailService {
         return queueHelper.addJob('email', 'send-email', emailOptions);
       });
       
-      // Wait for batch to complete
       const batchResults = await Promise.allSettled(jobs);
       
       batchResults.forEach((result, index) => {
@@ -390,7 +527,6 @@ class EmailService {
         }
       });
       
-      // Rate limiting between batches
       if (i + batchSize < recipients.length) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -456,7 +592,6 @@ class EmailService {
       throw new AppError('Email content is required', 400);
     }
     
-    // Validate email addresses
     const validateEmail = (email) => {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       return emailRegex.test(email);
@@ -490,6 +625,32 @@ class EmailService {
   }
   
   /**
+   * Test email configuration
+   */
+  async testConnection() {
+    try {
+      if (this.provider === 'smtp' && this.transporter) {
+        await this.transporter.verify();
+        return { success: true, provider: this.provider };
+      }
+      
+      if (this.provider === 'mailgun' && this.mailgunClient) {
+        const domainInfo = await this.mailgunClient.domains.get(this.mailgunDomain);
+        return { 
+          success: true, 
+          provider: this.provider, 
+          domain: domainInfo.domain?.name 
+        };
+      }
+      
+      return { success: true, provider: this.provider };
+    } catch (error) {
+      logger.error('Email service test failed', { error: error.message });
+      return { success: false, error: error.message, provider: this.provider };
+    }
+  }
+  
+  /**
    * Email templates
    */
   async sendWelcomeEmail(user) {
@@ -499,7 +660,7 @@ class EmailService {
       data: {
         name: user.firstName,
         email: user.email,
-        activationUrl: `${config.app.url}/activate/${user.activationToken}`
+        activationUrl: `${config.app?.url || 'http://localhost:3000'}/activate/${user.activationToken}`
       },
       userId: user.id,
       category: 'account'
@@ -512,7 +673,7 @@ class EmailService {
       subject: 'Reset Your Password',
       data: {
         name: user.firstName,
-        resetUrl: `${config.app.url}/reset-password/${resetToken}`,
+        resetUrl: `${config.app?.url || 'http://localhost:3000'}/reset-password/${resetToken}`,
         expiresIn: '2 hours'
       },
       userId: user.id,
@@ -530,7 +691,7 @@ class EmailService {
         inviterName: invitation.inviterName,
         role: invitation.role,
         message: invitation.message,
-        acceptUrl: `${config.app.url}/invitations/${invitation.token}`,
+        acceptUrl: `${config.app?.url || 'http://localhost:3000'}/invitations/${invitation.token}`,
         expiresIn: `${invitation.expiresInDays} days`
       },
       organizationId: invitation.organizationId,

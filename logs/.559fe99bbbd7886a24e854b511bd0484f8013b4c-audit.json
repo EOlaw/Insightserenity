@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "C:\\Users\\Emman\\Documents\\GitHub\\insightserenity\\logs\\.559fe99bbbd7886a24e854b511bd0484f8013b4c-audit.json",
+    "files": [
+        {
+            "date": 1750046344938,
+            "name": "C:\\Users\\Emman\\Documents\\GitHub\\insightserenity\\logs\\insightserenity-error-2025-06-15.log",
+            "hash": "f86d6d869eaf47c5839f63fe0e2fc42c50dfe3404bb8d8d0ae3d86889a47dcb8"
+        }
+    ],
+    "hashType": "sha256"
+}

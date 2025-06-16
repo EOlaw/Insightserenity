@@ -9,7 +9,30 @@ const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
 const path = require('path');
 const fs = require('fs');
-const config = require('../config');
+
+// Safe config loading
+let config;
+try {
+  config = require('../config/config');
+} catch (error) {
+  // Fallback config if main config is not available
+  config = {
+    env: process.env.NODE_ENV || 'development',
+    isDevelopment: process.env.NODE_ENV === 'development',
+    isProduction: process.env.NODE_ENV === 'production',
+    isTest: process.env.NODE_ENV === 'test',
+    logging: {
+      level: process.env.LOG_LEVEL || 'info',
+      transports: ['console', 'file']
+    },
+    external: {
+      sentry: {
+        enabled: false,
+        dsn: null
+      }
+    }
+  };
+}
 
 /**
  * Logger Manager Class
@@ -31,8 +54,13 @@ class LoggerManager {
    * Ensure log directory exists
    */
   ensureLogDirectory() {
-    if (!fs.existsSync(this.logDir)) {
-      fs.mkdirSync(this.logDir, { recursive: true });
+    try {
+      if (!fs.existsSync(this.logDir)) {
+        fs.mkdirSync(this.logDir, { recursive: true });
+      }
+    } catch (error) {
+      // Continue without file logging if directory creation fails
+      console.warn('Could not create log directory:', error.message);
     }
   }
   
@@ -44,7 +72,7 @@ class LoggerManager {
   createLogger(options = {}) {
     const {
       service = 'insightserenity',
-      level = config.logging.level,
+      level = config.logging?.level || 'info',
       defaultMeta = {}
     } = options;
     
@@ -85,7 +113,7 @@ class LoggerManager {
       format: formatters.combined,
       defaultMeta: {
         service,
-        environment: config.env,
+        environment: config.env || 'development',
         ...defaultMeta
       },
       transports,
@@ -146,7 +174,7 @@ class LoggerManager {
     return {
       json: jsonFormat,
       console: devFormat,
-      combined: config.isDevelopment ? devFormat : jsonFormat
+      combined: (config.isDevelopment) ? devFormat : jsonFormat
     };
   }
   
@@ -159,7 +187,7 @@ class LoggerManager {
     const transports = [];
     
     // Console transport
-    if (config.logging.transports.includes('console')) {
+    if (config.logging?.transports?.includes('console') !== false) {
       transports.push(new winston.transports.Console({
         handleExceptions: true,
         handleRejections: true
@@ -167,69 +195,81 @@ class LoggerManager {
     }
     
     // File transports for production
-    if (config.logging.transports.includes('file') && !config.isTest) {
-      // Error log file
-      transports.push(new DailyRotateFile({
-        filename: path.join(this.logDir, `${service}-error-%DATE%.log`),
-        datePattern: 'YYYY-MM-DD',
-        level: 'error',
-        handleExceptions: true,
-        handleRejections: true,
-        maxSize: '20m',
-        maxFiles: '14d',
-        format: winston.format.json()
-      }));
-      
-      // Combined log file
-      transports.push(new DailyRotateFile({
-        filename: path.join(this.logDir, `${service}-combined-%DATE%.log`),
-        datePattern: 'YYYY-MM-DD',
-        handleExceptions: true,
-        handleRejections: true,
-        maxSize: '20m',
-        maxFiles: '7d',
-        format: winston.format.json()
-      }));
-      
-      // Audit log file for security events
-      transports.push(new DailyRotateFile({
-        filename: path.join(this.logDir, `${service}-audit-%DATE%.log`),
-        datePattern: 'YYYY-MM-DD',
-        level: 'info',
-        maxSize: '20m',
-        maxFiles: '30d',
-        format: winston.format.json(),
-        filter: winston.format((info) => {
-          return info.audit === true ? info : false;
-        })()
-      }));
+    if (config.logging?.transports?.includes('file') && !config.isTest && fs.existsSync(this.logDir)) {
+      try {
+        // Error log file
+        transports.push(new DailyRotateFile({
+          filename: path.join(this.logDir, `${service}-error-%DATE%.log`),
+          datePattern: 'YYYY-MM-DD',
+          level: 'error',
+          handleExceptions: true,
+          handleRejections: true,
+          maxSize: '20m',
+          maxFiles: '14d',
+          format: winston.format.json()
+        }));
+        
+        // Combined log file
+        transports.push(new DailyRotateFile({
+          filename: path.join(this.logDir, `${service}-combined-%DATE%.log`),
+          datePattern: 'YYYY-MM-DD',
+          handleExceptions: true,
+          handleRejections: true,
+          maxSize: '20m',
+          maxFiles: '7d',
+          format: winston.format.json()
+        }));
+        
+        // Audit log file for security events
+        transports.push(new DailyRotateFile({
+          filename: path.join(this.logDir, `${service}-audit-%DATE%.log`),
+          datePattern: 'YYYY-MM-DD',
+          level: 'info',
+          maxSize: '20m',
+          maxFiles: '30d',
+          format: winston.format.json(),
+          filter: winston.format((info) => {
+            return info.audit === true ? info : false;
+          })()
+        }));
+      } catch (error) {
+        console.warn('Could not create file transports:', error.message);
+      }
     }
     
     // Add external transports for production
     if (config.isProduction) {
       // Add Sentry transport if configured
-      if (config.external.sentry.enabled && config.external.sentry.dsn) {
-        const Sentry = require('winston-transport-sentry-node').default;
-        transports.push(new Sentry({
-          sentry: {
-            dsn: config.external.sentry.dsn,
-            environment: config.env
-          },
-          level: 'error'
-        }));
+      if (config.external?.sentry?.enabled && config.external?.sentry?.dsn) {
+        try {
+          const Sentry = require('winston-transport-sentry-node').default;
+          transports.push(new Sentry({
+            sentry: {
+              dsn: config.external.sentry.dsn,
+              environment: config.env
+            },
+            level: 'error'
+          }));
+        } catch (error) {
+          console.warn('Could not initialize Sentry transport:', error.message);
+        }
       }
       
       // Add CloudWatch transport if configured
       if (process.env.AWS_CLOUDWATCH_ENABLED === 'true') {
-        const CloudWatchTransport = require('winston-cloudwatch');
-        transports.push(new CloudWatchTransport({
-          logGroupName: process.env.AWS_CLOUDWATCH_GROUP || 'insightserenity',
-          logStreamName: `${service}-${config.env}`,
-          awsRegion: process.env.AWS_REGION || 'us-east-1',
-          messageFormatter: ({ level, message, ...meta }) => {
-            return `[${level}] ${message} ${JSON.stringify(meta)}`;
-          }
-        }));
+        try {
+          const CloudWatchTransport = require('winston-cloudwatch');
+          transports.push(new CloudWatchTransport({
+            logGroupName: process.env.AWS_CLOUDWATCH_GROUP || 'insightserenity',
+            logStreamName: `${service}-${config.env}`,
+            awsRegion: process.env.AWS_REGION || 'us-east-1',
+            messageFormatter: ({ level, message, ...meta }) => {
+              return `[${level}] ${message} ${JSON.stringify(meta)}`;
+            }
+          }));
+        } catch (error) {
+          console.warn('Could not initialize CloudWatch transport:', error.message);
+        }
       }
     }
     
@@ -314,9 +354,9 @@ class LoggerManager {
         };
         
         if (res.statusCode >= 400) {
-          logger.logger.warn('Request Error', logData);
+          loggerManager.logger.warn('Request Error', logData);
         } else {
-          logger.logger.http('Request Completed', logData);
+          loggerManager.logger.http('Request Completed', logData);
         }
         
         return res.send(data);
@@ -358,12 +398,19 @@ class LoggerManager {
 // Create singleton instance
 const loggerManager = new LoggerManager();
 
-// Export main logger and utility functions
+// Export main logger with proper method exposure
 module.exports = {
-  // Main logger instance
-  ...loggerManager.logger,
+  // Expose all Winston logger methods directly
+  error: (...args) => loggerManager.logger.error(...args),
+  warn: (...args) => loggerManager.logger.warn(...args),
+  info: (...args) => loggerManager.logger.info(...args),
+  http: (...args) => loggerManager.logger.http(...args),
+  verbose: (...args) => loggerManager.logger.verbose(...args),
+  debug: (...args) => loggerManager.logger.debug(...args),
+  silly: (...args) => loggerManager.logger.silly(...args),
+  log: (...args) => loggerManager.logger.log(...args),
   
-  // Additional methods
+  // Additional utility methods
   getModuleLogger: loggerManager.getModuleLogger.bind(loggerManager),
   audit: loggerManager.audit.bind(loggerManager),
   performance: loggerManager.performance.bind(loggerManager),
@@ -371,5 +418,8 @@ module.exports = {
   createErrorLogger: loggerManager.createErrorLogger.bind(loggerManager),
   
   // Direct access to logger instance
-  logger: loggerManager.logger
+  logger: loggerManager.logger,
+  
+  // Stream for HTTP logging
+  stream: loggerManager.logger.stream
 };

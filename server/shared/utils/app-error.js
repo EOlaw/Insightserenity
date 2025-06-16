@@ -79,6 +79,18 @@ class AuthorizationError extends AppError {
 }
 
 /**
+ * Forbidden Error Class
+ * @class ForbiddenError
+ * @extends AppError
+ */
+class ForbiddenError extends AppError {
+  constructor(message = 'You do not have permission to access this resource', code = 'FORBIDDEN', details = null) {
+    super(message, 403, code, details);
+  }
+}
+
+
+/**
  * Not Found Error Class
  * @class NotFoundError
  * @extends AppError
@@ -391,6 +403,7 @@ module.exports = {
   ValidationError,
   AuthenticationError,
   AuthorizationError,
+  ForbiddenError,
   NotFoundError,
   ConflictError,
   RateLimitError,

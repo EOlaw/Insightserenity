@@ -383,7 +383,7 @@ router.post(
   }),
   asyncHandler(async (req, res) => {
     const Invoice = require('../models/invoice-model');
-    const EmailService = require('../../notifications/services/email-service');
+    const EmailService = require('../../services/email-service');
     
     // Get invoices needing reminders
     const invoices = await Invoice.find({

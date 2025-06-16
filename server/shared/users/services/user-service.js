@@ -8,7 +8,7 @@
 const mongoose = require('mongoose');
 const User = require('../models/user-model');
 const Auth = require('../../auth/models/auth-model');
-const Organization = require('../../organizations/models/organization-model');
+const Organization = require('../../../hosted-organizations/organizations/models/organization-model');
 const logger = require('../../utils/logger');
 const { 
   ValidationError, 
@@ -16,7 +16,7 @@ const {
   ConflictError,
   ForbiddenError 
 } = require('../../utils/app-error');
-const EmailService = require('../../notifications/services/email-service');
+const EmailService = require('../../services/email-service');
 const FileService = require('../../utils/file-service');
 const CacheService = require('../../utils/cache-service');
 const AuditService = require('../../security/services/audit-service');
