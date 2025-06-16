@@ -2,8 +2,8 @@
 
 /**
  * @file Queue Helper
- * @description Job queue utilities using Bull
- * @version 1.0.0
+ * @description Job queue utilities using Bull with Redis availability checks
+ * @version 1.1.0
  */
 
 const Bull = require('bull');
@@ -18,7 +18,11 @@ class QueueHelper {
   constructor() {
     this.queues = new Map();
     this.processors = new Map();
-    this.defaultOptions = {
+    this.fallbackJobs = new Map(); // Store jobs when Redis is disabled
+    this.redisEnabled = config.redis?.enabled !== false; // Check Redis availability
+    
+    // Only configure Redis options if Redis is enabled
+    this.defaultOptions = this.redisEnabled ? {
       redis: {
         host: config.redis.host,
         port: config.redis.port,
@@ -34,113 +38,149 @@ class QueueHelper {
           delay: 2000
         }
       }
+    } : {
+      defaultJobOptions: {
+        removeOnComplete: true,
+        removeOnFail: false,
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 2000
+        }
+      }
     };
     
     this.initializeQueues();
   }
   
   /**
-   * Initialize default queues
+   * Initialize default queues only if Redis is enabled
    */
   initializeQueues() {
-    // Email queue
-    this.createQueue('email', {
-      defaultJobOptions: {
-        attempts: 5,
-        backoff: {
-          type: 'exponential',
-          delay: 5000
+    if (!this.redisEnabled) {
+      logger.info('Redis disabled - Queue operations will use fallback processing');
+      return;
+    }
+
+    try {
+      // Email queue
+      this.createQueue('email', {
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: {
+            type: 'exponential',
+            delay: 5000
+          }
         }
-      }
-    });
-    
-    // File processing queue
-    this.createQueue('file-processing', {
-      defaultJobOptions: {
-        timeout: 300000, // 5 minutes
-        attempts: 2
-      }
-    });
-    
-    // Notification queue
-    this.createQueue('notifications', {
-      defaultJobOptions: {
-        priority: constants.QUEUE_PRIORITY.HIGH,
-        attempts: 3
-      }
-    });
-    
-    // Analytics queue
-    this.createQueue('analytics', {
-      defaultJobOptions: {
-        priority: constants.QUEUE_PRIORITY.LOW,
-        removeOnComplete: 100,
-        removeOnFail: 1000
-      }
-    });
-    
-    // Webhook queue
-    this.createQueue('webhooks', {
-      defaultJobOptions: {
-        attempts: 5,
-        backoff: {
-          type: 'fixed',
-          delay: 10000
+      });
+      
+      // File processing queue
+      this.createQueue('file-processing', {
+        defaultJobOptions: {
+          timeout: 300000, // 5 minutes
+          attempts: 2
         }
-      }
-    });
-    
-    // Report generation queue
-    this.createQueue('reports', {
-      defaultJobOptions: {
-        timeout: 600000, // 10 minutes
-        attempts: 2,
-        priority: constants.QUEUE_PRIORITY.NORMAL
-      }
-    });
-    
-    // Cleanup queue
-    this.createQueue('cleanup', {
-      defaultJobOptions: {
-        priority: constants.QUEUE_PRIORITY.BACKGROUND,
-        removeOnComplete: true
-      }
-    });
+      });
+      
+      // Notification queue
+      this.createQueue('notifications', {
+        defaultJobOptions: {
+          priority: constants.QUEUE_PRIORITY.HIGH,
+          attempts: 3
+        }
+      });
+      
+      // Analytics queue
+      this.createQueue('analytics', {
+        defaultJobOptions: {
+          priority: constants.QUEUE_PRIORITY.LOW,
+          removeOnComplete: 100,
+          removeOnFail: 1000
+        }
+      });
+      
+      // Webhook queue
+      this.createQueue('webhooks', {
+        defaultJobOptions: {
+          attempts: 5,
+          backoff: {
+            type: 'fixed',
+            delay: 10000
+          }
+        }
+      });
+      
+      // Report generation queue
+      this.createQueue('reports', {
+        defaultJobOptions: {
+          timeout: 600000, // 10 minutes
+          attempts: 2,
+          priority: constants.QUEUE_PRIORITY.NORMAL
+        }
+      });
+      
+      // Cleanup queue
+      this.createQueue('cleanup', {
+        defaultJobOptions: {
+          priority: constants.QUEUE_PRIORITY.BACKGROUND,
+          removeOnComplete: true
+        }
+      });
+
+      logger.info('Queue system initialized with Redis support');
+    } catch (error) {
+      logger.error('Failed to initialize queue system', { error: error.message });
+      this.redisEnabled = false; // Fallback to disabled mode
+    }
   }
   
   /**
    * Create or get a queue
    * @param {string} name - Queue name
    * @param {Object} options - Queue options
-   * @returns {Object} Bull queue instance
+   * @returns {Object} Bull queue instance or null if Redis disabled
    */
   createQueue(name, options = {}) {
+    if (!this.redisEnabled) {
+      logger.warn(`Queue ${name} requested but Redis is disabled - using fallback`);
+      return null;
+    }
+
     if (this.queues.has(name)) {
       return this.queues.get(name);
     }
     
-    const queueOptions = {
-      ...this.defaultOptions,
-      ...options
-    };
-    
-    const queue = new Bull(name, queueOptions);
-    
-    // Set up event handlers
-    this.setupQueueEvents(queue, name);
-    
-    // Store queue
-    this.queues.set(name, queue);
-    
-    return queue;
+    try {
+      const queueOptions = {
+        ...this.defaultOptions,
+        ...options
+      };
+      
+      const queue = new Bull(name, queueOptions);
+      
+      // Set up event handlers
+      this.setupQueueEvents(queue, name);
+      
+      // Store queue
+      this.queues.set(name, queue);
+      
+      return queue;
+    } catch (error) {
+      logger.error(`Failed to create queue ${name}`, { error: error.message });
+      return null;
+    }
   }
   
   /**
    * Get queue by name
    * @param {string} name - Queue name
-   * @returns {Object} Bull queue instance
+   * @returns {Object} Bull queue instance or null if Redis disabled
    */
   getQueue(name) {
+    if (!this.redisEnabled) {
+      return null;
+    }
+
     if (!this.queues.has(name)) {
       return this.createQueue(name);
     }
@@ -195,15 +235,24 @@ class QueueHelper {
   }
   
   /**
-   * Add job to queue
+   * Add job to queue with fallback support
    * @param {string} queueName - Queue name
    * @param {string} jobName - Job name
    * @param {Object} data - Job data
    * @param {Object} options - Job options
-   * @returns {Promise<Object>} Job instance
+   * @returns {Promise<Object>} Job instance or fallback result
    */
   async addJob(queueName, jobName, data, options = {}) {
+    if (!this.redisEnabled) {
+      logger.info(`Processing job ${jobName} immediately (Redis disabled)`);
+      return this.processFallbackJob(queueName, jobName, data, options);
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not available`);
+    }
+
     const jobOptions = {
       ...queue.defaultJobOptions,
       ...options
@@ -219,15 +268,69 @@ class QueueHelper {
     
     return job;
   }
+
+  /**
+   * Process job immediately when Redis is disabled
+   * @param {string} queueName - Queue name
+   * @param {string} jobName - Job name
+   * @param {Object} data - Job data
+   * @param {Object} options - Job options
+   * @returns {Promise} Processing result
+   */
+  async processFallbackJob(queueName, jobName, data, options) {
+    const processorKey = `${queueName}:${jobName}`;
+    const processor = this.processors.get(processorKey) || this.processors.get(`${queueName}:*`);
+    
+    if (processor) {
+      try {
+        const mockJob = { data, name: jobName, id: `fallback-${Date.now()}` };
+        const result = await processor(mockJob);
+        logger.info(`Fallback job processed successfully`, { 
+          queue: queueName, 
+          job: jobName 
+        });
+        return result;
+      } catch (error) {
+        logger.error(`Fallback job processing failed`, { 
+          queue: queueName, 
+          job: jobName, 
+          error: error.message 
+        });
+        throw error;
+      }
+    } else {
+      logger.warn(`No processor found for fallback job`, { 
+        queue: queueName, 
+        job: jobName 
+      });
+      const jobId = `${queueName}:${jobName}:${Date.now()}`;
+      this.fallbackJobs.set(jobId, { queueName, jobName, data, options, timestamp: Date.now() });
+      return { id: jobId, status: 'stored' };
+    }
+  }
   
   /**
-   * Add bulk jobs to queue
+   * Add bulk jobs to queue with fallback support
    * @param {string} queueName - Queue name
    * @param {Array} jobs - Array of job objects
-   * @returns {Promise<Array>} Array of job instances
+   * @returns {Promise<Array>} Array of job instances or fallback results
    */
   async addBulkJobs(queueName, jobs) {
+    if (!this.redisEnabled) {
+      logger.info(`Processing ${jobs.length} jobs immediately (Redis disabled)`);
+      const results = [];
+      for (const job of jobs) {
+        const result = await this.processFallbackJob(queueName, job.name, job.data, job.options);
+        results.push(result);
+      }
+      return results;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not available`);
+    }
+
     const bulkJobs = jobs.map(job => ({
       name: job.name,
       data: job.data,
@@ -252,12 +355,22 @@ class QueueHelper {
    * @param {Object} options - Processing options
    */
   process(queueName, jobName, processor, options = {}) {
-    const queue = this.getQueue(queueName);
     const concurrency = options.concurrency || 1;
     
-    // Store processor for later reference
+    // Store processor for later reference (works with or without Redis)
     const processorKey = `${queueName}:${jobName || '*'}`;
     this.processors.set(processorKey, processor);
+
+    if (!this.redisEnabled) {
+      logger.info(`Processor registered for fallback processing: ${processorKey}`);
+      return;
+    }
+
+    const queue = this.getQueue(queueName);
+    if (!queue) {
+      logger.warn(`Cannot register processor for queue ${queueName} - queue not available`);
+      return;
+    }
     
     // Wrap processor with error handling
     const wrappedProcessor = async (job) => {
@@ -300,7 +413,14 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async pauseQueue(queueName) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot pause queue ${queueName} - Redis disabled`);
+      return;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return;
+
     await queue.pause();
     logger.info(`Queue ${queueName} paused`);
   }
@@ -311,7 +431,14 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async resumeQueue(queueName) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot resume queue ${queueName} - Redis disabled`);
+      return;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return;
+
     await queue.resume();
     logger.info(`Queue ${queueName} resumed`);
   }
@@ -322,7 +449,24 @@ class QueueHelper {
    * @returns {Promise<Object>} Queue status
    */
   async getQueueStatus(queueName) {
+    if (!this.redisEnabled) {
+      return {
+        name: queueName,
+        counts: {
+          waiting: 0,
+          active: 0,
+          completed: 0,
+          failed: 0,
+          delayed: 0,
+          total: 0
+        },
+        status: 'disabled',
+        fallbackJobs: Array.from(this.fallbackJobs.values()).filter(job => job.queueName === queueName).length
+      };
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return null;
     
     const [
       waiting,
@@ -361,6 +505,24 @@ class QueueHelper {
   async getAllQueuesStatus() {
     const statuses = [];
     
+    if (!this.redisEnabled) {
+      const fallbackStats = {
+        name: 'fallback',
+        counts: {
+          waiting: 0,
+          active: 0,
+          completed: 0,
+          failed: 0,
+          delayed: 0,
+          total: this.fallbackJobs.size
+        },
+        status: 'fallback',
+        fallbackJobs: this.fallbackJobs.size
+      };
+      statuses.push(fallbackStats);
+      return statuses;
+    }
+    
     for (const [name] of this.queues) {
       const status = await this.getQueueStatus(name);
       statuses.push(status);
@@ -376,7 +538,14 @@ class QueueHelper {
    * @returns {Promise<Object>} Clean result
    */
   async cleanQueue(queueName, options = {}) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot clean queue ${queueName} - Redis disabled`);
+      return { cleaned: 0, status: 'disabled', queue: queueName };
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return { cleaned: 0, status: 'not_found', queue: queueName };
+
     const {
       grace = 3600000, // 1 hour
       status = 'completed',
@@ -403,7 +572,14 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async emptyQueue(queueName) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot empty queue ${queueName} - Redis disabled`);
+      return;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return;
+
     await queue.empty();
     logger.warn(`Queue ${queueName} emptied`);
   }
@@ -414,6 +590,11 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async closeQueue(queueName) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot close queue ${queueName} - Redis disabled`);
+      return;
+    }
+
     const queue = this.queues.get(queueName);
     if (queue) {
       await queue.close();
@@ -427,6 +608,12 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async closeAll() {
+    if (!this.redisEnabled) {
+      this.fallbackJobs.clear();
+      logger.info('Cleared fallback jobs storage');
+      return;
+    }
+
     for (const [name, queue] of this.queues) {
       await queue.close();
       logger.info(`Queue ${name} closed`);
@@ -444,7 +631,15 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async scheduleRecurring(queueName, jobName, cronExpression, data, options = {}) {
+    if (!this.redisEnabled) {
+      logger.warn(`Cannot schedule recurring job ${jobName} - Redis disabled`);
+      return;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) {
+      throw new Error(`Queue ${queueName} not available`);
+    }
     
     await queue.add(
       jobName,
@@ -470,7 +665,13 @@ class QueueHelper {
    * @returns {Promise<Object>} Job instance
    */
   async getJob(queueName, jobId) {
+    if (!this.redisEnabled) {
+      return this.fallbackJobs.get(jobId) || null;
+    }
+
     const queue = this.getQueue(queueName);
+    if (!queue) return null;
+
     return queue.getJob(jobId);
   }
   
@@ -481,6 +682,15 @@ class QueueHelper {
    * @returns {Promise<void>}
    */
   async retryJob(queueName, jobId) {
+    if (!this.redisEnabled) {
+      const fallbackJob = this.fallbackJobs.get(jobId);
+      if (fallbackJob) {
+        logger.info(`Retrying fallback job ${jobId}`);
+        return this.processFallbackJob(fallbackJob.queueName, fallbackJob.jobName, fallbackJob.data, fallbackJob.options);
+      }
+      return;
+    }
+
     const job = await this.getJob(queueName, jobId);
     if (job && job.failedReason) {
       await job.retry();
@@ -500,7 +710,9 @@ class QueueHelper {
       activeJobs: 0,
       failedJobs: 0,
       completedJobs: 0,
-      waitingJobs: 0
+      waitingJobs: 0,
+      redisEnabled: this.redisEnabled,
+      fallbackJobs: this.redisEnabled ? 0 : this.fallbackJobs.size
     };
     
     queues.forEach(queue => {
