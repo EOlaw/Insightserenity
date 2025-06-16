@@ -2,8 +2,8 @@
 
 /**
  * @file Error Handler Middleware
- * @description Global error handling middleware
- * @version 1.0.0
+ * @description Global error handling middleware with ResponseHelper integration
+ * @version 1.1.0
  */
 
 const config = require('../config');
@@ -48,7 +48,7 @@ class ErrorHandler {
       // Process error
       const processedError = this.processError(err);
       
-      // Send error response
+      // Send error response using ResponseHelper
       this.sendErrorResponse(processedError, req, res);
     };
   }
@@ -276,8 +276,8 @@ class ErrorHandler {
       request: {
         method: req.method,
         url: req.originalUrl,
-        headers: req.headers,
-        body: req.body,
+        headers: this.sanitizeHeaders(req.headers),
+        body: this.sanitizeBody(req.body),
         query: req.query,
         params: req.params
       },
@@ -302,41 +302,80 @@ class ErrorHandler {
   }
   
   /**
-   * Send error response
+   * Sanitize sensitive headers for logging
    */
-  sendErrorResponse(error, req, res) {
-    const statusCode = error.statusCode || 500;
+  sanitizeHeaders(headers) {
+    const sanitized = { ...headers };
+    const sensitiveHeaders = ['authorization', 'cookie', 'x-api-key', 'x-auth-token'];
     
-    const response = {
-      success: false,
-      error: {
-        message: error.message,
-        code: error.code || `E${statusCode}`,
-        ...(error.details && { details: error.details })
-      },
-      ...(this.isDevelopment && {
-        stack: error.stack,
-        originalError: error
-      }),
-      timestamp: new Date().toISOString(),
-      path: req.originalUrl,
-      requestId: req.id
-    };
+    sensitiveHeaders.forEach(header => {
+      if (sanitized[header]) {
+        sanitized[header] = '[REDACTED]';
+      }
+    });
     
-    res.status(statusCode).json(response);
+    return sanitized;
   }
   
   /**
-   * Not found handler
+   * Sanitize sensitive body data for logging
+   */
+  sanitizeBody(body) {
+    if (!body || typeof body !== 'object') return body;
+    
+    const sanitized = { ...body };
+    const sensitiveFields = ['password', 'token', 'secret', 'key', 'authorization'];
+    
+    sensitiveFields.forEach(field => {
+      if (sanitized[field]) {
+        sanitized[field] = '[REDACTED]';
+      }
+    });
+    
+    return sanitized;
+  }
+  
+  /**
+   * Send error response using ResponseHelper
+   */
+  sendErrorResponse(error, req, res) {
+    const statusCode = error.statusCode || 500;
+    const errorCode = error.code || `E${statusCode}`;
+    
+    // Prepare additional details for development environment
+    const details = {
+      ...(error.details && { details: error.details }),
+      ...(this.isDevelopment && {
+        stack: error.stack,
+        originalError: {
+          name: error.name,
+          message: error.message
+        }
+      }),
+      path: req.originalUrl,
+      requestId: req.id,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Use ResponseHelper for consistent error responses
+    return ResponseHelper.error(res, error.message, statusCode, errorCode, details);
+  }
+  
+  /**
+   * Not found handler using ResponseHelper
    */
   notFound() {
     return (req, res, next) => {
-      const error = new AppError(
-        `Cannot ${req.method} ${req.originalUrl}`,
-        404,
-        errorCodes.BUSINESS.RESOURCE_NOT_FOUND
-      );
-      next(error);
+      const message = `Cannot ${req.method} ${req.originalUrl}`;
+      const details = {
+        method: req.method,
+        path: req.originalUrl,
+        timestamp: new Date().toISOString(),
+        requestId: req.id
+      };
+      
+      // Use ResponseHelper for consistent 404 responses
+      return ResponseHelper.notFound(res, 'Route', req.originalUrl);
     };
   }
   
@@ -357,19 +396,20 @@ class ErrorHandler {
       try {
         this.handle()(err, req, res, next);
       } catch (handlerError) {
-        // If error handler itself fails, send basic error response
+        // If error handler itself fails, send basic error response using ResponseHelper
         logger.error('Error handler failed', {
           originalError: err,
-          handlerError: handlerError
+          handlerError: handlerError,
+          requestId: req.id
         });
         
-        res.status(500).json({
-          success: false,
-          error: {
-            message: 'Internal server error',
-            code: 'E500'
-          }
-        });
+        // Fallback to ResponseHelper for consistent error format
+        return ResponseHelper.error(
+          res,
+          'Internal server error occurred while processing error',
+          500,
+          'HANDLER_ERROR'
+        );
       }
     };
   }
@@ -388,7 +428,24 @@ class ErrorHandler {
   }
   
   /**
-   * Create error for specific scenarios
+   * Handle express-validator errors specifically
+   */
+  handleValidationErrors() {
+    return (req, res, next) => {
+      const { validationResult } = require('express-validator');
+      const errors = validationResult(req);
+      
+      if (!errors.isEmpty()) {
+        const formattedErrors = errors.array().map(this.validationFormatter);
+        return ResponseHelper.validationError(res, formattedErrors);
+      }
+      
+      next();
+    };
+  }
+  
+  /**
+   * Create error for specific scenarios using ResponseHelper patterns
    */
   static createError(type, details = {}) {
     const errorTemplates = {
@@ -433,6 +490,18 @@ class ErrorHandler {
       details.details
     );
   }
+  
+  /**
+   * Quick response methods using ResponseHelper
+   */
+  static responses = {
+    unauthorized: (res, message, code) => ResponseHelper.unauthorized(res, message, code),
+    forbidden: (res, message, code) => ResponseHelper.forbidden(res, message, code),
+    notFound: (res, resource, id) => ResponseHelper.notFound(res, resource, id),
+    conflict: (res, message, field) => ResponseHelper.conflict(res, message, field),
+    tooManyRequests: (res, retryAfter, message) => ResponseHelper.tooManyRequests(res, retryAfter, message),
+    validationError: (res, errors, message) => ResponseHelper.validationError(res, errors, message)
+  };
 }
 
 // Create singleton instance
@@ -444,9 +513,13 @@ module.exports = {
   notFound: errorHandler.notFound(),
   asyncHandler: errorHandler.asyncHandler,
   errorBoundary: errorHandler.errorBoundary(),
+  handleValidationErrors: errorHandler.handleValidationErrors(),
   
   // Error creation helpers
   createError: ErrorHandler.createError,
+  
+  // Quick response methods
+  responses: ErrorHandler.responses,
   
   // Validation formatter
   validationFormatter: errorHandler.validationFormatter,
