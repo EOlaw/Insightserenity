@@ -5,10 +5,10 @@
  */
 
 const mongoose = require('mongoose');
-const slugify = require('slugify');
 const validator = require('validator');
-// const { generateUniqueId } = require('../../../shared/utils/helpers/idGenerator');
-// const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organizationConstants');
+const slugify = require('slugify');
+const { generateUniqueId } = require('../../../shared/utils/helpers/id-generator-helper');
+const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organization-constants');
 const Schema = mongoose.Schema;
 
 /**
@@ -22,7 +22,7 @@ const hostedOrganizationSchema = new Schema({
     unique: true,
     required: true,
     index: true,
-    // default: () => generateUniqueId('ORG')
+    default: () => generateUniqueId('ORG')
   },
   tenantId: {
     type: String,
@@ -62,10 +62,10 @@ const hostedOrganizationSchema = new Schema({
     registrationNumber: String,
     taxId: String,
     vatNumber: String,
-    // businessType: {
-    //   type: String,
-    //   enum: ORGANIZATION_CONSTANTS.BUSINESS_TYPES
-    // },
+    businessType: {
+      type: String,
+      enum: ORGANIZATION_CONSTANTS.BUSINESS_TYPES
+    },
     industry: {
       primary: {
         code: String,
