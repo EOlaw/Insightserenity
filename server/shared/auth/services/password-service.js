@@ -5,13 +5,15 @@
  * @version 3.0.0
  */
 
-const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+
+const bcrypt = require('bcryptjs');
 const zxcvbn = require('zxcvbn');
+
 const config = require('../../config');
-const logger = require('../../utils/logger');
-const { ValidationError } = require('../../utils/app-error');
 const EncryptionService = require('../../security/services/encryption-service');
+const { ValidationError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Password Service Class

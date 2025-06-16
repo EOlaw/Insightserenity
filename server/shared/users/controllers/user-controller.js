@@ -5,17 +5,17 @@
  * @version 3.0.0
  */
 
-const UserService = require('../services/user-service');
-const asyncHandler = require('../../utils/async-handler');
-const responseHandler = require('../../utils/response-handler');
-const logger = require('../../utils/logger');
+const config = require('../../config');
 const { 
   ValidationError, 
   NotFoundError,
   ForbiddenError 
 } = require('../../utils/app-error');
+const asyncHandler = require('../../utils/async-handler');
 const FileUploadService = require('../../utils/file-upload-service');
-const config = require('../../config');
+const logger = require('../../utils/logger');
+const responseHandler = require('../../utils/response-handler');
+const UserService = require('../services/user-service');
 
 /**
  * User Controller Class

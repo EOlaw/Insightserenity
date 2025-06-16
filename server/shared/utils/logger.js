@@ -4,8 +4,10 @@
  */
 
 const winston = require('winston');
+
 const { format, transports } = winston;
 const path = require('path');
+
 const config = require('../config/config');
 require('winston-daily-rotate-file');
 

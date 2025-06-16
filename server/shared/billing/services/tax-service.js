@@ -5,10 +5,10 @@
  * @version 3.0.0
  */
 
-const logger = require('../../utils/logger');
+const config = require('../../config');
 const { ValidationError } = require('../../utils/app-error');
 const CacheService = require('../../utils/cache-service');
-const config = require('../../config');
+const logger = require('../../utils/logger');
 
 // Tax rate database (simplified - in production, use a tax API service)
 const TAX_RATES = {

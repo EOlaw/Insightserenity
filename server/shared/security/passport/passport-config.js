@@ -5,18 +5,19 @@
  * @version 3.0.0
  */
 
-const passport = require('passport');
 const mongoose = require('mongoose');
-const logger = require('../../utils/logger');
+const passport = require('passport');
+
 const { AuthenticationError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 // Import strategies
-const LocalStrategy = require('./strategies/local-strategy');
-const GoogleStrategy = require('./strategies/google-strategy');
 const GitHubStrategy = require('./strategies/github-strategy');
+const GoogleStrategy = require('./strategies/google-strategy');
 const LinkedInStrategy = require('./strategies/linkedin-strategy');
-const PasskeyStrategy = require('./strategies/passkey-strategy');
+const LocalStrategy = require('./strategies/local-strategy');
 const OrganizationStrategy = require('./strategies/organization-strategy');
+const PasskeyStrategy = require('./strategies/passkey-strategy');
 
 /**
  * Passport Configuration Class

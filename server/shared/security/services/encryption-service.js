@@ -6,10 +6,12 @@
  */
 
 const crypto = require('crypto');
+
 const bcrypt = require('bcryptjs');
-const config = require('../../config');
-const logger = require('../../utils/logger');
+
+const config = require('../../config/config');
 const { AppError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Encryption Service Class

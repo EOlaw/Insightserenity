@@ -6,13 +6,15 @@
  * @version 1.0.0
  */
 
-const axios = require('axios');
 const crypto = require('crypto');
-const logger = require('../utils/logger');
+
+const axios = require('axios');
+
 const config = require('../config');
-const queueHelper = require('../utils/helpers/queue-helper');
-const cacheHelper = require('../utils/helpers/cache-helper');
 const { AppError } = require('../utils/app-error');
+const cacheHelper = require('../utils/helpers/cache-helper');
+const queueHelper = require('../utils/helpers/queue-helper');
+const logger = require('../utils/logger');
 
 /**
  * Webhook Service Class

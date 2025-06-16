@@ -5,16 +5,19 @@
  * @version 3.0.0
  */
 
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const User = require('../../users/models/user-model');
+
+const jwt = require('jsonwebtoken');
+
 const Organization = require('../../../hosted-organizations/organizations/models/organization-model');
 const TokenService = require('../../auth/services/token-service');
-const TokenBlacklistService = require('./token-blacklist-service');
-const AuditService = require('./audit-service');
-const logger = require('../../utils/logger');
 const config = require('../../config');
+const User = require('../../users/models/user-model');
 const { AuthenticationError, TokenError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
+
+const AuditService = require('./audit-service');
+const TokenBlacklistService = require('./token-blacklist-service');
 
 /**
  * Token Refresh Service Class

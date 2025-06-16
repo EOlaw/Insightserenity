@@ -5,8 +5,8 @@
  */
 
 const mongoose = require('mongoose');
-const validator = require('validator');
 const slugify = require('slugify');
+const validator = require('validator');
 // const { generateUniqueId } = require('../../../shared/utils/helpers/idGenerator');
 // const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organizationConstants');
 const Schema = mongoose.Schema;

@@ -6,24 +6,27 @@
  */
 
 const mongoose = require('mongoose');
-const SubscriptionPlan = require('../models/subscription-plan-model');
-const Subscription = require('../models/subscription-model');
-const Invoice = require('../models/invoice-model');
-const Payment = require('../models/payment-model');
+
+const config = require('../../config');
+const AuditService = require('../../security/services/audit-service');
+const EmailService = require('../../services/email-service');
 const User = require('../../users/models/user-model');
-const logger = require('../../utils/logger');
 const { 
   ValidationError, 
   NotFoundError, 
   ConflictError,
   PaymentError 
 } = require('../../utils/app-error');
-const EmailService = require('../../services/email-service');
+const CacheService = require('../../utils/cache-service');
+const logger = require('../../utils/logger');
+const Invoice = require('../models/invoice-model');
+const Payment = require('../models/payment-model');
+const Subscription = require('../models/subscription-model');
+const SubscriptionPlan = require('../models/subscription-plan-model');
+
 const PaymentGatewayService = require('./payment-gateway-service');
 const TaxService = require('./tax-service');
-const AuditService = require('../../security/services/audit-service');
-const CacheService = require('../../utils/cache-service');
-const config = require('../../config');
+
 
 /**
  * Billing Service Class

@@ -7,9 +7,10 @@
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const paypal = require('@paypal/checkout-server-sdk');
-const logger = require('../../utils/logger');
-const { PaymentError } = require('../../utils/app-error');
+
 const config = require('../../config');
+const { PaymentError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 // PayPal Environment Configuration
 const paypalEnvironment = process.env.NODE_ENV === 'production'

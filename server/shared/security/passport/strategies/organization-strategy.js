@@ -8,13 +8,14 @@
 const Strategy = require('passport-strategy').Strategy;
 const saml = require('@node-saml/passport-saml');
 const jwt = require('jsonwebtoken');
-const logger = require('../../../utils/logger');
-const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
-const UserService = require('../../../users/services/user-service');
+
 const OrganizationService = require('../../../../hosted-organizations/organizations/services/organization-service');
 const AuthService = require('../../../auth/services/auth-service');
+const config = require('../../../config/config');
+const UserService = require('../../../users/services/user-service');
+const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
+const logger = require('../../../utils/logger');
 const AuditService = require('../../services/audit-service');
-const config = require('../../../config');
 
 /**
  * Organization SSO Strategy Class

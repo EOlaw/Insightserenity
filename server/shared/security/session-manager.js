@@ -4,14 +4,16 @@
  * @version 3.0.0
  */
 
-const session = require('express-session');
 const MongoStore = require('connect-mongo');
+const session = require('express-session');
 const RedisStore = require('connect-redis').default;
 const { createClient } = require('redis');
+
 const crypto = require('crypto');
-const logger = require('../utils/logger');
+
 const config = require('../config/config');
 const { AppError } = require('../utils/app-error');
+const logger = require('../utils/logger');
 
 /**
  * Session Manager Class

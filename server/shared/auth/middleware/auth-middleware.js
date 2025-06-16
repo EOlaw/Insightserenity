@@ -3,9 +3,10 @@
 const jwt = require('jsonwebtoken');
 const passport = require('passport');
 const { RateLimiterRedis } = require('rate-limiter-flexible');
+
+const AuthModel = require('../../auth/models/auth-model');
 const redis = require('../../config/redis');
 const User = require('../../users/models/user-model');
-const AuthModel = require('../../auth/models/auth-model');
 const { AppError } = require('../../utils/app-error');
 const { asyncHandler } = require('../../utils/async-handler');
 const logger = require('../../utils/logger');

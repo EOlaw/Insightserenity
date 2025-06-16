@@ -6,9 +6,10 @@
  */
 
 const mongoose = require('mongoose');
+
 const redis = require('../../config/redis');
-const logger = require('../../utils/logger');
 const { AppError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Token Blacklist Schema

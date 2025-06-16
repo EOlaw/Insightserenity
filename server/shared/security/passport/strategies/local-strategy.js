@@ -6,12 +6,13 @@
  */
 
 const LocalStrategy = require('passport-local').Strategy;
-const logger = require('../../../utils/logger');
-const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
+
 const AuthService = require('../../../auth/services/auth-service');
+const config = require('../../../config/config');
 const UserService = require('../../../users/services/user-service');
+const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
+const logger = require('../../../utils/logger');
 const AuditService = require('../../services/audit-service');
-const config = require('../../../config');
 
 /**
  * Local Authentication Strategy Class

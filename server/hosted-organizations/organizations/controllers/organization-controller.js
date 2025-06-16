@@ -4,12 +4,12 @@
  * @version 2.0.0
  */
 
-const HostedOrganizationService = require('../services/organization-service');
 // const { catchAsync } = require('../../../shared/utils/errors/catchAsync');
-const { AppError } = require('../../../shared/utils/app-error');
-const { validateRequest } = require('../../../shared/utils/validation/validator');
 const { sanitizeInput } = require('../../../shared/security/sanitizer');
+const { AppError } = require('../../../shared/utils/app-error');
 const logger = require('../../../shared/utils/logger');
+const { validateRequest } = require('../../../shared/utils/validation/validator');
+const HostedOrganizationService = require('../services/organization-service');
 
 class HostedOrganizationController {
   /**

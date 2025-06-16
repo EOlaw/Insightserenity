@@ -9,16 +9,19 @@
 const multer = require('multer');
 const sharp = require('sharp');
 const ffmpeg = require('fluent-ffmpeg');
+
 const fs = require('fs').promises;
-const path = require('path');
 const crypto = require('crypto');
-const mime = require('mime-types');
+const path = require('path');
+
 const { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const logger = require('../logger');
-const config = require('../../config');
+const mime = require('mime-types');
+
+const config = require('../../config/config');
 const constants = require('../../config/constants');
 const { AppError } = require('../app-error');
+const logger = require('../logger');
 
 /**
  * File Helper Class

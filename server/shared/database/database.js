@@ -1,33 +1,40 @@
-// server/shared/config/database.js
-// Project: Insight Serenity - Database Configuration
+// server/shared/database/database.js
 /**
  * @file Database Configuration
- * @description MongoDB database configuration and connection settings
- * @version 3.0.0
+ * @description MongoDB database configuration and connection management
+ * @version 3.1.0
  */
 
 const mongoose = require('mongoose');
 
+const config = require('../config/config');
+const logger = require('../utils/logger');
+
 /**
- * Database Configuration Class
- * @class DatabaseConfig
+ * Database Manager Class
+ * @class DatabaseManager
  */
-class DatabaseConfig {
+class DatabaseManager {
   constructor() {
-    this.url = process.env.MONGODB_URI || 'mongodb://localhost:27017/insightserenity';
+    this.connections = new Map();
+    this.isInitialized = false;
+    this.isShuttingDown = false;
+    this.url = config.database.uri;
+    
+    // Updated connection options compatible with current MongoDB driver
     this.options = {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       maxPoolSize: parseInt(process.env.DB_POOL_SIZE, 10) || 10,
-      serverSelectionTimeoutMS: parseInt(process.env.DB_TIMEOUT, 10) || 5000,
-      socketTimeoutMS: parseInt(process.env.DB_SOCKET_TIMEOUT, 10) || 45000,
+      serverSelectionTimeoutMS: parseInt(process.env.DB_TIMEOUT, 10) || 30000,
+      socketTimeoutMS: parseInt(process.env.DB_SOCKET_TIMEOUT, 10) || 60000,
+      heartbeatFrequencyMS: parseInt(process.env.DB_HEARTBEAT_FREQUENCY, 10) || 30000,
+      maxIdleTimeMS: parseInt(process.env.DB_MAX_IDLE_TIME, 10) || 30000,
       family: 4 // Use IPv4, skip trying IPv6
     };
     
     // Multi-tenant database configuration
     this.multiTenant = {
       enabled: process.env.ENABLE_MULTI_TENANT_DB === 'true',
-      strategy: process.env.TENANT_DB_STRATEGY || 'shared', // 'shared' or 'separate'
+      strategy: process.env.TENANT_DB_STRATEGY || 'shared',
       prefix: process.env.TENANT_DB_PREFIX || 'tenant_'
     };
     
@@ -40,33 +47,112 @@ class DatabaseConfig {
     
     // Connection retry configuration
     this.retry = {
-      maxAttempts: parseInt(process.env.DB_RETRY_ATTEMPTS, 10) || 5,
-      interval: parseInt(process.env.DB_RETRY_INTERVAL, 10) || 5000,
+      maxAttempts: parseInt(process.env.DB_RETRY_ATTEMPTS, 10) || 3,
+      interval: parseInt(process.env.DB_RETRY_INTERVAL, 10) || 2000,
       backoffMultiplier: parseFloat(process.env.DB_RETRY_BACKOFF, 10) || 1.5
     };
     
-    // Encryption settings for sensitive data
-    this.encryption = {
-      enabled: process.env.DB_ENCRYPTION_ENABLED === 'true',
-      keyId: process.env.DB_ENCRYPTION_KEY_ID,
-      kmsProvider: process.env.DB_KMS_PROVIDER || 'local',
-      localKey: process.env.DB_ENCRYPTION_LOCAL_KEY
-    };
-    
-    // Query performance settings
+    // Performance monitoring
     this.performance = {
-      slowQueryThreshold: parseInt(process.env.DB_SLOW_QUERY_MS, 10) || 100,
+      slowQueryThreshold: parseInt(process.env.DB_SLOW_QUERY_MS, 10) || 1000,
       explainEnabled: process.env.DB_EXPLAIN_ENABLED === 'true',
       profilingLevel: parseInt(process.env.DB_PROFILING_LEVEL, 10) || 0
     };
     
-    // Backup configuration
-    this.backup = {
-      enabled: process.env.DB_BACKUP_ENABLED === 'true',
-      schedule: process.env.DB_BACKUP_SCHEDULE || '0 2 * * *', // Daily at 2 AM
-      retention: parseInt(process.env.DB_BACKUP_RETENTION_DAYS, 10) || 30,
-      location: process.env.DB_BACKUP_LOCATION || 's3'
+    // Track connection state
+    this.connectionState = {
+      isConnected: false,
+      lastConnectionTime: null,
+      connectionAttempts: 0,
+      lastError: null
     };
+  }
+  
+  /**
+   * Initialize database connection
+   * @returns {Promise<void>}
+   */
+  async initialize() {
+    if (this.isInitialized) {
+      return;
+    }
+    
+    try {
+      await this.connect();
+      this.setupGlobalHandlers();
+      this.isInitialized = true;
+      
+      logger.info('Database manager initialized successfully');
+    } catch (error) {
+      logger.error('Database initialization failed', { 
+        error: error.message,
+        attempts: this.connectionState.connectionAttempts 
+      });
+      throw error;
+    }
+  }
+  
+  /**
+   * Connect to MongoDB with retry logic
+   * @param {string} dbName - Database name
+   * @returns {Promise<mongoose.Connection>}
+   */
+  async connect(dbName = null) {
+    const connectionKey = dbName || 'main';
+    
+    if (this.connections.has(connectionKey)) {
+      const existingConnection = this.connections.get(connectionKey);
+      if (existingConnection.readyState === 1) {
+        return existingConnection;
+      }
+    }
+    
+    const connectionString = this.getConnectionString(dbName);
+    let attempts = 0;
+    let lastError;
+    
+    while (attempts < this.retry.maxAttempts) {
+      try {
+        this.connectionState.connectionAttempts++;
+        attempts++;
+        
+        logger.info(`Attempting database connection (${attempts}/${this.retry.maxAttempts})`);
+        
+        const connection = await mongoose.createConnection(connectionString, this.options);
+        
+        // Set up connection event handlers
+        this.setupConnectionHandlers(connection, connectionKey);
+        
+        // Store connection
+        this.connections.set(connectionKey, connection);
+        
+        this.connectionState.isConnected = true;
+        this.connectionState.lastConnectionTime = new Date();
+        this.connectionState.lastError = null;
+        
+        logger.info(`Database connected successfully: ${connectionKey}`);
+        
+        return connection;
+      } catch (error) {
+        lastError = error;
+        this.connectionState.lastError = error.message;
+        
+        logger.warn(`Database connection attempt ${attempts} failed`, {
+          error: error.message,
+          connectionKey,
+          attemptsRemaining: this.retry.maxAttempts - attempts
+        });
+        
+        if (attempts < this.retry.maxAttempts) {
+          const delay = this.retry.interval * Math.pow(this.retry.backoffMultiplier, attempts - 1);
+          logger.info(`Retrying database connection in ${delay}ms`);
+          await this.sleep(delay);
+        }
+      }
+    }
+    
+    this.connectionState.isConnected = false;
+    throw new Error(`Failed to connect to database after ${attempts} attempts: ${lastError.message}`);
   }
   
   /**
@@ -79,147 +165,98 @@ class DatabaseConfig {
       return this.url;
     }
     
-    const url = new URL(this.url);
-    const pathParts = url.pathname.split('/');
-    pathParts[pathParts.length - 1] = dbName;
-    url.pathname = pathParts.join('/');
-    
-    return url.toString();
-  }
-  
-  /**
-   * Get connection options with authentication
-   * @returns {Object} Mongoose connection options
-   */
-  getConnectionOptions() {
-    const options = { ...this.options };
-    
-    // Add authentication if provided
-    if (process.env.DB_USERNAME && process.env.DB_PASSWORD) {
-      options.auth = {
-        username: process.env.DB_USERNAME,
-        password: process.env.DB_PASSWORD
-      };
-      
-      if (process.env.DB_AUTH_SOURCE) {
-        options.authSource = process.env.DB_AUTH_SOURCE;
-      }
+    try {
+      const url = new URL(this.url);
+      const pathParts = url.pathname.split('/');
+      pathParts[pathParts.length - 1] = dbName;
+      url.pathname = pathParts.join('/');
+      return url.toString();
+    } catch (error) {
+      logger.error('Error building connection string', { error: error.message, dbName });
+      return this.url;
     }
-    
-    // Add SSL/TLS options for production
-    if (process.env.NODE_ENV === 'production') {
-      options.ssl = process.env.DB_SSL === 'true';
-      options.sslValidate = process.env.DB_SSL_VALIDATE !== 'false';
-      
-      if (process.env.DB_SSL_CA) {
-        options.sslCA = process.env.DB_SSL_CA;
-      }
-    }
-    
-    // Add replica set configuration
-    if (process.env.DB_REPLICA_SET) {
-      options.replicaSet = process.env.DB_REPLICA_SET;
-      options.readPreference = process.env.DB_READ_PREFERENCE || 'primaryPreferred';
-    }
-    
-    return options;
-  }
-  
-  /**
-   * Create connection with retry logic
-   * @param {string} dbName - Database name
-   * @returns {Promise<mongoose.Connection>} Mongoose connection
-   */
-  async createConnection(dbName = null) {
-    const connectionString = this.getConnectionString(dbName);
-    const options = this.getConnectionOptions();
-    
-    let attempts = 0;
-    let lastError;
-    
-    while (attempts < this.retry.maxAttempts) {
-      try {
-        const connection = await mongoose.createConnection(connectionString, options);
-        
-        // Set up connection event handlers
-        this.setupConnectionHandlers(connection, dbName);
-        
-        return connection;
-      } catch (error) {
-        lastError = error;
-        attempts++;
-        
-        if (attempts < this.retry.maxAttempts) {
-          const delay = this.retry.interval * Math.pow(this.retry.backoffMultiplier, attempts - 1);
-          console.log(`Database connection attempt ${attempts} failed. Retrying in ${delay}ms...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    
-    throw new Error(`Failed to connect to database after ${attempts} attempts: ${lastError.message}`);
   }
   
   /**
    * Set up connection event handlers
    * @param {mongoose.Connection} connection - Mongoose connection
-   * @param {string} dbName - Database name
+   * @param {string} connectionKey - Connection identifier
    */
-  setupConnectionHandlers(connection, dbName) {
-    const dbIdentifier = dbName || 'main';
-    
+  setupConnectionHandlers(connection, connectionKey) {
     connection.on('connected', () => {
-      console.log(`✓ Database connected: ${dbIdentifier}`);
+      console.log(`✓ Database connected: ${connectionKey}`);
+      this.connectionState.isConnected = true;
+      this.connectionState.lastConnectionTime = new Date();
     });
     
     connection.on('error', (error) => {
-      console.error(`✗ Database error (${dbIdentifier}):`, error.message);
+      console.error(`✗ Database error (${connectionKey}):`, error.message);
+      this.connectionState.lastError = error.message;
+      
+      // Log detailed error for debugging
+      logger.error('Database connection error', {
+        connectionKey,
+        error: error.message,
+        errorCode: error.code,
+        stack: error.stack
+      });
     });
     
     connection.on('disconnected', () => {
-      console.log(`✗ Database disconnected: ${dbIdentifier}`);
+      console.log(`✗ Database disconnected: ${connectionKey}`);
+      this.connectionState.isConnected = false;
+      
+      // Attempt to reconnect if not shutting down
+      if (!this.isShuttingDown) {
+        logger.warn('Database disconnected, attempting to reconnect', { connectionKey });
+        setTimeout(() => {
+          this.reconnect(connectionKey);
+        }, 5000);
+      }
     });
     
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      await connection.close();
-      console.log(`Database connection closed: ${dbIdentifier}`);
+    connection.on('reconnected', () => {
+      console.log(`✓ Database reconnected: ${connectionKey}`);
+      this.connectionState.isConnected = true;
+      this.connectionState.lastConnectionTime = new Date();
+    });
+    
+    connection.on('close', () => {
+      console.log(`✓ Database connection closed: ${connectionKey}`);
+      this.connections.delete(connectionKey);
     });
   }
   
   /**
-   * Configure mongoose plugins and settings
-   * @param {mongoose} mongooseInstance - Mongoose instance
+   * Setup global MongoDB/Mongoose handlers
    */
-  configureMongoose(mongooseInstance) {
-    // Set default options
-    mongooseInstance.set('strictQuery', true);
-    mongooseInstance.set('debug', process.env.DB_DEBUG === 'true');
+  setupGlobalHandlers() {
+    // Configure Mongoose settings (remove deprecated options)
+    mongoose.set('strictQuery', true);
     
-    // Add custom error messages
-    mongooseInstance.Error.messages.general.required = 'Field `{PATH}` is required';
-    mongooseInstance.Error.messages.String.minlength = 'Field `{PATH}` must be at least {MINLENGTH} characters';
-    mongooseInstance.Error.messages.String.maxlength = 'Field `{PATH}` must be at most {MAXLENGTH} characters';
+    // Only set debug if explicitly enabled
+    if (process.env.DB_DEBUG === 'true') {
+      mongoose.set('debug', true);
+    }
     
-    // Add global plugins
+    // Global error handler
+    mongoose.connection.on('error', (error) => {
+      logger.error('Global mongoose error', { error: error.message });
+    });
+    
+    // Add performance monitoring if enabled
     if (this.performance.slowQueryThreshold > 0) {
-      mongooseInstance.plugin(this.createSlowQueryPlugin());
-    }
-    
-    // Add encryption plugin if enabled
-    if (this.encryption.enabled) {
-      mongooseInstance.plugin(this.createEncryptionPlugin());
+      this.setupSlowQueryMonitoring();
     }
   }
   
   /**
-   * Create slow query logging plugin
-   * @returns {Function} Mongoose plugin
+   * Setup slow query monitoring
    */
-  createSlowQueryPlugin() {
+  setupSlowQueryMonitoring() {
     const threshold = this.performance.slowQueryThreshold;
     
-    return function slowQueryPlugin(schema) {
+    mongoose.plugin(function slowQueryPlugin(schema) {
       schema.pre(/^find/, function() {
         this._startTime = Date.now();
       });
@@ -228,7 +265,7 @@ class DatabaseConfig {
         if (this._startTime) {
           const duration = Date.now() - this._startTime;
           if (duration > threshold) {
-            console.warn(`Slow query detected (${duration}ms):`, {
+            logger.warn('Slow query detected', {
               collection: this.mongooseCollection.name,
               operation: this.op,
               duration,
@@ -237,25 +274,138 @@ class DatabaseConfig {
           }
         }
       });
+    });
+  }
+  
+  /**
+   * Reconnect to database
+   * @param {string} connectionKey - Connection identifier
+   */
+  async reconnect(connectionKey) {
+    try {
+      const existingConnection = this.connections.get(connectionKey);
+      if (existingConnection) {
+        await existingConnection.close();
+      }
+      
+      await this.connect(connectionKey === 'main' ? null : connectionKey);
+    } catch (error) {
+      logger.error('Database reconnection failed', {
+        connectionKey,
+        error: error.message
+      });
+    }
+  }
+  
+  /**
+   * Get main database connection
+   * @returns {mongoose.Connection}
+   */
+  getConnection(dbName = null) {
+    const connectionKey = dbName || 'main';
+    return this.connections.get(connectionKey);
+  }
+  
+  /**
+   * Get all active connections
+   * @returns {Map}
+   */
+  getAllConnections() {
+    return this.connections;
+  }
+  
+  /**
+   * Get connection health status
+   * @returns {Object}
+   */
+  getHealthStatus() {
+    const mainConnection = this.getConnection();
+    const activeConnections = Array.from(this.connections.entries()).map(([key, conn]) => ({
+      name: key,
+      state: this.getReadyStateText(conn.readyState),
+      host: conn.host,
+      port: conn.port,
+      dbName: conn.name
+    }));
+    
+    return {
+      isConnected: this.connectionState.isConnected,
+      mainConnectionState: mainConnection ? this.getReadyStateText(mainConnection.readyState) : 'not_connected',
+      lastConnectionTime: this.connectionState.lastConnectionTime,
+      connectionAttempts: this.connectionState.connectionAttempts,
+      lastError: this.connectionState.lastError,
+      activeConnections,
+      totalConnections: this.connections.size
     };
   }
   
   /**
-   * Create encryption plugin for sensitive fields
-   * @returns {Function} Mongoose plugin
+   * Get readable connection state
+   * @param {number} readyState - Mongoose connection ready state
+   * @returns {string}
    */
-  createEncryptionPlugin() {
-    // This would implement field-level encryption
-    // Simplified for this example
-    return function encryptionPlugin(schema) {
-      // Add encryption logic here
+  getReadyStateText(readyState) {
+    const states = {
+      0: 'disconnected',
+      1: 'connected',
+      2: 'connecting',
+      3: 'disconnecting',
+      4: 'invalid'
     };
+    return states[readyState] || 'unknown';
+  }
+  
+  /**
+   * Close all database connections
+   * @returns {Promise<void>}
+   */
+  async close() {
+    this.isShuttingDown = true;
+    
+    try {
+      logger.info('Closing database connections', { 
+        totalConnections: this.connections.size 
+      });
+      
+      const closePromises = Array.from(this.connections.entries()).map(async ([key, connection]) => {
+        try {
+          if (connection.readyState === 1) {
+            await connection.close();
+            logger.info(`Database connection closed: ${key}`);
+          }
+        } catch (error) {
+          logger.error(`Error closing database connection: ${key}`, { 
+            error: error.message 
+          });
+        }
+      });
+      
+      await Promise.all(closePromises);
+      
+      this.connections.clear();
+      this.connectionState.isConnected = false;
+      this.isInitialized = false;
+      
+      logger.info('All database connections closed successfully');
+    } catch (error) {
+      logger.error('Error during database shutdown', { error: error.message });
+      throw error;
+    }
+  }
+  
+  /**
+   * Sleep utility function
+   * @param {number} ms - Milliseconds to sleep
+   * @returns {Promise<void>}
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
   
   /**
    * Get tenant-specific database connection
    * @param {string} tenantId - Tenant identifier
-   * @returns {Promise<mongoose.Connection>} Tenant connection
+   * @returns {Promise<mongoose.Connection>}
    */
   async getTenantConnection(tenantId) {
     if (!this.multiTenant.enabled) {
@@ -264,13 +414,25 @@ class DatabaseConfig {
     
     if (this.multiTenant.strategy === 'separate') {
       const dbName = `${this.multiTenant.prefix}${tenantId}`;
-      return this.createConnection(dbName);
+      return this.connect(dbName);
     }
     
-    // For shared strategy, return main connection
-    return this.createConnection();
+    return this.getConnection();
   }
 }
 
 // Create and export singleton instance
-module.exports = new DatabaseConfig();
+const databaseManager = new DatabaseManager();
+
+// Export both the instance and methods for compatibility
+module.exports = databaseManager;
+module.exports.DatabaseManager = DatabaseManager;
+
+// Only initialize if not being required by another module during startup
+process.nextTick(() => {
+  if (!databaseManager.isInitialized) {
+    databaseManager.initialize().catch((error) => {
+      console.error('Database initialization failed:', error.message);
+    });
+  }
+});

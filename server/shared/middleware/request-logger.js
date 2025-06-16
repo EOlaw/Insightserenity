@@ -7,12 +7,13 @@
  */
 
 const morgan = require('morgan');
-const winston = require('winston');
-const { v4: uuidv4 } = require('uuid');
 const onFinished = require('on-finished');
+const { v4: uuidv4 } = require('uuid');
+const winston = require('winston');
+
 const config = require('../config');
-const logger = require('../utils/logger');
 const { sanitizeForLogging } = require('../security/services/encryption-service');
+const logger = require('../utils/logger');
 
 /**
  * Request Logger Class

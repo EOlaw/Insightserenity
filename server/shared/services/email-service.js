@@ -7,8 +7,9 @@
  */
 
 const nodemailer = require('nodemailer');
-const logger = require('../utils/logger');
+
 const { AppError } = require('../utils/app-error');
+const logger = require('../utils/logger');
 
 // Safe imports with fallbacks for optional dependencies
 let sgMail = null;

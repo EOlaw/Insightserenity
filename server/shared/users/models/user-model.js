@@ -5,9 +5,11 @@
  * @version 3.0.0
  */
 
-const mongoose = require('mongoose');
 const crypto = require('crypto');
-const config = require('../../config');
+
+const mongoose = require('mongoose');
+
+const config = require('../../config/config');
 const constants = require('../../config/constants');
 
 /**
@@ -21,7 +23,7 @@ const userSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    index: true,
+    // index: true,
     validate: {
       validator: (email) => constants.REGEX.EMAIL.test(email),
       message: 'Invalid email format'

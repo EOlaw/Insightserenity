@@ -6,22 +6,23 @@
  */
 
 const mongoose = require('mongoose');
-const User = require('../models/user-model');
-const Auth = require('../../auth/models/auth-model');
+
 const Organization = require('../../../hosted-organizations/organizations/models/organization-model');
-const logger = require('../../utils/logger');
+const config = require('../../../shared/config/config');
+const constants = require('../../../shared/config/constants');
+const AuditService = require('../../../shared/security/services/audit-service');
+const CacheService = require('../../../shared/services/cache-service');
+const EmailService = require('../../../shared/services/email-service');
+const FileService = require('../../../shared/utils/helpers/file-helper');
+const Auth = require('../../auth/models/auth-model');
 const { 
   ValidationError, 
   NotFoundError, 
   ConflictError,
   ForbiddenError 
 } = require('../../utils/app-error');
-const EmailService = require('../../../shared/services/email-service');
-const FileService = require('../../../shared/utils/helpers/file-helper');
-const CacheService = require('../../../shared/services/cache-service');
-const AuditService = require('../../../shared/security/services/audit-service');
-const config = require('../../../shared/config/config');
-const constants = require('../../../shared/config/constants');
+const logger = require('../../utils/logger');
+const User = require('../models/user-model');
 
 /**
  * User Service Class

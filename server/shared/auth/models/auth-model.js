@@ -5,11 +5,13 @@
  * @version 3.0.0
  */
 
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const config = require('../../config');
+const mongoose = require('mongoose');
+
+const config = require('../../config/config');
 const constants = require('../../config/constants');
 
 /**

@@ -5,6 +5,7 @@
  */
 
 const EventEmitter = require('events');
+
 const logger = require('../logger');
 
 class PlatformEventEmitter extends EventEmitter {

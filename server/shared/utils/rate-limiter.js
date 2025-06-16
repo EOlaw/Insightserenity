@@ -1,9 +1,11 @@
 // /server/shared/utils/rate-limiter.js
 
 const { RateLimiterRedis, RateLimiterMemory } = require('rate-limiter-flexible');
+
 const redis = require('../config/redis');
-const logger = require('./logger');
+
 const { AppError } = require('./app-error');
+const logger = require('./logger');
 
 /**
  * Rate limiter factory for different use cases

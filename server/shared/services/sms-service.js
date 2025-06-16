@@ -6,13 +6,14 @@
  * @version 1.0.0
  */
 
-const twilio = require('twilio');
 const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
 const axios = require('axios');
-const logger = require('../utils/logger');
+const twilio = require('twilio');
+
 const config = require('../config');
-const queueHelper = require('../utils/helpers/queue-helper');
 const { AppError } = require('../utils/app-error');
+const queueHelper = require('../utils/helpers/queue-helper');
+const logger = require('../utils/logger');
 const { validatePhoneNumber } = require('../utils/validation/custom-validators');
 
 /**

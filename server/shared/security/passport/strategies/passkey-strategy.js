@@ -2,18 +2,19 @@
 /**
  * @file Passkey Authentication Strategy
  * @description WebAuthn/FIDO2 passwordless authentication strategy
- * @version 3.0.0
+ * @version 3.0.1
  */
 
 const Strategy = require('passport-strategy').Strategy;
 const { Fido2Lib } = require('fido2-lib');
 const crypto = require('crypto');
-const logger = require('../../../utils/logger');
-const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
-const UserService = require('../../../users/services/user-service');
+
 const AuthService = require('../../../auth/services/auth-service');
+const config = require('../../../config/config');
+const UserService = require('../../../users/services/user-service');
+const { AuthenticationError, ValidationError } = require('../../../utils/app-error');
+const logger = require('../../../utils/logger');
 const AuditService = require('../../services/audit-service');
-const config = require('../../../config');
 
 /**
  * Passkey Authentication Strategy Class
@@ -24,18 +25,18 @@ class PasskeyStrategy extends Strategy {
     super();
     this.name = 'passkey';
     
-    // Initialize FIDO2 library
+    // Initialize FIDO2 library with corrected config references
     this.f2l = new Fido2Lib({
-      timeout: 60000,
-      rpId: config.server.host || 'localhost',
-      rpName: config.server.appName || 'InsightSerenity',
-      rpIcon: config.server.appIcon,
+      timeout: config.passkey?.timeout || 60000,
+      rpId: config.passkey?.rpId || config.app?.host || 'localhost',
+      rpName: config.passkey?.rpName || config.app?.name || 'InsightSerenity',
+      rpIcon: config.passkey?.rpIcon,
       challengeSize: 128,
-      attestation: 'none',
+      attestation: config.passkey?.attestation || 'none',
       cryptoParams: [-7, -257], // ES256, RS256
-      authenticatorAttachment: 'platform',
+      authenticatorAttachment: config.passkey?.authenticatorAttachment || 'platform',
       authenticatorRequireResidentKey: false,
-      authenticatorUserVerification: 'preferred'
+      authenticatorUserVerification: config.passkey?.userVerification || 'preferred'
     });
     
     // Supported authenticator types
@@ -69,7 +70,8 @@ class PasskeyStrategy extends Strategy {
         ip: req.ip,
         userAgent: req.get('user-agent'),
         origin: req.get('origin'),
-        deviceId: req.body.deviceId || req.get('x-device-id')
+        deviceId: req.body.deviceId || req.get('x-device-id'),
+        session: req.session
       };
       
       let result;
@@ -113,7 +115,7 @@ class PasskeyStrategy extends Strategy {
       }
       
     } catch (error) {
-      logger.error('Passkey authentication error', { error });
+      logger.error('Passkey authentication error', { error: error.message, stack: error.stack });
       this.error(error);
     }
   }
@@ -220,18 +222,20 @@ class PasskeyStrategy extends Strategy {
       };
       
       // Audit log
-      await AuditService.log({
-        type: 'passkey_registration_started',
-        action: 'begin_passkey_registration',
-        category: 'authentication',
-        result: 'success',
-        userId: user._id,
-        metadata: {
-          ...context,
-          authenticatorType,
-          email: user.email || email
-        }
-      });
+      if (AuditService && AuditService.log) {
+        await AuditService.log({
+          type: 'passkey_registration_started',
+          action: 'begin_passkey_registration',
+          category: 'authentication',
+          result: 'success',
+          userId: user._id,
+          metadata: {
+            ...context,
+            authenticatorType,
+            email: user.email || email
+          }
+        });
+      }
       
       return {
         success: true,
@@ -239,7 +243,7 @@ class PasskeyStrategy extends Strategy {
       };
       
     } catch (error) {
-      logger.error('Passkey registration begin error', { error });
+      logger.error('Passkey registration begin error', { error: error.message, stack: error.stack });
       return {
         success: false,
         message: 'Failed to begin passkey registration',
@@ -382,7 +386,8 @@ class PasskeyStrategy extends Strategy {
         await auth.save();
       }
       
-      // Create session
+      // Create session with proper session duration
+      const sessionDuration = config.session?.maxAge || config.auth?.sessionDuration || 86400000; // 24 hours default
       const session = auth.addSession({
         deviceInfo: {
           userAgent: context.userAgent,
@@ -393,7 +398,7 @@ class PasskeyStrategy extends Strategy {
         location: {
           ip: context.ip
         },
-        expiresAt: new Date(Date.now() + config.auth.sessionDuration)
+        expiresAt: new Date(Date.now() + sessionDuration)
       });
       
       // Add login history
@@ -413,23 +418,25 @@ class PasskeyStrategy extends Strategy {
       await user.save();
       
       // Audit log
-      await AuditService.log({
-        type: 'passkey_registered',
-        action: 'register_passkey',
-        category: 'authentication',
-        result: 'success',
-        userId: user._id,
-        target: {
-          type: 'passkey',
-          id: credential.id
-        },
-        metadata: {
-          ...context,
-          deviceType: credentialData.deviceType,
-          deviceName: credentialData.name,
-          isFirstPasskey: auth.authMethods.passkey.credentials.length === 1
-        }
-      });
+      if (AuditService && AuditService.log) {
+        await AuditService.log({
+          type: 'passkey_registered',
+          action: 'register_passkey',
+          category: 'authentication',
+          result: 'success',
+          userId: user._id,
+          target: {
+            type: 'passkey',
+            id: credential.id
+          },
+          metadata: {
+            ...context,
+            deviceType: credentialData.deviceType,
+            deviceName: credentialData.name,
+            isFirstPasskey: auth.authMethods.passkey.credentials.length === 1
+          }
+        });
+      }
       
       return {
         success: true,
@@ -439,7 +446,7 @@ class PasskeyStrategy extends Strategy {
       };
       
     } catch (error) {
-      logger.error('Passkey registration complete error', { error });
+      logger.error('Passkey registration complete error', { error: error.message, stack: error.stack });
       return {
         success: false,
         message: 'Failed to complete passkey registration',
@@ -549,18 +556,20 @@ class PasskeyStrategy extends Strategy {
       };
       
       // Audit log
-      await AuditService.log({
-        type: 'passkey_authentication_started',
-        action: 'begin_passkey_authentication',
-        category: 'authentication',
-        result: 'success',
-        userId: auth?.userId,
-        metadata: {
-          ...context,
-          email: email || 'resident_key',
-          credentialCount: allowCredentials.length
-        }
-      });
+      if (AuditService && AuditService.log) {
+        await AuditService.log({
+          type: 'passkey_authentication_started',
+          action: 'begin_passkey_authentication',
+          category: 'authentication',
+          result: 'success',
+          userId: auth?.userId,
+          metadata: {
+            ...context,
+            email: email || 'resident_key',
+            credentialCount: allowCredentials.length
+          }
+        });
+      }
       
       return {
         success: true,
@@ -568,7 +577,7 @@ class PasskeyStrategy extends Strategy {
       };
       
     } catch (error) {
-      logger.error('Passkey authentication begin error', { error });
+      logger.error('Passkey authentication begin error', { error: error.message, stack: error.stack });
       return {
         success: false,
         message: 'Failed to begin passkey authentication',
@@ -621,7 +630,7 @@ class PasskeyStrategy extends Strategy {
       }
       
       // Find valid challenge
-      const challengeData = auth.authMethods.passkey.challenges.find(c => 
+      let challengeData = auth.authMethods.passkey.challenges.find(c => 
         !c.used && c.expiresAt > new Date()
       );
       
@@ -686,7 +695,8 @@ class PasskeyStrategy extends Strategy {
         return accountCheck;
       }
       
-      // Create session
+      // Create session with proper session duration
+      const sessionDuration = config.session?.maxAge || config.auth?.sessionDuration || 86400000; // 24 hours default
       const session = auth.addSession({
         deviceInfo: {
           userAgent: context.userAgent,
@@ -697,7 +707,7 @@ class PasskeyStrategy extends Strategy {
         location: {
           ip: context.ip
         },
-        expiresAt: new Date(Date.now() + config.auth.sessionDuration)
+        expiresAt: new Date(Date.now() + sessionDuration)
       });
       
       // Add login history
@@ -721,25 +731,27 @@ class PasskeyStrategy extends Strategy {
       await user.save();
       
       // Audit log
-      await AuditService.log({
-        type: 'user_login',
-        action: 'authenticate',
-        category: 'authentication',
-        result: 'success',
-        userId: user._id,
-        target: {
-          type: 'user',
-          id: user._id.toString()
-        },
-        metadata: {
-          ...context,
-          method: 'passkey',
-          credentialId: credential.id,
-          deviceType: storedCredential.deviceType,
-          deviceName: storedCredential.name,
-          sessionId: session.sessionId
-        }
-      });
+      if (AuditService && AuditService.log) {
+        await AuditService.log({
+          type: 'user_login',
+          action: 'authenticate',
+          category: 'authentication',
+          result: 'success',
+          userId: user._id,
+          target: {
+            type: 'user',
+            id: user._id.toString()
+          },
+          metadata: {
+            ...context,
+            method: 'passkey',
+            credentialId: credential.id,
+            deviceType: storedCredential.deviceType,
+            deviceName: storedCredential.name,
+            sessionId: session.sessionId
+          }
+        });
+      }
       
       return {
         success: true,
@@ -748,7 +760,7 @@ class PasskeyStrategy extends Strategy {
       };
       
     } catch (error) {
-      logger.error('Passkey authentication complete error', { error });
+      logger.error('Passkey authentication complete error', { error: error.message, stack: error.stack });
       return {
         success: false,
         message: 'Failed to complete passkey authentication',
@@ -776,16 +788,18 @@ class PasskeyStrategy extends Strategy {
       
       await auth.save();
       
-      await AuditService.log({
-        type: 'passkey_authentication_failed',
-        action: 'authenticate',
-        category: 'authentication',
-        result: 'failure',
-        userId: auth.userId,
-        metadata: context
-      });
+      if (AuditService && AuditService.log) {
+        await AuditService.log({
+          type: 'passkey_authentication_failed',
+          action: 'authenticate',
+          category: 'authentication',
+          result: 'failure',
+          userId: auth.userId,
+          metadata: context
+        });
+      }
     } catch (error) {
-      logger.error('Failed to record authentication attempt', { error });
+      logger.error('Failed to record authentication attempt', { error: error.message });
     }
   }
   
@@ -814,7 +828,7 @@ class PasskeyStrategy extends Strategy {
       };
     }
     
-    if (auth.isLocked()) {
+    if (auth.isLocked && auth.isLocked()) {
       return {
         valid: false,
         success: false,
@@ -869,6 +883,7 @@ class PasskeyStrategy extends Strategy {
    * @returns {string} Platform
    */
   extractPlatform(userAgent) {
+    if (!userAgent) return 'Unknown';
     if (/Windows/.test(userAgent)) return 'Windows';
     if (/Mac/.test(userAgent)) return 'macOS';
     if (/Linux/.test(userAgent)) return 'Linux';
@@ -883,6 +898,7 @@ class PasskeyStrategy extends Strategy {
    * @returns {string} Browser
    */
   extractBrowser(userAgent) {
+    if (!userAgent) return 'Unknown';
     if (/Chrome/.test(userAgent) && !/Edge/.test(userAgent)) return 'Chrome';
     if (/Firefox/.test(userAgent)) return 'Firefox';
     if (/Safari/.test(userAgent) && !/Chrome/.test(userAgent)) return 'Safari';

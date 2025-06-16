@@ -7,11 +7,12 @@
  */
 
 const { body, param, query, header, cookie, validationResult } = require('express-validator');
-const logger = require('../utils/logger');
-const ResponseHelper = require('../utils/helpers/response-helper');
-const joiSchemas = require('../utils/validation/joi-schemas');
-const customValidators = require('../utils/validation/custom-validators');
+
 const constants = require('../config/constants');
+const ResponseHelper = require('../utils/helpers/response-helper');
+const logger = require('../utils/logger');
+const customValidators = require('../utils/validation/custom-validators');
+const joiSchemas = require('../utils/validation/joi-schemas');
 
 /**
  * Request Validator Class

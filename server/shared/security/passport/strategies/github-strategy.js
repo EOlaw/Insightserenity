@@ -6,12 +6,13 @@
  */
 
 const GitHubStrategy = require('passport-github2').Strategy;
-const logger = require('../../../utils/logger');
-const { AuthenticationError } = require('../../../utils/app-error');
-const UserService = require('../../../users/services/user-service');
+
 const AuthService = require('../../../auth/services/auth-service');
+const config = require('../../../config/config');
+const UserService = require('../../../users/services/user-service');
+const { AuthenticationError } = require('../../../utils/app-error');
+const logger = require('../../../utils/logger');
 const AuditService = require('../../services/audit-service');
-const config = require('../../../config');
 
 /**
  * GitHub OAuth Strategy Class

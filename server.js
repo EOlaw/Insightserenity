@@ -4,14 +4,15 @@
  * @version 3.0.0
  */
 
-const https = require('https');
-const http = require('http');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const path = require('path');
+
 const app = require('./app');
-const logger = require('./server/shared/utils/logger');
 const config = require('./server/shared/config/config');
 const Database = require('./server/shared/database/database');
+const logger = require('./server/shared/utils/logger');
 
 /**
  * Server class to handle server initialization and management

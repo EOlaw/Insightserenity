@@ -6,11 +6,11 @@
  * @version 1.1.0
  */
 
-const config = require('../config');
-const logger = require('../utils/logger');
+const config = require('../config/config');
 const { AppError } = require('../utils/app-error');
-const ResponseHelper = require('../utils/helpers/response-helper');
 const errorCodes = require('../utils/constants/error-codes');
+const ResponseHelper = require('../utils/helpers/response-helper');
+const logger = require('../utils/logger');
 
 /**
  * Error Handler Class

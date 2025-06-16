@@ -8,12 +8,15 @@
 
 const nodemailer = require('nodemailer');
 const handlebars = require('handlebars');
+
 const fs = require('fs').promises;
 const path = require('path');
+
 const juice = require('juice');
-const logger = require('../logger');
+
 const config = require('../../config');
 const { AppError } = require('../app-error');
+const logger = require('../logger');
 
 /**
  * Email Helper Class

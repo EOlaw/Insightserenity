@@ -6,8 +6,9 @@
  * @version 1.0.0
  */
 
-const securityHeaders = require('./security-headers');
 const logger = require('../../utils/logger');
+
+const securityHeaders = require('./security-headers');
 
 /**
  * Apply helmet middleware with environment-specific configuration

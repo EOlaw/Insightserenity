@@ -8,8 +8,9 @@
 
 const bcrypt = require('bcryptjs');
 const { ObjectId } = require('mongodb');
-const logger = require('../../utils/logger');
+
 const constants = require('../../config/constants');
+const logger = require('../../utils/logger');
 
 module.exports = {
   version: 1,

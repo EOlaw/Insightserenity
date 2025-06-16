@@ -6,9 +6,9 @@
  */
 
 const config = require('../../config');
+const { asyncHandler } = require('../../utils/async-handler');
 const logger = require('../../utils/logger');
 const ResponseHandler = require('../../utils/response-handler');
-const { asyncHandler } = require('../../utils/async-handler');
 
 /**
  * Permission Middleware Class

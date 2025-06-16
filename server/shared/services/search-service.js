@@ -7,10 +7,11 @@
  */
 
 const { Client } = require('@elastic/elasticsearch');
-const logger = require('../utils/logger');
+
 const config = require('../config');
 const { AppError } = require('../utils/app-error');
 const cacheHelper = require('../utils/helpers/cache-helper');
+const logger = require('../utils/logger');
 
 /**
  * Search Service Class

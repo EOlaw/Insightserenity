@@ -4,14 +4,16 @@
  * @version 2.0.0
  */
 
-const HostedOrganization = require('../models/organization-model');
-const User = require('../../../shared/users/models/user-model');
-const { AppError } = require('../../../shared/utils/app-error');
+const mongoose = require('mongoose');
+
 const { CacheService } = require('../../../shared/services/cache-service');
 const { EmailService } = require('../../../shared/services/email-service');
+const User = require('../../../shared/users/models/user-model');
+const { AppError } = require('../../../shared/utils/app-error');
 const { EventEmitter } = require('../../../shared/utils/events/event-emitter');
 const logger = require('../../../shared/utils/logger');
-const mongoose = require('mongoose');
+const HostedOrganization = require('../models/organization-model');
+
 
 class HostedOrganizationService {
   /**

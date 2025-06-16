@@ -6,12 +6,14 @@
  * @version 3.0.0
  */
 
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const config = require('../../config');
-const logger = require('../../utils/logger');
-const { AppError, TokenError } = require('../../utils/app-error');
+
+const jwt = require('jsonwebtoken');
+
+const config = require('../../config/config');
 const EncryptionService = require('../../security/services/encryption-service');
+const { AppError, TokenError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Token Service Class

@@ -7,6 +7,7 @@
  */
 
 const swaggerJsdoc = require('swagger-jsdoc');
+
 const constants = require('./constants');
 
 /**

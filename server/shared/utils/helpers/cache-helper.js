@@ -6,12 +6,14 @@
  * @version 1.0.0
  */
 
+const crypto = require('crypto');
+
 const Redis = require('ioredis');
 const NodeCache = require('node-cache');
-const crypto = require('crypto');
-const logger = require('../logger');
+
 const config = require('../../config');
 const constants = require('../../config/constants');
+const logger = require('../logger');
 
 /**
  * Cache Helper Class

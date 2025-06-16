@@ -6,8 +6,9 @@
  * @version 1.0.0
  */
 
-const validator = require('validator');
 const moment = require('moment-timezone');
+const validator = require('validator');
+
 const constants = require('../../config/constants');
 const logger = require('../logger');
 

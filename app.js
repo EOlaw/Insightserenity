@@ -5,17 +5,18 @@
  */
 require('dotenv').config();
 
-const express = require('express');
-const helmet = require('helmet');
-const morgan = require('morgan');
 const path = require('path');
-const passport = require('passport');
-const cors = require('cors');
-const cookieParser = require('cookie-parser');
+
 const compression = require('compression');
+const cookieParser = require('cookie-parser');
+const cors = require('cors');
+const express = require('express');
 const flash = require('express-flash');
-const methodOverride = require('method-override');
 const mongoSanitize = require('express-mongo-sanitize');
+const helmet = require('helmet');
+const methodOverride = require('method-override');
+const morgan = require('morgan');
+const passport = require('passport');
 
 // Core imports from shared folder
 const config = require('./server/shared/config/config');
@@ -346,7 +347,7 @@ class Application {
     async start() {
         try {
             // Connect to the database
-            await Database.createConnection(); // await Database.createConnection('insightserenity');
+            await Database.connect('insightserenity'); // await Database.createConnection('insightserenity');
             logger.info('Database connected successfully');
 
             // Initialize the application

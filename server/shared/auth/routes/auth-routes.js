@@ -6,14 +6,17 @@
  */
 
 const express = require('express');
+
 const router = express.Router();
-const AuthController = require('../controllers/auth-controller');
-const passport = require('passport');
-const passportConfig = require('../../security/passport/passport-config');
-const { authenticate, authorize } = require('../middleware/auth-middleware');
-const { rateLimiter } = require('../../security/middleware/rate-limiter');
-const { validateRequest } = require('../../utils/validation-middleware');
 const { body, query, param } = require('express-validator');
+const passport = require('passport');
+
+const { rateLimiter } = require('../../security/middleware/rate-limiter');
+const passportConfig = require('../../security/passport/passport-config');
+const { validateRequest } = require('../../utils/validation-middleware');
+const AuthController = require('../controllers/auth-controller');
+const { authenticate, authorize } = require('../middleware/auth-middleware');
+
 
 /**
  * Authentication Routes Configuration

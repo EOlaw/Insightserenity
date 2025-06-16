@@ -6,8 +6,10 @@
  */
 
 const mongoose = require('mongoose');
+
+const config = require('../../config/config');
 const logger = require('../../utils/logger');
-const config = require('../../config');
+
 const EncryptionService = require('./encryption-service');
 
 /**

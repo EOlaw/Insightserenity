@@ -6,9 +6,10 @@
  * @version 1.0.0
  */
 
-const corsConfig = require('./cors-config');
-const logger = require('../../utils/logger');
 const { AppError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
+
+const corsConfig = require('./cors-config');
 
 /**
  * Apply CORS middleware based on route type

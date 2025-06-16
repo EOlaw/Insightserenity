@@ -6,11 +6,12 @@
  * @version 1.0.0
  */
 
+const DOMPurify = require('isomorphic-dompurify');
 const validator = require('validator');
 const xss = require('xss');
-const DOMPurify = require('isomorphic-dompurify');
-const logger = require('../../utils/logger');
+
 const { ValidationError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Sanitization configuration

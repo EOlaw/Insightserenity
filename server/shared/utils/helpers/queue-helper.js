@@ -7,9 +7,10 @@
  */
 
 const Bull = require('bull');
-const logger = require('../logger');
+
 const config = require('../../config');
 const constants = require('../../config/constants');
+const logger = require('../logger');
 
 /**
  * Queue Helper Class

@@ -617,16 +617,16 @@
  * @version 3.0.0
  */
 
-const AuthService = require('../services/auth-service');
-const asyncHandler = require('../../utils/async-handler');
-const responseHandler = require('../../utils/response-handler');
-const logger = require('../../utils/logger');
+const config = require('../../config');
 const { 
   AuthenticationError, 
   ValidationError,
   NotFoundError 
 } = require('../../utils/app-error');
-const config = require('../../config');
+const asyncHandler = require('../../utils/async-handler');
+const logger = require('../../utils/logger');
+const responseHandler = require('../../utils/response-handler');
+const AuthService = require('../services/auth-service');
 
 /**
  * Authentication Controller Class

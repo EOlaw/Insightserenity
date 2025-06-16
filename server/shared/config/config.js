@@ -5,6 +5,7 @@
  */
 
 const path = require('path');
+
 const dotenv = require('dotenv');
 
 // Load environment variables
@@ -64,11 +65,12 @@ const config = {
     database: {
         uri: getEnv('MONGODB_URI') || getEnv('DB_URL_INSIGHTSERENITY'),
         options: {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
             maxPoolSize: parseInt(getEnv('DB_POOL_SIZE', '10'), 10),
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000
+            serverSelectionTimeoutMS: parseInt(getEnv('DB_TIMEOUT', '30000'), 10),
+            socketTimeoutMS: parseInt(getEnv('DB_SOCKET_TIMEOUT', '60000'), 10),
+            heartbeatFrequencyMS: parseInt(getEnv('DB_HEARTBEAT_FREQUENCY', '30000'), 10),
+            maxIdleTimeMS: parseInt(getEnv('DB_MAX_IDLE_TIME', '30000'), 10),
+            family: 4
         },
         encryptionKey: getEnv('DB_ENCRYPTION_KEY', 'your-encryption-key-replace-in-production')
     },
@@ -122,6 +124,14 @@ const config = {
     // Security configuration
     security: {
         cookieSecret: getEnv('COOKIE_SECRET'),
+        encryption: {
+            algorithm: getEnv('ENCRYPTION_ALGORITHM', 'aes-256-gcm'),
+            keyLength: parseInt(getEnv('ENCRYPTION_KEY_LENGTH', '32'), 10),
+            ivLength: parseInt(getEnv('ENCRYPTION_IV_LENGTH', '16'), 10),
+            tagLength: parseInt(getEnv('ENCRYPTION_TAG_LENGTH', '16'), 10),
+            saltLength: parseInt(getEnv('ENCRYPTION_SALT_LENGTH', '64'), 10),
+            iterations: parseInt(getEnv('ENCRYPTION_ITERATIONS', '100000'), 10)
+        },
         ssl: {
             enabled: parseBoolean(getEnv('USE_HTTPS', 'false')),
             keyPath: getEnv('SSL_KEY_PATH', 'localhost-key.pem'),

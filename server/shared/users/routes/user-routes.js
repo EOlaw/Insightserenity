@@ -6,13 +6,16 @@
  */
 
 const express = require('express');
+
 const router = express.Router();
-const UserController = require('../controllers/user-controller');
+const { body, query, param } = require('express-validator');
+
 const { authenticate, authorize } = require('../../auth/middleware/auth-middleware');
 const { rateLimiter } = require('../../security/middleware/rate-limiter');
-const { validateRequest } = require('../../utils/validation-middleware');
 const { uploadSingle } = require('../../utils/file-upload-middleware');
-const { body, query, param } = require('express-validator');
+const { validateRequest } = require('../../utils/validation-middleware');
+const UserController = require('../controllers/user-controller');
+
 
 /**
  * User Routes Configuration

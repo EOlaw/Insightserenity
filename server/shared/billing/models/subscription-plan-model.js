@@ -6,6 +6,7 @@
  */
 
 const mongoose = require('mongoose');
+
 const config = require('../../config');
 const constants = require('../../config/constants');
 

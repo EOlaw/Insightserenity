@@ -8,21 +8,23 @@
 const passport = require('passport');
 const JwtStrategy = require('passport-jwt').Strategy;
 const ExtractJwt = require('passport-jwt').ExtractJwt;
-const LocalStrategy = require('./local-strategy');
-const GoogleStrategy = require('./google-strategy');
-const GitHubStrategy = require('./github-strategy');
-const LinkedInStrategy = require('./linkedin-strategy');
-const OrganizationStrategy = require('./organization-strategy');
-const PasskeyStrategy = require('./passkey-strategy');
 
-const User = require('../../../users/models/user-model');
+
 const Organization = require('../../../../hosted-organizations/organizations/models/organization-model');
 const TokenService = require('../../../auth/services/token-service');
-const TokenBlacklistService = require('../../services/token-blacklist-service');
-const AuditService = require('../../services/audit-service');
-const logger = require('../../../utils/logger');
-const config = require('../../../config');
+const config = require('../../../config/config');
+const User = require('../../../users/models/user-model');
 const { AuthenticationError } = require('../../../utils/app-error');
+const logger = require('../../../utils/logger');
+const AuditService = require('../../services/audit-service');
+const TokenBlacklistService = require('../../services/token-blacklist-service');
+
+const GitHubStrategy = require('./github-strategy');
+const GoogleStrategy = require('./google-strategy');
+const LinkedInStrategy = require('./linkedin-strategy');
+const LocalStrategy = require('./local-strategy');
+const OrganizationStrategy = require('./organization-strategy');
+const PasskeyStrategy = require('./passkey-strategy');
 
 /**
  * Enhanced Authentication Strategies Manager

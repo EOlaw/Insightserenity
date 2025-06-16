@@ -6,14 +6,16 @@
  * @version 3.0.0
  */
 
-const speakeasy = require('speakeasy');
-const qrcode = require('qrcode');
 const crypto = require('crypto');
+
+const qrcode = require('qrcode');
+const speakeasy = require('speakeasy');
+
 const config = require('../../config');
-const logger = require('../../utils/logger');
-const { AppError, ValidationError, AuthenticationError } = require('../../utils/app-error');
-const EncryptionService = require('../../security/services/encryption-service');
 const AuditService = require('../../security/services/audit-service');
+const EncryptionService = require('../../security/services/encryption-service');
+const { AppError, ValidationError, AuthenticationError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * Two-Factor Authentication Service Class

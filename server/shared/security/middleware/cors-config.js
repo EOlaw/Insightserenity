@@ -6,9 +6,10 @@
  */
 
 const cors = require('cors');
+
 const config = require('../../config');
-const logger = require('../../utils/logger');
 const { AppError } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 
 /**
  * CORS Configuration Manager Class

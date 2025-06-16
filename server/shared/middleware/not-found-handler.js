@@ -7,8 +7,8 @@
  */
 
 const { AppError } = require('../utils/app-error');
-const ResponseHelper = require('../utils/helpers/response-helper');
 const errorCodes = require('../utils/constants/error-codes');
+const ResponseHelper = require('../utils/helpers/response-helper');
 const logger = require('../utils/logger');
 
 /**

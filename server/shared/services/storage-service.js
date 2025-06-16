@@ -7,9 +7,9 @@
  */
 
 const fs = require('fs').promises;
-const path = require('path');
 const crypto = require('crypto');
-const sharp = require('sharp');
+const path = require('path');
+
 const { 
   S3Client, 
   PutObjectCommand, 
@@ -21,10 +21,12 @@ const {
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { Storage } = require('@google-cloud/storage');
-const logger = require('../utils/logger');
+const sharp = require('sharp');
+
 const config = require('../config');
-const fileHelper = require('../utils/helpers/file-helper');
 const { AppError } = require('../utils/app-error');
+const fileHelper = require('../utils/helpers/file-helper');
+const logger = require('../utils/logger');
 
 /**
  * Storage Service Class

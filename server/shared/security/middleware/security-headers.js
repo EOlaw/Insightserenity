@@ -5,8 +5,10 @@
  * @version 3.0.0
  */
 
-const helmet = require('helmet');
 const crypto = require('crypto');
+
+const helmet = require('helmet');
+
 const config = require('../../config');
 const logger = require('../../utils/logger');
 

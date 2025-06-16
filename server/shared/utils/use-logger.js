@@ -7,10 +7,11 @@
  * @version 3.0.0
  */
 
+const fs = require('fs');
+const path = require('path');
+
 const winston = require('winston');
 const DailyRotateFile = require('winston-daily-rotate-file');
-const path = require('path');
-const fs = require('fs');
 
 // Safe config loading
 let config;

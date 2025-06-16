@@ -872,26 +872,28 @@
  */
 
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
+
 const bcrypt = require('bcryptjs');
-const speakeasy = require('speakeasy');
-const QRCode = require('qrcode');
+const jwt = require('jsonwebtoken');
 const { authenticator } = require('otplib');
-const logger = require('../../utils/logger');
+const QRCode = require('qrcode');
+const speakeasy = require('speakeasy');
+
+const config = require('../../config/config');
+const constants = require('../../config/constants');
+const AuditService = require('../../security/services/audit-service');
+const EncryptionService = require('../../security/services/encryption-service');
+const TokenBlacklistService = require('../../security/services/token-blacklist-service');
+const EmailService = require('../../services/email-service');
+const User = require('../../users/models/user-model');
 const { 
   AuthenticationError, 
   ValidationError, 
   NotFoundError,
   ConflictError 
 } = require('../../utils/app-error');
+const logger = require('../../utils/logger');
 const Auth = require('../models/auth-model');
-const User = require('../../users/models/user-model');
-const TokenBlacklistService = require('../../security/services/token-blacklist-service');
-const EncryptionService = require('../../security/services/encryption-service');
-const AuditService = require('../../security/services/audit-service');
-const EmailService = require('../../services/email-service');
-const config = require('../../config');
-const constants = require('../../config/constants');
 
 /**
  * Authentication Service Class

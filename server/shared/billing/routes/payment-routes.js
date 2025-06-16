@@ -6,15 +6,17 @@
  */
 
 const express = require('express');
+
 const router = express.Router();
-const PaymentController = require('../controllers/payment-controller');
-const RefundController = require('../controllers/refund-controller');
+const { body, param, query } = require('express-validator');
+
 const { authenticate } = require('../../auth/middleware/authenticate');
 const { authorize } = require('../../auth/middleware/authorize');
-const { validate } = require('../../utils/validation/validator');
-const { body, param, query } = require('express-validator');
 const rateLimit = require('../../auth/middleware/rate-limit');
 const constants = require('../../config/constants');
+const { validate } = require('../../utils/validation/validator');
+const PaymentController = require('../controllers/payment-controller');
+const RefundController = require('../controllers/refund-controller');
 
 /**
  * Validation rules
