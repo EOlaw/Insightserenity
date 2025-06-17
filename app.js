@@ -31,7 +31,7 @@ const AuthStrategiesManager = require('./server/shared/security/passport/strateg
 // Import routes
 // const docsRoute = require('./modules/documentation/docs-route');
 // const authRoutes = require('./modules/auth/routes/auth-routes');
-// const userRoutes = require('./modules/users/routes/user-routes');
+const userRoutes = require('./server/shared/users/routes/user-routes');
 // const teamRoutes = require('./modules/teams/routes/team-routes');
 // const departmentRoutes = require('./modules/departments/routes/department-routes');
 const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
@@ -277,7 +277,7 @@ class Application {
 
         // API routes with versioning
         // this.app.use(`${baseApiPath}/auth`, authRoutes);
-        // this.app.use(`${baseApiPath}/users`, userRoutes);
+        this.app.use(`${baseApiPath}/users`, userRoutes);
         // this.app.use(`${baseApiPath}/teams`, teamRoutes);
         // this.app.use(`${baseApiPath}/departments`, departmentRoutes);
         this.app.use(`${baseApiPath}/organizations`, organizationRoutes);

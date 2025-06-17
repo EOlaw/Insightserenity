@@ -5,14 +5,14 @@
  * @version 3.0.0
  */
 
-const config = require('../../config');
+const config = require('../../config/config');
 const { 
   ValidationError, 
   NotFoundError,
   ForbiddenError 
 } = require('../../utils/app-error');
-const asyncHandler = require('../../utils/async-handler');
-const FileUploadService = require('../../utils/file-upload-service');
+const { asyncHandler } = require('../../utils/async-handler');
+const FileUploadService = require('../../utils/helpers/file-helper');
 const logger = require('../../utils/logger');
 const responseHandler = require('../../utils/response-handler');
 const UserService = require('../services/user-service');

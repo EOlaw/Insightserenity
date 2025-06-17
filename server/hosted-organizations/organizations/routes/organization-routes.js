@@ -8,13 +8,13 @@ const express = require('express');
 
 
 // Shared Middleware
-const { authenticate, requireAuth } = require('../../../shared/auth/middleware/auth-middleware');
+const { authenticate, requireAuth } = require('../../../shared/middleware/auth/auth-middleware');
 const { 
   restrictTo, 
   checkOrganizationContext,
   requireOrganizationOwner,
   requireOrganizationAdmin
-} = require('../../../shared/auth/middleware/authorization-middleware');
+} = require('../../../shared/middleware/auth/authorization-middleware');
 const HostedOrganizationController = require('../controllers/organization-controller');
 
 // // Validation Middleware
