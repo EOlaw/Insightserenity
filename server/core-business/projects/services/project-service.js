@@ -10,7 +10,7 @@ const { AppError } = require('../../shared/utils/app-error');
 const logger = require('../../shared/utils/logger');
 const mongoose = require('mongoose');
 const { sendEmail } = require('../../shared/services/email-service');
-const { generatePDF } = require('../../shared/utils/pdf-generator');
+const { generatePDF } = require('../../../shared/utils/pdf-generator');
 const { uploadToS3 } = require('../../shared/utils/file-upload');
 const NotificationService = require('../../shared/services/notification-service');
 
