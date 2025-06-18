@@ -11,11 +11,12 @@ const mongoose = require('mongoose');
 
 const config = require('../../config/config');
 const constants = require('../../config/constants');
+const Schema = mongoose.Schema;
 
 /**
  * User Schema Definition
  */
-const userSchema = new mongoose.Schema({
+const userSchema = new Schema({
   // Basic Information
   email: {
     type: String,
