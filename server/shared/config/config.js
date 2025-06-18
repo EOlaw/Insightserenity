@@ -87,6 +87,10 @@ const config = {
         },
         saltRounds: parseInt(getEnv('SALT_ROUNDS', '10'), 10),
         passwordMinLength: parseInt(getEnv('PASSWORD_MIN_LENGTH', '8'), 10),
+        requireUppercase: parseBoolean(getEnv('REQUIRE_UPPERCASE', 'false')),
+        requireLowercase: parseBoolean(getEnv('REQUIRE_LOWERCASE', 'false')),
+        requireNumbers: parseBoolean(getEnv('REQUIRE_NUMBERS', 'false')),
+        requireSpecialChars: parseBoolean(getEnv('REQUIRE_SPECIAL_CHARS', 'false')),
         requireEmailVerification: parseBoolean(getEnv('REQUIRE_EMAIL_VERIFICATION', 'false')),
         jwt: {
             algorithm: getEnv('JWT_ALGORITHM', 'HS256'),

@@ -1,6 +1,6 @@
 /**
  * @file Server Configuration
- * @description Centralized server configuration and initialization
+ * @description Centralized server configuration and initialization with multi-tenant database support
  * @version 3.0.0
  */
 
@@ -30,19 +30,32 @@ class Server {
      */
     async start() {
         try {
-            // Start the application (connects to database)
             const expressApp = await app.start();
             
             if (!expressApp) {
                 throw new Error('Failed to initialize Express application');
             }
 
-            logger.info('Application initialized successfully', { 
-                appName: config.app.name,
-                environment: config.app.env 
+            const dbHealth = Database.getHealthStatus();
+            logger.info('Database health status', {
+                isConnected: dbHealth.isConnected,
+                totalConnections: dbHealth.totalConnections,
+                multiTenantEnabled: dbHealth.multiTenantEnabled,
+                strategy: dbHealth.strategy,
+                activeConnections: dbHealth.activeConnections.map(conn => ({
+                    name: conn.name,
+                    state: conn.state,
+                    database: conn.dbName
+                }))
             });
 
-            // Verify SSL certificates before creating HTTPS server
+            logger.info('Application initialized successfully', { 
+                appName: config.app.name,
+                environment: config.app.env,
+                databaseStrategy: dbHealth.multiTenantEnabled ? dbHealth.strategy : 'single',
+                totalDatabaseConnections: dbHealth.totalConnections
+            });
+
             if (config.security.ssl.enabled) {
                 const sslVerified = this.verifySslCertificates();
                 if (!sslVerified) {
@@ -51,7 +64,6 @@ class Server {
                 }
             }
 
-            // Create server based on environment
             if (config.app.env === 'production' && config.security.ssl.enabled) {
                 this.server = this.createHttpsServer(expressApp);
             } else if (config.security.ssl.enabled) {
@@ -60,13 +72,8 @@ class Server {
                 this.server = this.createHttpServer(expressApp);
             }
 
-            // Start listening
             await this.listen();
-
-            // Setup graceful shutdown
             this.setupGracefulShutdown();
-
-            // Setup error handlers
             this.setupErrorHandlers();
 
             return this.server;
@@ -95,15 +102,12 @@ class Server {
      */
     createHttpsServer(app) {
         try {
-            // Try multiple path resolution strategies since certificates are in server directory
             const keyFileName = config.security.ssl.keyPath || 'localhost-key.pem';
             const certFileName = config.security.ssl.certPath || 'localhost.pem';
             
-            // First try: relative to current working directory (server folder)
             let keyPath = path.resolve(process.cwd(), keyFileName);
             let certPath = path.resolve(process.cwd(), certFileName);
             
-            // If not found, try relative to this file's directory
             if (!fs.existsSync(keyPath)) {
                 keyPath = path.resolve(__dirname, keyFileName);
             }
@@ -111,7 +115,6 @@ class Server {
                 certPath = path.resolve(__dirname, certFileName);
             }
             
-            // Check if certificate files exist
             if (!fs.existsSync(keyPath)) {
                 throw new Error(`SSL key file not found at: ${keyPath}`);
             }
@@ -125,7 +128,6 @@ class Server {
                 cert: fs.readFileSync(certPath)
             };
 
-            // Additional SSL options for security
             if (config.security.ssl.ca) {
                 const caPath = path.resolve(process.cwd(), config.security.ssl.ca);
                 if (fs.existsSync(caPath)) {
@@ -148,7 +150,7 @@ class Server {
             });
             
             if (config.app.env === 'production') {
-                throw error; // Don't fallback in production
+                throw error;
             }
             
             logger.warn('Falling back to HTTP server in development');
@@ -168,7 +170,6 @@ class Server {
         const keyFileName = config.security.ssl.keyPath || 'localhost-key.pem';
         const certFileName = config.security.ssl.certPath || 'localhost.pem';
         
-        // Check in current working directory first
         const keyPath = path.resolve(process.cwd(), keyFileName);
         const certPath = path.resolve(process.cwd(), certFileName);
         
@@ -208,13 +209,20 @@ class Server {
 
             this.server.listen(port, host, () => {
                 const protocol = this.server instanceof https.Server ? 'HTTPS' : 'HTTP';
+                const dbHealth = Database.getHealthStatus();
+                
                 logger.info(`${config.app.name} server started`, {
                     protocol,
                     host,
                     port,
                     url: `${protocol.toLowerCase()}://${host}:${port}`,
                     environment: config.app.env,
-                    nodeVersion: process.version
+                    nodeVersion: process.version,
+                    multiTenant: {
+                        enabled: dbHealth.multiTenantEnabled,
+                        strategy: dbHealth.strategy,
+                        connections: dbHealth.totalConnections
+                    }
                 });
                 resolve();
             });
@@ -236,7 +244,7 @@ class Server {
     }
 
     /**
-     * Setup graceful shutdown handlers
+     * Setup graceful shutdown handlers with multi-tenant database cleanup
      */
     setupGracefulShutdown() {
         const shutdown = async (signal) => {
@@ -249,33 +257,40 @@ class Server {
             logger.info(`Received ${signal}, starting graceful shutdown`);
 
             try {
-                // Stop accepting new connections
                 await this.closeServer();
 
-                // Close database connections
+                const dbHealth = Database.getHealthStatus();
+                logger.info('Closing database connections', {
+                    totalConnections: dbHealth.totalConnections,
+                    activeConnections: dbHealth.activeConnections.length,
+                    multiTenant: dbHealth.multiTenantEnabled
+                });
+                
                 await Database.close();
 
-                // Close application (cleanup)
                 if (app.stop) {
                     await app.stop();
                 }
 
-                logger.info('Graceful shutdown completed');
+                logger.info('Graceful shutdown completed successfully', {
+                    signal,
+                    uptime: process.uptime(),
+                    environment: config.app.env
+                });
                 process.exit(0);
             } catch (error) {
                 logger.error('Error during shutdown', { 
                     error: error.message,
-                    signal 
+                    signal,
+                    stack: error.stack
                 });
                 process.exit(1);
             }
         };
 
-        // Register signal handlers
         process.on('SIGINT', () => shutdown('SIGINT'));
         process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-        // Windows graceful shutdown
         if (process.platform === 'win32') {
             const readline = require('readline').createInterface({
                 input: process.stdin,
@@ -292,35 +307,50 @@ class Server {
      * Setup error handlers
      */
     setupErrorHandlers() {
-        // Handle uncaught exceptions
         process.on('uncaughtException', (error) => {
-            logger.error('Uncaught Exception', { 
+            logger.error('Uncaught Exception - System will exit', { 
                 error: error.message,
-                stack: error.stack 
+                stack: error.stack,
+                pid: process.pid
             });
             
-            // Give time to log the error before exiting
             setTimeout(() => {
                 process.exit(1);
             }, 1000);
         });
 
-        // Handle unhandled promise rejections
         process.on('unhandledRejection', (reason, promise) => {
             logger.error('Unhandled Promise Rejection', { 
                 reason: reason instanceof Error ? reason.message : reason,
                 stack: reason instanceof Error ? reason.stack : undefined,
-                promise 
+                promise: promise.toString()
             });
+
+            if (reason instanceof Error && reason.message.includes('database')) {
+                logger.error('Database-related unhandled rejection detected', {
+                    dbHealth: Database.getHealthStatus()
+                });
+            }
         });
 
-        // Handle warnings
         process.on('warning', (warning) => {
-            logger.warn('Process Warning', { 
-                name: warning.name,
-                message: warning.message,
-                stack: warning.stack 
-            });
+            if (warning.name === 'DeprecationWarning') {
+                logger.warn('Deprecation Warning', { 
+                    name: warning.name,
+                    message: warning.message,
+                    code: warning.code
+                });
+            } else {
+                logger.warn('Process Warning', { 
+                    name: warning.name,
+                    message: warning.message,
+                    stack: warning.stack 
+                });
+            }
+        });
+
+        process.on('SIGPIPE', () => {
+            logger.warn('Received SIGPIPE - broken pipe detected');
         });
     }
 
@@ -335,11 +365,10 @@ class Server {
                 return;
             }
 
-            // Set timeout for forceful shutdown
             const timeout = setTimeout(() => {
-                logger.error('Forceful shutdown due to timeout');
+                logger.error('Forceful server shutdown due to timeout');
                 reject(new Error('Server close timeout'));
-            }, 30000); // 30 seconds
+            }, 30000);
 
             this.server.close((error) => {
                 clearTimeout(timeout);
@@ -348,12 +377,11 @@ class Server {
                     logger.error('Error closing server', { error: error.message });
                     reject(error);
                 } else {
-                    logger.info('Server closed successfully');
+                    logger.info('HTTP/HTTPS server closed successfully');
                     resolve();
                 }
             });
 
-            // Destroy all active connections
             if (this.server.connections) {
                 this.server.connections.forEach((connection) => {
                     connection.destroy();
@@ -361,12 +389,30 @@ class Server {
             }
         });
     }
+
+    /**
+     * Get server health status
+     * @returns {Object} Server and database health information
+     */
+    getHealthStatus() {
+        const dbHealth = Database.getHealthStatus();
+        
+        return {
+            server: {
+                running: !!this.server,
+                uptime: process.uptime(),
+                memory: process.memoryUsage(),
+                environment: config.app.env,
+                nodeVersion: process.version
+            },
+            database: dbHealth,
+            timestamp: new Date().toISOString()
+        };
+    }
 }
 
-// Create server instance
 const server = new Server();
 
-// Start server if this file is run directly
 if (require.main === module) {
     server.start().catch((error) => {
         logger.error('Failed to start server', { 

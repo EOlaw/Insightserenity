@@ -1451,16 +1451,24 @@ class AuthService {
   }
   
   /**
-   * Validate password strength
+   * Validate password strength - CORRECTED VERSION
    * @param {string} password - Password to validate
    * @returns {Object} Validation result
    */
   static validatePasswordStrength(password) {
-    const minLength = config.security.passwordPolicy.minLength || 12;
-    const requireUppercase = config.security.passwordPolicy.requireUppercase !== false;
-    const requireLowercase = config.security.passwordPolicy.requireLowercase !== false;
-    const requireNumbers = config.security.passwordPolicy.requireNumbers !== false;
-    const requireSpecialChars = config.security.passwordPolicy.requireSpecialChars !== false;
+    // Access the correct configuration paths based on your config structure
+    const minLength = config.auth.passwordMinLength || 8;
+    const requireUppercase = config.auth.requireUppercase !== false;
+    const requireLowercase = config.auth.requireLowercase !== false;
+    const requireNumbers = config.auth.requireNumbers !== false;
+    const requireSpecialChars = config.auth.requireSpecialChars !== false;
+    
+    if (!password) {
+      return {
+        valid: false,
+        message: 'Password is required'
+      };
+    }
     
     if (password.length < minLength) {
       return {
@@ -1498,7 +1506,7 @@ class AuthService {
     }
     
     // Check for common passwords
-    const commonPasswords = ['password', '12345678', 'qwerty', 'abc123'];
+    const commonPasswords = ['password', '12345678', 'qwerty', 'abc123', 'password123'];
     if (commonPasswords.includes(password.toLowerCase())) {
       return {
         valid: false,
@@ -1506,7 +1514,10 @@ class AuthService {
       };
     }
     
-    return { valid: true };
+    return {
+      valid: true,
+      message: 'Password meets security requirements'
+    };
   }
   
   /**

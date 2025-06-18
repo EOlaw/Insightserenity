@@ -8,7 +8,7 @@ const {
   createRateLimitMiddleware,
   rateLimiters,
   rateLimiterFactory
-} = require('./rate-limiter-auth-routes');
+} = require('./rate-limiter');
 const logger = require('./logger');
 
 /**

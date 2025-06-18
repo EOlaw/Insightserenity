@@ -1,6 +1,6 @@
 /**
  * @file Application Setup
- * @description Express application configuration and setup
+ * @description Express application configuration and setup with multi-tenant database support
  * @version 3.0.0
  */
 require('dotenv').config();
@@ -29,19 +29,9 @@ const { AppError } = require('./server/shared/utils/app-error');
 const AuthStrategiesManager = require('./server/shared/security/passport/strategies/auth-strategy-index');
 
 // Import routes
-// const docsRoute = require('./modules/documentation/docs-route');
 const authRoutes = require('./server/shared/auth/routes/auth-routes');
 const userRoutes = require('./server/shared/users/routes/user-routes');
-// const teamRoutes = require('./modules/teams/routes/team-routes');
-// const departmentRoutes = require('./modules/departments/routes/department-routes');
 const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
-// const projectRoutes = require('./modules/projects/routes/project-routes');
-// const caseStudyRoutes = require('./modules/case-studies/routes/case-study-routes');
-// const newsletterRoutes = require('./modules/newsletter/routes/newsletter-routes');
-// const blogRoutes = require('./modules/blog/routes/blog-routes');
-// const eventRoutes = require('./modules/events/routes/event-routes');
-// const serviceRoutes = require('./modules/services/routes/service-routes');
-// const contactFormRoutes = require('./modules/marketing/routes/contact-form-routes');
 
 // Middleware imports
 const errorHandler = require('./server/shared/middleware/error-handler');
@@ -64,6 +54,7 @@ class Application {
      */
     async initialize() {
         this.setupMiddleware();
+        this.setupTenantMiddleware();
         await this.setupAuthentication();
         this.setupRoutes();
         this.setupErrorHandling();
@@ -74,7 +65,6 @@ class Application {
      */
     async setupAuthentication() {
         try {
-            // Initialize authentication strategies with session support based on config
             await this.authManager.initialize(this.app, {
                 enableSessions: config.security.session.enabled
             });
@@ -85,28 +75,99 @@ class Application {
             throw error;
         }
 
-        // Make user available in views
         this.app.use((req, res, next) => {
             res.locals.user = req.user;
             res.locals.isAuthenticated = req.isAuthenticated();
             next();
         });
+    }
 
-        // Note: Serialization is already handled in AuthStrategies.initialize()
+    /**
+     * Setup tenant identification and context middleware
+     */
+    setupTenantMiddleware() {
+        this.app.use(async (req, res, next) => {
+            try {
+                if (!Database.multiTenant.enabled) {
+                    return next();
+                }
+
+                const tenantId = req.headers['x-tenant-id'] || 
+                               req.query.tenantId || 
+                               this.extractTenantFromDomain(req.hostname) ||
+                               this.extractTenantFromSubdomain(req);
+                
+                if (tenantId) {
+                    const tenantConnection = await Database.getTenantConnection(tenantId);
+                    req.tenantId = tenantId;
+                    req.tenantConnection = tenantConnection;
+                    
+                    logger.debug('Tenant context established', {
+                        tenantId,
+                        connectionState: Database.getReadyStateText(tenantConnection.readyState),
+                        path: req.path,
+                        method: req.method
+                    });
+
+                    res.setHeader('X-Tenant-ID', tenantId);
+                }
+                
+                next();
+            } catch (error) {
+                logger.error('Tenant middleware error', {
+                    error: error.message,
+                    path: req.path,
+                    method: req.method,
+                    headers: {
+                        'x-tenant-id': req.headers['x-tenant-id'],
+                        host: req.headers.host
+                    }
+                });
+                next(); // Continue without tenant context
+            }
+        });
+    }
+
+    /**
+     * Extract tenant ID from domain hostname
+     */
+    extractTenantFromDomain(hostname) {
+        if (!hostname || typeof hostname !== 'string') {
+            return null;
+        }
+
+        const parts = hostname.split('.');
+        if (parts.length > 2) {
+            const subdomain = parts[0];
+            if (subdomain && subdomain !== 'www' && subdomain !== 'api') {
+                return subdomain.toLowerCase();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Extract tenant ID from subdomain
+     */
+    extractTenantFromSubdomain(req) {
+        const host = req.get('host');
+        if (!host) return null;
+
+        const subdomain = host.split('.')[0];
+        if (subdomain && subdomain !== 'www' && subdomain !== 'api' && subdomain !== 'localhost') {
+            return subdomain.toLowerCase();
+        }
+        return null;
     }
 
     /**
      * Setup application middleware
-     * @returns {void}
-     * @description Configures middleware for security, logging, parsing, and more
      */
     setupMiddleware() {
-        // Trust proxy for production deployments
         if (config.app.env === 'production') {
             this.app.set('trust proxy', 1);
         }
 
-        // Secure HTTP headers with Helmet
         if (config.security.helmet.enabled) {
             this.app.use(helmet({
                 contentSecurityPolicy: config.app.env === 'production' ? undefined : false,
@@ -115,9 +176,7 @@ class Application {
             }));
         }
 
-        // Enhanced CORS configuration with detailed logging and debugging
         if (config.security.cors.enabled) {
-            // Log the current CORS configuration for debugging
             logger.info('CORS Configuration Debug', {
                 enabled: config.security.cors.enabled,
                 origins: config.security.cors.origins,
@@ -128,17 +187,14 @@ class Application {
 
             this.app.use(cors({
                 origin: (origin, callback) => {
-                    // Allow requests with no origin (mobile apps, Postman, curl, etc.)
                     if (!origin) {
                         return callback(null, true);
                     }
 
-                    // Ensure origins is an array
                     const allowedOrigins = Array.isArray(config.security.cors.origins) 
                         ? config.security.cors.origins 
                         : [config.security.cors.origins].filter(Boolean);
 
-                    // Check if origin is in allowed list (with trimming for safety)
                     const trimmedAllowedOrigins = allowedOrigins.map(o => o.trim());
                     const trimmedIncomingOrigin = origin.trim();
 
@@ -146,9 +202,7 @@ class Application {
                         return callback(null, true);
                     }
 
-                    // Development environment fallback - be more permissive
                     if (config.app.env === 'development') {
-                        // Allow localhost origins on any port for development
                         const isLocalhost = /^https?:\/\/localhost(:\d+)?$/.test(trimmedIncomingOrigin) ||
                                         /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(trimmedIncomingOrigin) ||
                                         /^https?:\/\/10\.0\.0\.\d+(:\d+)?$/.test(trimmedIncomingOrigin);
@@ -172,7 +226,6 @@ class Application {
             logger.warn('CORS is disabled - this may cause issues with frontend communication');
         }
 
-        // Body parsing middleware
         this.app.use(express.json({ 
             limit: config.app.uploadLimit || '10mb',
             verify: (req, res, buf) => {
@@ -184,7 +237,6 @@ class Application {
             limit: config.app.uploadLimit || '10mb' 
         }));
 
-        // Security middleware
         if (config.security.sanitize.enabled) {
             this.app.use(mongoSanitize({
                 replaceWith: '_',
@@ -194,10 +246,8 @@ class Application {
             }));
         }
 
-        // Parse cookies
         this.app.use(cookieParser(config.security.cookieSecret));
 
-        // Response compression
         this.app.use(compression({
             filter: (req, res) => {
                 if (req.headers['x-no-compression']) {
@@ -208,11 +258,9 @@ class Application {
             level: 6
         }));
 
-        // Method override for REST APIs
         this.app.use(methodOverride('_method'));
         this.app.use(methodOverride('X-HTTP-Method-Override'));
 
-        // Static file serving
         this.app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), {
             maxAge: config.app.env === 'production' ? '7d' : 0,
             etag: true,
@@ -222,23 +270,19 @@ class Application {
             maxAge: config.app.env === 'production' ? '30d' : 0
         }));
 
-        // Session configuration
         if (config.security.session.enabled) {
             const sessionManager = new SessionManager();
             this.app.use(sessionManager.getSessionMiddleware());
         }
 
-        // Request logging
         if (config.app.env !== 'test') {
             this.app.use(morgan(config.app.env === 'production' ? 'combined' : 'dev', {
                 stream: { write: message => logger.info(message.trim()) }
             }));
         }
 
-        // Flash messages
         this.app.use(flash());
 
-        // Custom middleware for request tracking
         this.app.use((req, res, next) => {
             req.requestTime = new Date().toISOString();
             req.requestId = require('crypto').randomBytes(16).toString('hex');
@@ -249,63 +293,57 @@ class Application {
 
     /**
      * Setup application routes
-     * @returns {void}
-     * @description Configures all application routes with versioning
      */
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
         const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
-        // Health check endpoint
         this.app.get('/health', (req, res) => {
+            const dbHealth = Database.getHealthStatus();
             res.status(200).json({
                 status: 'ok',
                 timestamp: new Date().toISOString(),
                 uptime: process.uptime(),
                 environment: config.app.env,
-                version: config.app.version
+                version: config.app.version,
+                database: {
+                    connected: dbHealth.isConnected,
+                    totalConnections: dbHealth.totalConnections,
+                    multiTenant: dbHealth.multiTenantEnabled,
+                    strategy: dbHealth.strategy
+                },
+                tenant: req.tenantId || null
             });
         });
 
-        // Documentation route
-        // this.app.use('/docs', docsRoute);
-
-        // Create API router || Uncomment if you want to mount all routes under a single router
-        // This is useful if you want to apply middleware or versioning at the router level
-        // const apiRouter = express.Router();
-
-        // API routes with versioning
         this.app.use(`${baseApiPath}/auth`, authRoutes);
         this.app.use(`${baseApiPath}/users`, userRoutes);
-        // this.app.use(`${baseApiPath}/teams`, teamRoutes);
-        // this.app.use(`${baseApiPath}/departments`, departmentRoutes);
         this.app.use(`${baseApiPath}/organizations`, organizationRoutes);
-        // this.app.use(`${baseApiPath}/projects`, projectRoutes);
-        // this.app.use(`${baseApiPath}/case-studies`, caseStudyRoutes);
-        // this.app.use(`${baseApiPath}/newsletter`, newsletterRoutes);
-        // this.app.use(`${baseApiPath}/blog`, blogRoutes);
-        // this.app.use(`${baseApiPath}/events`, eventRoutes);
-        // this.app.use(`${baseApiPath}/services`, serviceRoutes);
-        // this.app.use(`${baseApiPath}/contact`, contactFormRoutes);
 
-        // Mount versioned API
-        // this.app.use(`${apiPrefix}/${apiVersion}`, apiRouter);
-
-        // Test routes for authentication (development only)
         if (config.app.env === 'development') {
             this.app.get('/test-auth', 
                 this.authManager.authenticate('jwt', { session: false }), 
                 (req, res) => {
                     res.json({ 
                         message: 'Authenticated!', 
-                        user: req.user 
+                        user: req.user,
+                        tenant: req.tenantId || null
                     });
                 }
             );
+
+            this.app.get('/test-tenant', (req, res) => {
+                res.json({
+                    tenantId: req.tenantId || null,
+                    hasTenantConnection: !!req.tenantConnection,
+                    multiTenantEnabled: Database.multiTenant.enabled,
+                    strategy: Database.multiTenant.strategy,
+                    extractedFromHost: this.extractTenantFromDomain(req.hostname)
+                });
+            });
         }
 
-        // Root route
         this.app.get('/', (req, res) => {
             res.status(200).json({
                 name: config.app.name || 'Consulting Platform API',
@@ -316,11 +354,15 @@ class Application {
                 endpoints: {
                     health: '/health',
                     api: `${apiPrefix}/${apiVersion}`
-                }
+                },
+                multiTenant: {
+                    enabled: Database.multiTenant.enabled,
+                    strategy: Database.multiTenant.strategy
+                },
+                tenant: req.tenantId || null
             });
         });
 
-        // Handle undefined routes
         this.app.all('*', (req, res, next) => {
             next(new AppError(`Can't find ${req.originalUrl} on this server!`, 404));
         });
@@ -328,29 +370,27 @@ class Application {
 
     /**
      * Setup error handling middleware
-     * @returns {void}
-     * @description Configures global error handling for the application
      */
     setupErrorHandling() {
-        // 404 handler
         this.app.use(notFoundHandler);
-
-        // Global error handler
         this.app.use(errorHandler.handle);
     }
 
     /**
      * Start the application
-     * @returns {Promise<Express.Application>}
-     * @description Starts the Express application and connects to the database
      */
     async start() {
         try {
-            // Connect to the database
-            await Database.connect('insightserenity'); // await Database.createConnection('insightserenity');
-            logger.info('Database connected successfully');
+            await Database.initialize();
+            
+            const dbHealth = Database.getHealthStatus();
+            logger.info('Database manager initialized successfully', {
+                multiTenantEnabled: dbHealth.multiTenantEnabled,
+                strategy: dbHealth.strategy,
+                totalConnections: dbHealth.totalConnections,
+                activeConnections: dbHealth.activeConnections.length
+            });
 
-            // Initialize the application
             await this.initialize();
             logger.info('Application initialized successfully');
 
@@ -362,15 +402,28 @@ class Application {
     }
 
     /**
+     * Stop the application
+     */
+    async stop() {
+        try {
+            logger.info('Stopping application...');
+            this.isShuttingDown = true;
+            
+            logger.info('Application stopped successfully');
+        } catch (error) {
+            logger.error('Error stopping application', { error });
+            throw error;
+        }
+    }
+
+    /**
      * Get authentication manager instance
-     * @returns {AuthStrategiesManager}
      */
     getAuthManager() {
         return this.authManager;
     }
 }
 
-// Create and export a singleton instance
 const application = new Application();
 
 module.exports = application;

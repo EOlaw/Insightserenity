@@ -1,7 +1,6 @@
-// server/shared/database/database.js
 /**
- * @file Database Configuration
- * @description MongoDB database configuration and connection management
+ * @file Database Configuration - Multi-Tenant Support with Connection Fix
+ * @description MongoDB database configuration supporting both single and multi-tenant architectures
  * @version 3.1.0
  */
 
@@ -11,12 +10,13 @@ const config = require('../config/config');
 const logger = require('../utils/logger');
 
 /**
- * Database Manager Class
+ * Database Manager Class - Multi-tenant with proper model binding
  * @class DatabaseManager
  */
 class DatabaseManager {
   constructor() {
     this.connections = new Map();
+    this.models = new Map(); // Store models per connection
     this.isInitialized = false;
     this.isShuttingDown = false;
     this.url = config.database.uri;
@@ -78,10 +78,16 @@ class DatabaseManager {
     }
     
     try {
+      // Initialize main connection first
       await this.connect();
       this.setupGlobalHandlers();
-      this.isInitialized = true;
       
+      // Initialize additional databases if multi-tenant is enabled
+      if (this.multiTenant.enabled && this.multiTenant.strategy === 'separate') {
+        await this.initializeAdditionalDatabases();
+      }
+      
+      this.isInitialized = true;
       logger.info('Database manager initialized successfully');
     } catch (error) {
       logger.error('Database initialization failed', { 
@@ -93,13 +99,14 @@ class DatabaseManager {
   }
   
   /**
-   * Connect to MongoDB with retry logic
+   * Connect to MongoDB with proper model binding
    * @param {string} dbName - Database name
    * @returns {Promise<mongoose.Connection>}
    */
   async connect(dbName = null) {
     const connectionKey = dbName || 'main';
     
+    // Check if connection already exists and is active
     if (this.connections.has(connectionKey)) {
       const existingConnection = this.connections.get(connectionKey);
       if (existingConnection.readyState === 1) {
@@ -116,9 +123,21 @@ class DatabaseManager {
         this.connectionState.connectionAttempts++;
         attempts++;
         
-        logger.info(`Attempting database connection (${attempts}/${this.retry.maxAttempts})`);
+        logger.info(`Attempting database connection (${attempts}/${this.retry.maxAttempts})`, {
+          connectionKey,
+          dbName: dbName || 'default'
+        });
         
-        const connection = await mongoose.createConnection(connectionString, this.options);
+        let connection;
+        
+        if (connectionKey === 'main' && !dbName) {
+          // For main connection, use default mongoose connection
+          await mongoose.connect(connectionString, this.options);
+          connection = mongoose.connection;
+        } else {
+          // For additional databases, create separate connections
+          connection = await mongoose.createConnection(connectionString, this.options);
+        }
         
         // Set up connection event handlers
         this.setupConnectionHandlers(connection, connectionKey);
@@ -153,6 +172,57 @@ class DatabaseManager {
     
     this.connectionState.isConnected = false;
     throw new Error(`Failed to connect to database after ${attempts} attempts: ${lastError.message}`);
+  }
+  
+  /**
+   * Initialize additional databases for multi-tenant setup
+   */
+  async initializeAdditionalDatabases() {
+    try {
+      // Connect to predefined databases
+      for (const [key, dbName] of Object.entries(this.databases)) {
+        if (key !== 'main') {
+          await this.connect(dbName);
+        }
+      }
+      
+      logger.info('Additional databases initialized for multi-tenant setup');
+    } catch (error) {
+      logger.error('Failed to initialize additional databases', { error: error.message });
+      throw error;
+    }
+  }
+  
+  /**
+   * Get model for specific connection
+   * @param {string} modelName - Name of the model
+   * @param {mongoose.Schema} schema - Mongoose schema
+   * @param {string} connectionKey - Connection identifier
+   * @returns {mongoose.Model} Model bound to specific connection
+   */
+  getModel(modelName, schema, connectionKey = 'main') {
+    const modelKey = `${connectionKey}:${modelName}`;
+    
+    if (this.models.has(modelKey)) {
+      return this.models.get(modelKey);
+    }
+    
+    const connection = this.connections.get(connectionKey);
+    if (!connection) {
+      throw new Error(`Connection ${connectionKey} not found`);
+    }
+    
+    let model;
+    if (connectionKey === 'main') {
+      // For main connection, use default mongoose model
+      model = mongoose.model(modelName, schema);
+    } else {
+      // For other connections, bind model to specific connection
+      model = connection.model(modelName, schema);
+    }
+    
+    this.models.set(modelKey, model);
+    return model;
   }
   
   /**
@@ -193,7 +263,6 @@ class DatabaseManager {
       console.error(`✗ Database error (${connectionKey}):`, error.message);
       this.connectionState.lastError = error.message;
       
-      // Log detailed error for debugging
       logger.error('Database connection error', {
         connectionKey,
         error: error.message,
@@ -206,7 +275,6 @@ class DatabaseManager {
       console.log(`✗ Database disconnected: ${connectionKey}`);
       this.connectionState.isConnected = false;
       
-      // Attempt to reconnect if not shutting down
       if (!this.isShuttingDown) {
         logger.warn('Database disconnected, attempting to reconnect', { connectionKey });
         setTimeout(() => {
@@ -224,6 +292,15 @@ class DatabaseManager {
     connection.on('close', () => {
       console.log(`✓ Database connection closed: ${connectionKey}`);
       this.connections.delete(connectionKey);
+      
+      // Clean up associated models
+      const modelsToDelete = [];
+      for (const [modelKey] of this.models) {
+        if (modelKey.startsWith(`${connectionKey}:`)) {
+          modelsToDelete.push(modelKey);
+        }
+      }
+      modelsToDelete.forEach(key => this.models.delete(key));
     });
   }
   
@@ -231,20 +308,16 @@ class DatabaseManager {
    * Setup global MongoDB/Mongoose handlers
    */
   setupGlobalHandlers() {
-    // Configure Mongoose settings (remove deprecated options)
     mongoose.set('strictQuery', true);
     
-    // Only set debug if explicitly enabled
     if (process.env.DB_DEBUG === 'true') {
       mongoose.set('debug', true);
     }
     
-    // Global error handler
     mongoose.connection.on('error', (error) => {
       logger.error('Global mongoose error', { error: error.message });
     });
     
-    // Add performance monitoring if enabled
     if (this.performance.slowQueryThreshold > 0) {
       this.setupSlowQueryMonitoring();
     }
@@ -275,6 +348,24 @@ class DatabaseManager {
         }
       });
     });
+  }
+  
+  /**
+   * Get tenant-specific database connection
+   * @param {string} tenantId - Tenant identifier
+   * @returns {Promise<mongoose.Connection>}
+   */
+  async getTenantConnection(tenantId) {
+    if (!this.multiTenant.enabled) {
+      throw new Error('Multi-tenant database is not enabled');
+    }
+    
+    if (this.multiTenant.strategy === 'separate') {
+      const dbName = `${this.multiTenant.prefix}${tenantId}`;
+      return this.connect(dbName);
+    }
+    
+    return this.getConnection();
   }
   
   /**
@@ -335,7 +426,9 @@ class DatabaseManager {
       connectionAttempts: this.connectionState.connectionAttempts,
       lastError: this.connectionState.lastError,
       activeConnections,
-      totalConnections: this.connections.size
+      totalConnections: this.connections.size,
+      multiTenantEnabled: this.multiTenant.enabled,
+      strategy: this.multiTenant.strategy
     };
   }
   
@@ -383,6 +476,7 @@ class DatabaseManager {
       await Promise.all(closePromises);
       
       this.connections.clear();
+      this.models.clear();
       this.connectionState.isConnected = false;
       this.isInitialized = false;
       
@@ -401,38 +495,10 @@ class DatabaseManager {
   sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
-  
-  /**
-   * Get tenant-specific database connection
-   * @param {string} tenantId - Tenant identifier
-   * @returns {Promise<mongoose.Connection>}
-   */
-  async getTenantConnection(tenantId) {
-    if (!this.multiTenant.enabled) {
-      throw new Error('Multi-tenant database is not enabled');
-    }
-    
-    if (this.multiTenant.strategy === 'separate') {
-      const dbName = `${this.multiTenant.prefix}${tenantId}`;
-      return this.connect(dbName);
-    }
-    
-    return this.getConnection();
-  }
 }
 
 // Create and export singleton instance
 const databaseManager = new DatabaseManager();
 
-// Export both the instance and methods for compatibility
 module.exports = databaseManager;
 module.exports.DatabaseManager = DatabaseManager;
-
-// Only initialize if not being required by another module during startup
-process.nextTick(() => {
-  if (!databaseManager.isInitialized) {
-    databaseManager.initialize().catch((error) => {
-      console.error('Database initialization failed:', error.message);
-    });
-  }
-});
