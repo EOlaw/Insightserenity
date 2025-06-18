@@ -451,8 +451,9 @@ authSchema.methods.setPassword = async function(password) {
     }
   }
   
-  // Hash new password
-  const hash = await bcrypt.hash(password, config.auth.bcryptRounds);
+  // Hash new password with corrected configuration reference
+  const saltRounds = config.auth.saltRounds || 10; // Fixed: use saltRounds instead of bcryptRounds
+  const hash = await bcrypt.hash(password, saltRounds);
   
   // Update password and history
   this.authMethods.local.password = hash;

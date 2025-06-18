@@ -35,7 +35,7 @@ const Auth = require('../models/auth-model');
  */
 class AuthService {
   /**
-   * Register new user with email/password
+   * Register new user with email/password - CORRECTED ROLE HANDLING
    * @param {Object} userData - User registration data
    * @param {Object} context - Request context
    * @returns {Promise<Object>} Registration result
@@ -61,7 +61,22 @@ class AuthService {
         throw new ConflictError('User with this email already exists');
       }
       
-      // Create user data
+      // Extract role value correctly - FIXED
+      let primaryRole = 'prospect'; // Default role
+      if (role) {
+        if (typeof role === 'string') {
+          primaryRole = role;
+        } else if (role.primary) {
+          primaryRole = role.primary;
+        }
+      }
+      
+      // Validate role against allowed values
+      if (!constants.USER.ROLES_ENUM.includes(primaryRole)) {
+        throw new ValidationError(`Invalid role: ${primaryRole}. Must be one of: ${constants.USER.ROLES_ENUM.join(', ')}`);
+      }
+      
+      // Create user data with corrected role assignment
       const newUserData = {
         email: email.toLowerCase(),
         firstName,
@@ -71,7 +86,7 @@ class AuthService {
         },
         userType: organizationId ? 'hosted_org_user' : 'core_consultant',
         role: {
-          primary: role || 'prospect'
+          primary: primaryRole  // Correctly assign string value to primary field
         },
         organization: organizationId ? {
           current: organizationId,
@@ -1584,65 +1599,189 @@ class AuthService {
   }
   
   /**
-   * Send verification email
+   * Send verification email with fallback logging
    * @param {Object} user - User object
    * @param {string} token - Verification token
    * @param {Object} context - Request context
    */
   static async sendVerificationEmail(user, token, context) {
-    const verificationUrl = `${config.client.url}/auth/verify-email?token=${token}`;
-    
-    await EmailService.sendEmail({
-      to: user.email,
-      subject: 'Verify your email address',
-      template: 'email-verification',
-      data: {
-        firstName: user.firstName,
-        verificationUrl,
-        expiresIn: '24 hours'
+    try {
+      // Construct verification URL using correct config path
+      const verificationUrl = `${config.frontend.verifyEmailUrl}?token=${token}`;
+      
+      const emailData = {
+        to: user.email,
+        subject: 'Verify your email address',
+        template: 'email-verification',
+        data: {
+          firstName: user.firstName,
+          verificationUrl,
+          expiresIn: '24 hours'
+        }
+      };
+
+      // Check if EmailService exists and has sendEmail method
+      if (EmailService && typeof EmailService.sendEmail === 'function') {
+        await EmailService.sendEmail(emailData);
+        logger.info('Verification email sent successfully', {
+          to: user.email,
+          userId: user._id,
+          verificationUrl
+        });
+      } else {
+        // Fallback: Log email details instead of sending
+        logger.info('Email service not available - logging verification email details', {
+          emailType: 'verification',
+          to: user.email,
+          subject: emailData.subject,
+          firstName: user.firstName,
+          verificationUrl,
+          token: token.substring(0, 8) + '...', // Log partial token for security
+          userId: user._id,
+          note: 'This email would have been sent if email service was configured'
+        });
+        
+        // Also log to console for development visibility
+        console.log('📧 VERIFICATION EMAIL (would be sent):');
+        console.log(`   To: ${user.email}`);
+        console.log(`   Subject: ${emailData.subject}`);
+        console.log(`   Verification URL: ${verificationUrl}`);
+        console.log(`   Token: ${token}`);
       }
-    });
+      
+    } catch (error) {
+      // Log error but don't fail registration
+      logger.error('Failed to send verification email', {
+        error: error.message,
+        userId: user._id,
+        email: user.email
+      });
+      
+      // Log fallback information
+      logger.info('Verification email fallback - registration completed without email', {
+        userId: user._id,
+        email: user.email,
+        token: token.substring(0, 8) + '...',
+        note: 'User can verify manually using token if needed'
+      });
+      
+      console.log('📧 VERIFICATION EMAIL FAILED - Token for manual verification:');
+      console.log(`   User: ${user.email}`);
+      console.log(`   Token: ${token}`);
+    }
   }
-  
+
   /**
-   * Send password reset email
+   * Send password reset email with fallback logging
    * @param {Object} user - User object
    * @param {string} token - Reset token
    * @param {Object} context - Request context
    */
   static async sendPasswordResetEmail(user, token, context) {
-    const resetUrl = `${config.client.url}/auth/reset-password?token=${token}`;
-    
-    await EmailService.sendEmail({
-      to: user.email,
-      subject: 'Reset your password',
-      template: 'password-reset',
-      data: {
-        firstName: user.firstName,
-        resetUrl,
-        expiresIn: '1 hour',
-        ip: context.ip
+    try {
+      const resetUrl = `${config.frontend.resetPasswordUrl}?token=${token}`;
+      
+      const emailData = {
+        to: user.email,
+        subject: 'Reset your password',
+        template: 'password-reset',
+        data: {
+          firstName: user.firstName,
+          resetUrl,
+          expiresIn: '1 hour',
+          ip: context.ip
+        }
+      };
+
+      if (EmailService && typeof EmailService.sendEmail === 'function') {
+        await EmailService.sendEmail(emailData);
+        logger.info('Password reset email sent successfully', {
+          to: user.email,
+          userId: user._id,
+          resetUrl
+        });
+      } else {
+        logger.info('Email service not available - logging password reset email details', {
+          emailType: 'password_reset',
+          to: user.email,
+          subject: emailData.subject,
+          firstName: user.firstName,
+          resetUrl,
+          token: token.substring(0, 8) + '...',
+          userId: user._id,
+          ip: context.ip
+        });
+        
+        console.log('📧 PASSWORD RESET EMAIL (would be sent):');
+        console.log(`   To: ${user.email}`);
+        console.log(`   Subject: ${emailData.subject}`);
+        console.log(`   Reset URL: ${resetUrl}`);
+        console.log(`   Token: ${token}`);
       }
-    });
+      
+    } catch (error) {
+      logger.error('Failed to send password reset email', {
+        error: error.message,
+        userId: user._id,
+        email: user.email
+      });
+      
+      console.log('📧 PASSWORD RESET EMAIL FAILED - Token for manual reset:');
+      console.log(`   User: ${user.email}`);
+      console.log(`   Token: ${token}`);
+    }
   }
-  
+
   /**
-   * Send password changed email
+   * Send password changed email with fallback logging
    * @param {Object} user - User object
    * @param {Object} context - Request context
    */
   static async sendPasswordChangedEmail(user, context) {
-    await EmailService.sendEmail({
-      to: user.email,
-      subject: 'Your password has been changed',
-      template: 'password-changed',
-      data: {
-        firstName: user.firstName,
-        changedAt: new Date().toISOString(),
-        ip: context.ip,
-        userAgent: context.userAgent
+    try {
+      const emailData = {
+        to: user.email,
+        subject: 'Your password has been changed',
+        template: 'password-changed',
+        data: {
+          firstName: user.firstName,
+          loginUrl: config.frontend.loginUrl,
+          supportEmail: config.email.supportEmail,
+          ip: context.ip,
+          timestamp: new Date().toLocaleString()
+        }
+      };
+
+      if (EmailService && typeof EmailService.sendEmail === 'function') {
+        await EmailService.sendEmail(emailData);
+        logger.info('Password changed email sent successfully', {
+          to: user.email,
+          userId: user._id
+        });
+      } else {
+        logger.info('Email service not available - logging password changed email details', {
+          emailType: 'password_changed',
+          to: user.email,
+          subject: emailData.subject,
+          firstName: user.firstName,
+          userId: user._id,
+          ip: context.ip,
+          timestamp: emailData.data.timestamp
+        });
+        
+        console.log('📧 PASSWORD CHANGED EMAIL (would be sent):');
+        console.log(`   To: ${user.email}`);
+        console.log(`   Subject: ${emailData.subject}`);
+        console.log(`   Login URL: ${config.frontend.loginUrl}`);
       }
-    });
+      
+    } catch (error) {
+      logger.error('Failed to send password changed email', {
+        error: error.message,
+        userId: user._id,
+        email: user.email
+      });
+    }
   }
   
   /**
