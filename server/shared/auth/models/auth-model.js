@@ -1,12 +1,11 @@
 // server/shared/auth/models/auth-model.js
 /**
- * @file Authentication Model
- * @description Comprehensive authentication model with advanced features
- * @version 3.0.0
+ * @file Authentication Model - Complete Fixed Version
+ * @description Comprehensive authentication model with resolved passkey constraints
+ * @version 3.1.0
  */
 
 const crypto = require('crypto');
-
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
@@ -15,7 +14,7 @@ const config = require('../../config/config');
 const constants = require('../../config/constants');
 
 /**
- * Authentication Schema
+ * Authentication Schema - Complete Fixed Version
  */
 const authSchema = new mongoose.Schema({
   // User reference
@@ -34,8 +33,7 @@ const authSchema = new mongoose.Schema({
         type: String,
         lowercase: true,
         trim: true,
-        sparse: true,
-        index: true
+        sparse: true
       },
       password: String,
       passwordHistory: [{
@@ -78,16 +76,15 @@ const authSchema = new mongoose.Schema({
       }
     },
     
+    // FIXED: Passkey schema without conflicting constraints
     passkey: {
       credentials: [{
         credentialId: {
-          type: String,
-          required: true,
-          unique: true
+          type: String
+          // Removed required and unique constraints to prevent conflicts
         },
         publicKey: {
-          type: Buffer,
-          required: true
+          type: Buffer
         },
         counter: {
           type: Number,
@@ -193,8 +190,7 @@ const authSchema = new mongoose.Schema({
   sessions: [{
     sessionId: {
       type: String,
-      required: true,
-      unique: true
+      required: true
     },
     deviceInfo: {
       userAgent: String,
@@ -403,14 +399,24 @@ const authSchema = new mongoose.Schema({
   collection: 'authentications'
 });
 
-// Indexes
-authSchema.index({ 'authMethods.local.email': 1 });
-authSchema.index({ 'authMethods.oauth.google.id': 1 });
-authSchema.index({ 'authMethods.oauth.github.id': 1 });
-authSchema.index({ 'authMethods.oauth.linkedin.id': 1 });
-authSchema.index({ 'authMethods.passkey.credentials.credentialId': 1 });
-authSchema.index({ 'sessions.sessionId': 1 });
-authSchema.index({ 'security.passwordReset.token': 1 });
+// FIXED: Proper index definitions with sparse indexes for optional unique fields
+authSchema.index({ 'authMethods.local.email': 1 }, { sparse: true });
+authSchema.index({ 'authMethods.oauth.google.id': 1 }, { sparse: true });
+authSchema.index({ 'authMethods.oauth.github.id': 1 }, { sparse: true });
+authSchema.index({ 'authMethods.oauth.linkedin.id': 1 }, { sparse: true });
+
+// FIXED: Sparse unique index for passkey credentials
+authSchema.index(
+  { 'authMethods.passkey.credentials.credentialId': 1 }, 
+  { 
+    unique: true, 
+    sparse: true,
+    name: 'passkey_credential_id_unique_sparse'
+  }
+);
+
+authSchema.index({ 'sessions.sessionId': 1 }, { sparse: true });
+authSchema.index({ 'security.passwordReset.token': 1 }, { sparse: true });
 authSchema.index({ 'activity.lastLogin': -1 });
 authSchema.index({ createdAt: -1 });
 
@@ -451,8 +457,8 @@ authSchema.methods.setPassword = async function(password) {
     }
   }
   
-  // Hash new password with corrected configuration reference
-  const saltRounds = config.auth.saltRounds || 10; // Fixed: use saltRounds instead of bcryptRounds
+  // Hash new password
+  const saltRounds = config.auth.saltRounds || 10;
   const hash = await bcrypt.hash(password, saltRounds);
   
   // Update password and history
@@ -533,9 +539,9 @@ authSchema.methods.addLoginAttempt = function(success = false) {
     this.security.loginAttempts.lastAttempt = new Date();
     
     // Lock account after max attempts
-    if (this.security.loginAttempts.count >= config.security.maxLoginAttempts) {
+    if (this.security.loginAttempts.count >= (config.security?.maxLoginAttempts || 5)) {
       this.security.loginAttempts.lockedUntil = new Date(
-        Date.now() + config.security.lockoutDuration
+        Date.now() + (config.security?.lockoutDuration || 900000) // 15 minutes default
       );
     }
   }
@@ -612,13 +618,17 @@ authSchema.methods.addMfaMethod = function(method, config) {
 // Generate backup codes
 authSchema.methods.generateBackupCodes = function(count = 10) {
   const codes = [];
+  const plainCodes = [];
   
   for (let i = 0; i < count; i++) {
-    const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const plainCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const hashedCode = crypto.createHash('sha256').update(plainCode).digest('hex');
+    
     codes.push({
-      code: crypto.createHash('sha256').update(code).digest('hex'),
+      code: hashedCode,
       used: false
     });
+    plainCodes.push(plainCode);
   }
   
   const backupMethod = this.mfa.methods.find(m => m.type === 'backup_codes');
@@ -628,10 +638,7 @@ authSchema.methods.generateBackupCodes = function(count = 10) {
     this.addMfaMethod('backup_codes', { codes });
   }
   
-  // Return unhashed codes for user
-  return codes.map((_, i) => 
-    crypto.randomBytes(4).toString('hex').toUpperCase()
-  );
+  return plainCodes;
 };
 
 // Add trusted device
@@ -667,7 +674,6 @@ authSchema.methods.recordSuspiciousActivity = function(type, details) {
   
   // Trigger security alert if needed
   if (this.security.suspiciousActivity.filter(a => !a.resolved).length >= 3) {
-    // This would trigger security notifications
     this.markModified('security.suspiciousActivity');
   }
 };
@@ -748,6 +754,19 @@ authSchema.statics.findByPasswordResetToken = async function(token) {
   });
 };
 
+// Find by verification token
+authSchema.statics.findByVerificationToken = async function(token) {
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(token)
+    .digest('hex');
+  
+  return this.findOne({
+    'authMethods.local.verificationToken': hashedToken,
+    'authMethods.local.verificationExpiry': { $gt: new Date() }
+  });
+};
+
 // Clean up expired data
 authSchema.statics.cleanupExpiredData = async function() {
   const now = new Date();
@@ -774,6 +793,17 @@ authSchema.statics.cleanupExpiredData = async function() {
   await this.updateMany(
     { 'security.passwordReset.tokenExpiry': { $lt: now } },
     { $unset: { 'security.passwordReset': 1 } }
+  );
+  
+  // Clear expired verification tokens
+  await this.updateMany(
+    { 'authMethods.local.verificationExpiry': { $lt: now } },
+    { 
+      $unset: { 
+        'authMethods.local.verificationToken': 1,
+        'authMethods.local.verificationExpiry': 1
+      } 
+    }
   );
 };
 
@@ -810,6 +840,71 @@ authSchema.statics.getAuthStats = async function(userId) {
       loginCount: auth.activity.loginCount,
       recentLogins: auth.activity.loginHistory.slice(-5)
     }
+  };
+};
+
+// Validate password strength
+authSchema.statics.validatePasswordStrength = function(password) {
+  const policy = {
+    minLength: 12,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireNumbers: true,
+    requireSpecialChars: true
+  };
+  
+  const errors = [];
+  
+  if (password.length < policy.minLength) {
+    errors.push(`Password must be at least ${policy.minLength} characters long`);
+  }
+  
+  if (policy.requireUppercase && !/[A-Z]/.test(password)) {
+    errors.push('Password must contain at least one uppercase letter');
+  }
+  
+  if (policy.requireLowercase && !/[a-z]/.test(password)) {
+    errors.push('Password must contain at least one lowercase letter');
+  }
+  
+  if (policy.requireNumbers && !/\d/.test(password)) {
+    errors.push('Password must contain at least one number');
+  }
+  
+  if (policy.requireSpecialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+    errors.push('Password must contain at least one special character');
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors,
+    strength: this.calculatePasswordStrength(password)
+  };
+};
+
+// Calculate password strength
+authSchema.statics.calculatePasswordStrength = function(password) {
+  let score = 0;
+  
+  // Length
+  if (password.length >= 8) score += 1;
+  if (password.length >= 12) score += 1;
+  if (password.length >= 16) score += 1;
+  
+  // Character variety
+  if (/[a-z]/.test(password)) score += 1;
+  if (/[A-Z]/.test(password)) score += 1;
+  if (/\d/.test(password)) score += 1;
+  if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) score += 1;
+  
+  // Patterns
+  if (!/(.)\1{2,}/.test(password)) score += 1; // No repeated characters
+  if (!/123|abc|qwe/i.test(password)) score += 1; // No sequential patterns
+  
+  const strength = ['Very Weak', 'Weak', 'Fair', 'Good', 'Strong', 'Very Strong'];
+  return {
+    score: Math.min(score, 5),
+    level: strength[Math.min(score, 5)]
   };
 };
 
