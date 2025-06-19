@@ -68,7 +68,7 @@ router.post('/login',
  * @access  Private
  */
 router.post('/logout',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('logoutAll').optional().isBoolean()
   ],

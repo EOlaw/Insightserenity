@@ -1559,6 +1559,72 @@ class AuthService {
     return false;
   }
 
+  // /**
+  //  * Generate JWT tokens with rememberMe support
+  //  * @param {Object} user - User object
+  //  * @param {string} sessionId - Session ID
+  //  * @param {boolean} rememberMe - Whether to extend refresh token duration
+  //  * @returns {Promise<Object>} Generated tokens
+  //  */
+  // static async generateTokens(user, sessionId, rememberMe = false) {
+  //   const jwt = require('jsonwebtoken');
+    
+  //   // ROBUST CONFIG ACCESS - Get secrets directly from environment with fallbacks
+  //   const jwtSecret = process.env.ACCESS_TOKEN_SECRET || 
+  //                   process.env.JWT_SECRET || 
+  //                   'fallback-secret-development-only';
+                    
+  //   const jwtRefreshSecret = process.env.REFRESH_TOKEN_SECRET || 
+  //                           process.env.JWT_REFRESH_SECRET || 
+  //                           'fallback-refresh-secret-development-only';
+                            
+  //   const accessTokenExpiry = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
+    
+  //   // 🔧 REMEMBER ME LOGIC: Use extended duration if rememberMe is true
+  //   const refreshTokenExpiry = rememberMe 
+  //     ? '14d'  // 14 days for remember me
+  //     : (process.env.REFRESH_TOKEN_EXPIRES_IN || '7d'); // 7 days normal
+    
+  //   // Add debug logging to verify rememberMe logic
+  //   console.log(`🔧 AuthService.generateTokens - RememberMe: ${rememberMe}`);
+  //   console.log(`🔧 Refresh token expiry: ${refreshTokenExpiry}`);
+  //   console.log('jwtSecret:', jwtSecret?.substring(0, 20) + '...');
+  //   console.log('jwtRefreshSecret:', jwtRefreshSecret?.substring(0, 20) + '...');
+    
+  //   const tokenPayload = {
+  //     userId: user._id,
+  //     email: user.email,
+  //     role: user.role.primary,
+  //     organizationId: user.organization?.current,
+  //     sessionId
+  //   };
+    
+  //   const accessToken = jwt.sign(
+  //     { ...tokenPayload, type: 'access' },
+  //     jwtSecret,
+  //     { expiresIn: accessTokenExpiry }
+  //   );
+    
+  //   const refreshToken = jwt.sign(
+  //     { 
+  //       userId: user._id, 
+  //       sessionId,
+  //       type: 'refresh' 
+  //     },
+  //     jwtRefreshSecret,
+  //     { expiresIn: refreshTokenExpiry }  // 🔥 This now uses conditional expiry!
+  //   );
+    
+  //   return {
+  //     accessToken,
+  //     refreshToken,
+  //     tokenType: 'Bearer',
+  //     expiresIn: accessTokenExpiry,
+  //     rememberMe, // Include in response for debugging
+  //     refreshTokenExpiry // Include actual expiry used
+  //   };
+  // }
+
   /**
    * Generate JWT tokens with rememberMe support
    * @param {Object} user - User object
@@ -1585,11 +1651,13 @@ class AuthService {
       ? '14d'  // 14 days for remember me
       : (process.env.REFRESH_TOKEN_EXPIRES_IN || '7d'); // 7 days normal
     
-    // Add debug logging to verify rememberMe logic
+    // Get issuer and audience from config
+    const issuer = config.auth.jwt.issuer;
+    const audience = config.auth.jwt.audience;
+    
     console.log(`🔧 AuthService.generateTokens - RememberMe: ${rememberMe}`);
     console.log(`🔧 Refresh token expiry: ${refreshTokenExpiry}`);
-    console.log('jwtSecret:', jwtSecret?.substring(0, 20) + '...');
-    console.log('jwtRefreshSecret:', jwtRefreshSecret?.substring(0, 20) + '...');
+    console.log(`🔧 Issuer: ${issuer}, Audience: ${audience}`);
     
     const tokenPayload = {
       userId: user._id,
@@ -1602,7 +1670,11 @@ class AuthService {
     const accessToken = jwt.sign(
       { ...tokenPayload, type: 'access' },
       jwtSecret,
-      { expiresIn: accessTokenExpiry }
+      { 
+        expiresIn: accessTokenExpiry,
+        issuer: issuer,
+        audience: audience
+      }
     );
     
     const refreshToken = jwt.sign(
@@ -1612,7 +1684,11 @@ class AuthService {
         type: 'refresh' 
       },
       jwtRefreshSecret,
-      { expiresIn: refreshTokenExpiry }  // 🔥 This now uses conditional expiry!
+      { 
+        expiresIn: refreshTokenExpiry,
+        issuer: issuer,
+        audience: audience
+      }
     );
     
     return {
@@ -1620,8 +1696,8 @@ class AuthService {
       refreshToken,
       tokenType: 'Bearer',
       expiresIn: accessTokenExpiry,
-      rememberMe, // Include in response for debugging
-      refreshTokenExpiry // Include actual expiry used
+      rememberMe,
+      refreshTokenExpiry
     };
   }
 

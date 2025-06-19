@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 
 const redis = require('../../config/redis');
 const { AppError } = require('../../utils/app-error');
+const crypto = require('crypto');
 const logger = require('../../utils/logger');
 
 /**
@@ -115,54 +116,73 @@ class TokenBlacklistService {
   }
   
   /**
-   * Add token to blacklist
-   * @param {Object} tokenData - Token information
+   * Blacklist a token
+   * @param {string} token - Token to blacklist
+   * @param {string} type - Token type
+   * @param {string} reason - Blacklist reason
+   * @param {Object} metadata - Additional metadata
    * @returns {Promise<boolean>} Success status
    */
-  async blacklistToken(tokenData) {
-    const {
-      token,
-      tokenId,
-      type = 'access',
-      userId,
-      reason = 'manual_revoke',
-      expiresAt,
-      metadata = {}
-    } = tokenData;
-    
+  async blacklistToken(token, type = 'access', reason = 'logout', metadata = {}) {
     try {
+      // Validate token parameter
+      if (!token || typeof token !== 'string') {
+        logger.warn('Attempted to blacklist invalid token', {
+          tokenType: typeof token,
+          tokenValue: token,
+          type,
+          reason
+        });
+        return false; // Return false instead of throwing error
+      }
+
+      // Check if already blacklisted
+      const existingEntry = await this.isTokenBlacklisted(token);
+      if (existingEntry) {
+        logger.debug('Token already blacklisted', { tokenHash: this.hashToken(token) });
+        return true;
+      }
+
+      // Hash the token for storage
+      const hashedToken = this.hashToken(token);
+      
+      // Extract token ID and expiry
+      const decoded = this.decodeToken(token);
+      const tokenId = decoded?.jti || this.generateTokenId();
+      const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 86400000);
+
       // Create blacklist entry
-      const entry = await TokenBlacklist.create({
-        token: this.hashToken(token),
+      const blacklistEntry = new TokenBlacklist({
+        token: hashedToken,
         tokenId,
         type,
-        userId,
+        userId: decoded?.userId,
         reason,
         metadata,
-        expiresAt: expiresAt || this.calculateExpiry(type)
+        expiresAt
       });
+
+      await blacklistEntry.save();
       
-      // Add to Redis cache
-      await this.addToCache(token, entry);
+      // Update cache
+      await this.addToCache(hashedToken, true);
       
-      // Log security event
-      logger.info('Token blacklisted', {
+      logger.info('Token blacklisted successfully', {
         tokenId,
         type,
-        userId,
         reason,
-        metadata
+        userId: decoded?.userId
       });
       
       return true;
-    } catch (error) {
-      if (error.code === 11000) {
-        // Token already blacklisted
-        return true;
-      }
       
-      logger.error('Failed to blacklist token', { error, tokenId });
-      throw new AppError('Failed to blacklist token', 500, 'BLACKLIST_ERROR');
+    } catch (error) {
+      logger.error('Failed to blacklist token', { 
+        error: error.message,
+        type,
+        reason 
+      });
+      return false; // Return false instead of throwing
     }
   }
   
@@ -374,12 +394,15 @@ class TokenBlacklistService {
   }
   
   /**
-   * Hash token for storage
+   * Hash token for secure storage
    * @param {string} token - Token to hash
    * @returns {string} Hashed token
    */
   hashToken(token) {
-    const crypto = require('crypto');
+    if (!token || typeof token !== 'string') {
+      throw new Error('Token must be a valid string for hashing');
+    }
+    
     return crypto
       .createHash('sha256')
       .update(token)

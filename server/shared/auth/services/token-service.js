@@ -25,6 +25,14 @@ class TokenService {
     this.refreshTokenSecret = config.auth.jwtRefreshSecret;
     this.accessTokenExpiry = config.auth.accessTokenExpiry;
     this.refreshTokenExpiry = config.auth.refreshTokenExpiry;
+
+    // Debug logging to verify configuration
+    logger.info('TokenService Configuration', {
+      jwtIssuer: config.auth.jwt.issuer,
+      jwtAudience: config.auth.jwt.audience,
+      hasAccessSecret: !!this.accessTokenSecret,
+      hasRefreshSecret: !!this.refreshTokenSecret
+    });
     
     // Token types configuration
     this.tokenConfigs = {
@@ -159,8 +167,8 @@ class TokenService {
       const tokenOptions = {
         algorithm: config.algorithm,
         expiresIn: options.expiresIn || config.expiry,
-        issuer: 'insightserenity',
-        audience: 'insightserenity-platform',
+        issuer: config.auth.jwt.issuer,
+        audience: config.auth.jwt.audience,
         ...options
       };
       
@@ -195,8 +203,8 @@ class TokenService {
       
       const decoded = jwt.verify(token, config.secret, {
         algorithms: [config.algorithm],
-        issuer: 'insightserenity',
-        audience: 'insightserenity-platform'
+        issuer: config.auth.jwt.issuer,
+        audience: config.auth.jwt?.audience,
       });
       
       // Verify token type
