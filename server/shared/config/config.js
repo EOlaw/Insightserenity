@@ -11,32 +11,6 @@ const dotenv = require('dotenv');
 // Load environment variables
 dotenv.config();
 
-// // Helper function to parse boolean environment variables
-// const parseBoolean = (value, defaultValue = false) => {
-//     if (value === undefined || value === null) return defaultValue;
-//     return value.toLowerCase() === 'true';
-// };
-
-// // Helper function to parse array from comma-separated string
-// const parseArray = (value, defaultValue = []) => {
-//     if (!value) return defaultValue;
-//     return value.split(',').map(item => item.trim()).filter(Boolean);
-// };
-
-// // Helper function to get environment variable with default
-// const getEnv = (key, defaultValue = '') => {
-//     return process.env[key] || defaultValue;
-// };
-
-// // Helper function to get required environment variable
-// const getRequiredEnv = (key) => {
-//     const value = process.env[key];
-//     if (!value) {
-//         throw new Error(`Required environment variable ${key} is not set`);
-//     }
-//     return value;
-// };
-
 // Helper function to parse boolean environment variables
 const parseBoolean = (value, defaultValue = false) => {
     if (value === undefined || value === null) return defaultValue;
@@ -63,7 +37,7 @@ const getEnv = (key, defaultValue = '') => {
 const getRequiredEnv = (key) => {
     const value = process.env[key];
     if (!value || value.trim() === '') {
-        console.warn(`⚠️  Required environment variable ${key} is not set or empty`);
+        // console.warn(`⚠️  Required environment variable ${key} is not set or empty`);
         return ''; // Return empty string instead of throwing
     }
     return value;
@@ -463,16 +437,16 @@ if (config.app.env === 'production') {
 // ==============================================
 // DEBUG: Log authentication configuration values
 // ==============================================
-console.log('🔍 DEBUG: Authentication Config Values:');
-console.log('ACCESS_TOKEN_SECRET from env:', process.env.ACCESS_TOKEN_SECRET?.substring(0, 20) + '...');
-console.log('REFRESH_TOKEN_SECRET from env:', process.env.REFRESH_TOKEN_SECRET?.substring(0, 20) + '...');
-console.log('JWT_SECRET from env:', process.env.JWT_SECRET?.substring(0, 20) + '...');
-console.log('JWT_REFRESH_SECRET from env:', process.env.JWT_REFRESH_SECRET?.substring(0, 20) + '...');
+// console.log('🔍 DEBUG: Authentication Config Values:');
+// console.log('ACCESS_TOKEN_SECRET from env:', process.env.ACCESS_TOKEN_SECRET?.substring(0, 20) + '...');
+// console.log('REFRESH_TOKEN_SECRET from env:', process.env.REFRESH_TOKEN_SECRET?.substring(0, 20) + '...');
+// console.log('JWT_SECRET from env:', process.env.JWT_SECRET?.substring(0, 20) + '...');
+// console.log('JWT_REFRESH_SECRET from env:', process.env.JWT_REFRESH_SECRET?.substring(0, 20) + '...');
 
-console.log('🔍 config.auth.jwtSecret:', config.auth.jwtSecret?.substring(0, 20) + '...');
-console.log('🔍 config.auth.jwtRefreshSecret:', config.auth.jwtRefreshSecret?.substring(0, 20) + '...');
-console.log('🔍 config.auth.accessTokenExpiry:', config.auth.accessTokenExpiry);
-console.log('🔍 config.auth.refreshTokenExpiry:', config.auth.refreshTokenExpiry);
+// console.log('🔍 config.auth.jwtSecret:', config.auth.jwtSecret?.substring(0, 20) + '...');
+// console.log('🔍 config.auth.jwtRefreshSecret:', config.auth.jwtRefreshSecret?.substring(0, 20) + '...');
+// console.log('🔍 config.auth.accessTokenExpiry:', config.auth.accessTokenExpiry);
+// console.log('🔍 config.auth.refreshTokenExpiry:', config.auth.refreshTokenExpiry);
 console.log('==============================================');
 
 // Freeze configuration to prevent modifications

@@ -313,7 +313,7 @@ class AuthController {
     // Generate tokens if not already present
     let tokens = {};
     if (info.sessionId) {
-      tokens = await AuthService.generateTokens(user, info.sessionId);
+      tokens = await AuthService.generateTokens(user, info.sessionId, false);
     }
     
     // Set cookies
