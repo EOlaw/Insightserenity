@@ -1,7 +1,7 @@
 /**
  * @file Hosted Organization Model
  * @description MongoDB model for organizations hosted on the platform with multi-tenancy support
- * @version 2.0.0
+ * @version 2.0.1 - Fixed duplicate index definitions
  */
 
 const mongoose = require('mongoose');
@@ -21,14 +21,14 @@ const hostedOrganizationSchema = new Schema({
     type: String,
     unique: true,
     required: true,
-    index: true,
+    // index: true, // COMMENTED OUT - defined in schema.index() below
     default: () => generateUniqueId('ORG')
   },
   tenantId: {
     type: String,
     unique: true,
-    sparse: true,
-    index: true
+    sparse: true
+    // index: true // COMMENTED OUT - will be defined below if needed
   },
   
   // Core Organization Identity
@@ -37,8 +37,8 @@ const hostedOrganizationSchema = new Schema({
     required: [true, 'Organization name is required'],
     trim: true,
     minlength: [2, 'Organization name must be at least 2 characters'],
-    maxlength: [100, 'Organization name cannot exceed 100 characters'],
-    index: true
+    maxlength: [100, 'Organization name cannot exceed 100 characters']
+    // index: true // COMMENTED OUT - will be defined below if needed
   },
   displayName: {
     type: String,
@@ -53,8 +53,8 @@ const hostedOrganizationSchema = new Schema({
   slug: {
     type: String,
     unique: true,
-    lowercase: true,
-    index: true
+    lowercase: true
+    // index: true // COMMENTED OUT - unique already creates index
   },
   
   // Business Information
@@ -119,8 +119,8 @@ const hostedOrganizationSchema = new Schema({
       type: String,
       enum: ['trial', 'active', 'past_due', 'canceled', 'suspended'],
       default: 'trial',
-      required: true,
-      index: true
+      required: true
+      // index: true // COMMENTED OUT - defined in schema.index() below
     },
     plan: {
       id: String,
@@ -207,6 +207,8 @@ const hostedOrganizationSchema = new Schema({
         },
         message: 'Subdomain can only contain lowercase letters, numbers, and hyphens'
       }
+      // Note: This field does NOT have index: true, so the duplicate warning
+      // must be coming from somewhere else in the codebase
     },
     customDomains: [{
       domain: String,
@@ -222,8 +224,8 @@ const hostedOrganizationSchema = new Schema({
   owner: {
     type: Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
+    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   team: {
     admins: [{
@@ -342,7 +344,11 @@ const hostedOrganizationSchema = new Schema({
   
   // Status Flags
   status: {
-    active: { type: Boolean, default: true, index: true },
+    active: { 
+      type: Boolean, 
+      default: true 
+      // index: true // COMMENTED OUT - defined in schema.index() below
+    },
     verified: { type: Boolean, default: false },
     featured: { type: Boolean, default: false },
     beta: { type: Boolean, default: false },
@@ -363,7 +369,15 @@ const hostedOrganizationSchema = new Schema({
   toObject: { virtuals: true }
 });
 
-// Indexes for Performance
+// CORRECTED: Define indexes only here to avoid duplicates
+hostedOrganizationSchema.index({ platformId: 1 });
+hostedOrganizationSchema.index({ tenantId: 1 }, { sparse: true });
+hostedOrganizationSchema.index({ name: 1 });
+hostedOrganizationSchema.index({ owner: 1 });
+hostedOrganizationSchema.index({ 'status.active': 1 });
+hostedOrganizationSchema.index({ 'subscription.status': 1 });
+
+// Existing compound indexes
 hostedOrganizationSchema.index({ 'status.active': 1, 'subscription.status': 1 });
 hostedOrganizationSchema.index({ 'domains.subdomain': 1 });
 hostedOrganizationSchema.index({ 'subscription.nextBillingDate': 1 });

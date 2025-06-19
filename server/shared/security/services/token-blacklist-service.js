@@ -2,7 +2,7 @@
 /**
  * @file Token Blacklist Service
  * @description Manages revoked tokens and prevents their reuse
- * @version 3.0.0
+ * @version 3.0.1 - Fixed duplicate index definitions
  */
 
 const mongoose = require('mongoose');
@@ -12,20 +12,20 @@ const { AppError } = require('../../utils/app-error');
 const logger = require('../../utils/logger');
 
 /**
- * Token Blacklist Schema
+ * Token Blacklist Schema - CORRECTED: Removed duplicate index definitions
  */
 const tokenBlacklistSchema = new mongoose.Schema({
   token: {
     type: String,
     required: true,
-    unique: true,
-    index: true
+    unique: true
+    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   tokenId: {
     type: String,
-    required: true,
-    index: true
+    required: true
+    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   type: {
@@ -37,8 +37,8 @@ const tokenBlacklistSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
+    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   reason: {
@@ -62,16 +62,22 @@ const tokenBlacklistSchema = new mongoose.Schema({
   
   expiresAt: {
     type: Date,
-    required: true,
-    index: true
+    required: true
+    // index: true // COMMENTED OUT - TTL index defined below
   },
   
   createdAt: {
     type: Date,
-    default: Date.now,
-    index: true
+    default: Date.now
+    // index: true // COMMENTED OUT - defined in schema.index() below
   }
 });
+
+// CORRECTED: Define indexes only here to avoid duplicates
+tokenBlacklistSchema.index({ token: 1 }, { unique: true });
+tokenBlacklistSchema.index({ tokenId: 1 });
+tokenBlacklistSchema.index({ userId: 1 });
+tokenBlacklistSchema.index({ createdAt: -1 });
 
 // TTL index to automatically remove expired entries
 tokenBlacklistSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

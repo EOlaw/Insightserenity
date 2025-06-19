@@ -24,7 +24,6 @@ const userSchema = new Schema({
     unique: true,
     lowercase: true,
     trim: true,
-    // index: true,
     validate: {
       validator: (email) => constants.REGEX.EMAIL.test(email),
       message: 'Invalid email format'
@@ -69,16 +68,14 @@ const userSchema = new Schema({
   userType: {
     type: String,
     required: true,
-    enum: constants.USER.TYPES_ENUM,
-    index: true
+    enum: constants.USER.TYPES_ENUM
   },
   
   role: {
     primary: {
       type: String,
       required: true,
-      enum: constants.USER.ROLES_ENUM,
-      index: true
+      enum: constants.USER.ROLES_ENUM
     },
     secondary: [{
       type: String,
@@ -380,8 +377,7 @@ const userSchema = new Schema({
   organization: {
     current: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Organization',
-      index: true
+      ref: 'Organization'
     },
     
     organizations: [{
@@ -531,14 +527,12 @@ const userSchema = new Schema({
   status: {
     type: String,
     enum: constants.USER.STATUS_ENUM,
-    default: 'pending',
-    index: true
+    default: 'pending'
   },
   
   active: {
     type: Boolean,
-    default: true,
-    index: true
+    default: true
   },
   
   isEmailVerified: {
@@ -860,12 +854,16 @@ const userSchema = new Schema({
   collection: 'users'
 });
 
-// Indexes for performance
+// Indexes for performance || Only define indexes here, not in schema definition
 userSchema.index({ email: 1 });
 userSchema.index({ username: 1 });
+userSchema.index({ 'organization.current': 1 });
+// userSchema.index({ 'authMethods.local.email': 1 });
+userSchema.index({ 'security.sessions.expiresAt': 1 }, { expireAfterSeconds: 0 });
+
+// Additional performance indexes
 userSchema.index({ 'profile.displayName': 'text', firstName: 'text', lastName: 'text' });
 userSchema.index({ userType: 1, 'role.primary': 1 });
-userSchema.index({ 'organization.current': 1 });
 userSchema.index({ status: 1, active: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ 'activity.lastLogin': -1 });

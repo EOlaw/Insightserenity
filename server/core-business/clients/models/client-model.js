@@ -97,8 +97,7 @@ const clientSchema = new Schema({
     type: String,
     unique: true, 
     trim: true,
-    lowercase: true,
-    index: true
+    lowercase: true
   },
   code: {
     type: String,

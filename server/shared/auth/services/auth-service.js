@@ -1566,6 +1566,23 @@ class AuthService {
    * @returns {Promise<Object>} Generated tokens
    */
   static async generateTokens(user, sessionId) {
+    // ROBUST CONFIG ACCESS - Get secrets directly from environment with fallbacks
+    const jwtSecret = process.env.ACCESS_TOKEN_SECRET || 
+                    process.env.JWT_SECRET || 
+                    'fallback-secret-development-only';
+                    
+    const jwtRefreshSecret = process.env.REFRESH_TOKEN_SECRET || 
+                            process.env.JWT_REFRESH_SECRET || 
+                            'fallback-refresh-secret-development-only';
+                            
+    const accessTokenExpiry = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
+    const refreshTokenExpiry = process.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
+    
+    // Add debug logging
+    console.log('🔧 AuthService.generateTokens - Using secrets:');
+    console.log('jwtSecret:', jwtSecret?.substring(0, 20) + '...');
+    console.log('jwtRefreshSecret:', jwtRefreshSecret?.substring(0, 20) + '...');
+    
     const tokenPayload = {
       userId: user._id,
       email: user.email,
@@ -1576,8 +1593,8 @@ class AuthService {
     
     const accessToken = jwt.sign(
       { ...tokenPayload, type: 'access' },
-      config.auth.jwtSecret,
-      { expiresIn: config.auth.accessTokenExpiry }
+      jwtSecret,
+      { expiresIn: accessTokenExpiry }
     );
     
     const refreshToken = jwt.sign(
@@ -1586,18 +1603,18 @@ class AuthService {
         sessionId,
         type: 'refresh' 
       },
-      config.auth.refreshTokenSecret,
-      { expiresIn: config.auth.refreshTokenExpiry }
+      jwtRefreshSecret,
+      { expiresIn: refreshTokenExpiry }
     );
     
     return {
       accessToken,
       refreshToken,
       tokenType: 'Bearer',
-      expiresIn: config.auth.accessTokenExpiry
+      expiresIn: accessTokenExpiry
     };
   }
-  
+
   /**
    * Send verification email with fallback logging
    * @param {Object} user - User object

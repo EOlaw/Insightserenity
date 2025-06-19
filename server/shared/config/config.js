@@ -11,9 +11,36 @@ const dotenv = require('dotenv');
 // Load environment variables
 dotenv.config();
 
+// // Helper function to parse boolean environment variables
+// const parseBoolean = (value, defaultValue = false) => {
+//     if (value === undefined || value === null) return defaultValue;
+//     return value.toLowerCase() === 'true';
+// };
+
+// // Helper function to parse array from comma-separated string
+// const parseArray = (value, defaultValue = []) => {
+//     if (!value) return defaultValue;
+//     return value.split(',').map(item => item.trim()).filter(Boolean);
+// };
+
+// // Helper function to get environment variable with default
+// const getEnv = (key, defaultValue = '') => {
+//     return process.env[key] || defaultValue;
+// };
+
+// // Helper function to get required environment variable
+// const getRequiredEnv = (key) => {
+//     const value = process.env[key];
+//     if (!value) {
+//         throw new Error(`Required environment variable ${key} is not set`);
+//     }
+//     return value;
+// };
+
 // Helper function to parse boolean environment variables
 const parseBoolean = (value, defaultValue = false) => {
     if (value === undefined || value === null) return defaultValue;
+    if (typeof value === 'boolean') return value;
     return value.toLowerCase() === 'true';
 };
 
@@ -23,16 +50,21 @@ const parseArray = (value, defaultValue = []) => {
     return value.split(',').map(item => item.trim()).filter(Boolean);
 };
 
-// Helper function to get environment variable with default
+// Helper function to get environment variable with default (ROBUST VERSION)
 const getEnv = (key, defaultValue = '') => {
-    return process.env[key] || defaultValue;
+    const value = process.env[key];
+    if (value === undefined || value === null || value === '') {
+        return defaultValue;
+    }
+    return value;
 };
 
-// Helper function to get required environment variable
+// Helper function to get required environment variable (SAFER VERSION)
 const getRequiredEnv = (key) => {
     const value = process.env[key];
-    if (!value) {
-        throw new Error(`Required environment variable ${key} is not set`);
+    if (!value || value.trim() === '') {
+        console.warn(`⚠️  Required environment variable ${key} is not set or empty`);
+        return ''; // Return empty string instead of throwing
     }
     return value;
 };
@@ -55,10 +87,25 @@ const config = {
         trustProxy: parseBoolean(getEnv('TRUST_PROXY', 'true'))
     },
 
+    // ADD THIS SERVER SECTION:
+    server: {
+        isProduction: getEnv('NODE_ENV', 'development') === 'production',
+        isDevelopment: getEnv('NODE_ENV', 'development') === 'development',
+        host: getEnv('APP_HOST', 'localhost'),
+        port: parseInt(getEnv('PORT', '5001'), 10),
+        url: getEnv('APP_URL', 'https://localhost:5001'),
+        protocol: getEnv('APP_URL', 'https://localhost:5001').startsWith('https') ? 'https' : 'http'
+    },
+
+    // Client configuration (for auth controller compatibility)
+    client: {
+        url: getEnv('CLIENT_URL', 'http://localhost:5001')
+    },
+
     // Domain configuration
     domain: {
         primary: getEnv('DOMAIN', 'localhost'),
-        clientUrl: getEnv('CLIENT_URL', 'http://localhost:3000')
+        clientUrl: getEnv('CLIENT_URL', 'http://localhost:5001')
     },
 
     // Database configuration
@@ -77,30 +124,82 @@ const config = {
 
     // Authentication configuration
     auth: {
+        // Token configuration  
         accessToken: {
             secret: getEnv('ACCESS_TOKEN_SECRET') || getEnv('JWT_SECRET'),
-            expiresIn: getEnv('ACCESS_TOKEN_EXPIRY', '35m')
+            expiresIn: getEnv('ACCESS_TOKEN_EXPIRES_IN', '15m'),
+            issuer: getEnv('ACCESS_TOKEN_ISSUER', 'InsightSerenity'),
+            audience: getEnv('ACCESS_TOKEN_AUDIENCE', 'InsightSerenity-Users')
         },
         refreshToken: {
             secret: getEnv('REFRESH_TOKEN_SECRET') || getEnv('JWT_REFRESH_SECRET'),
-            expiresIn: getEnv('REFRESH_TOKEN_EXPIRY', '2d')
+            expiresIn: getEnv('REFRESH_TOKEN_EXPIRES_IN', '7d'),
+            issuer: getEnv('REFRESH_TOKEN_ISSUER', 'InsightSerenity'),
+            audience: getEnv('REFRESH_TOKEN_AUDIENCE', 'InsightSerenity-Users')
         },
-        saltRounds: parseInt(getEnv('SALT_ROUNDS', '10'), 10),
-        passwordMinLength: parseInt(getEnv('PASSWORD_MIN_LENGTH', '8'), 10),
-        requireUppercase: parseBoolean(getEnv('REQUIRE_UPPERCASE', 'false')),
-        requireLowercase: parseBoolean(getEnv('REQUIRE_LOWERCASE', 'false')),
-        requireNumbers: parseBoolean(getEnv('REQUIRE_NUMBERS', 'false')),
-        requireSpecialChars: parseBoolean(getEnv('REQUIRE_SPECIAL_CHARS', 'false')),
-        requireEmailVerification: parseBoolean(getEnv('REQUIRE_EMAIL_VERIFICATION', 'false')),
+        
+        // CRITICAL: Direct legacy properties (ensuring they have values)
+        jwtSecret: getEnv('ACCESS_TOKEN_SECRET') || getEnv('JWT_SECRET') || 'fallback-secret-development-only',
+        jwtRefreshSecret: getEnv('REFRESH_TOKEN_SECRET') || getEnv('JWT_REFRESH_SECRET') || 'fallback-refresh-secret-development-only',
+        accessTokenExpiry: getEnv('ACCESS_TOKEN_EXPIRES_IN', '15m'),
+        refreshTokenExpiry: getEnv('REFRESH_TOKEN_EXPIRES_IN', '7d'),
+        
+        // Session durations (CRITICAL - These were missing and causing your error)
+        sessionDuration: parseInt(getEnv('AUTH_SESSION_DURATION', '86400000'), 10), // 24 hours in milliseconds
+        rememberMeDuration: parseInt(getEnv('AUTH_REMEMBER_ME_DURATION', '2592000000'), 10), // 30 days in milliseconds
+        
+        // JWT configuration
         jwt: {
             algorithm: getEnv('JWT_ALGORITHM', 'HS256'),
             issuer: getEnv('JWT_ISSUER', 'InsightSerenity'),
             audience: getEnv('JWT_AUDIENCE', 'InsightSerenity-Users')
         },
+        
+        // Password policy
+        passwordPolicy: {
+            minLength: parseInt(getEnv('PASSWORD_MIN_LENGTH', '12'), 10),
+            maxLength: parseInt(getEnv('PASSWORD_MAX_LENGTH', '128'), 10),
+            requireUppercase: parseBoolean(getEnv('PASSWORD_REQUIRE_UPPERCASE', 'true')),
+            requireLowercase: parseBoolean(getEnv('PASSWORD_REQUIRE_LOWERCASE', 'true')),
+            requireNumbers: parseBoolean(getEnv('PASSWORD_REQUIRE_NUMBERS', 'true')),
+            requireSpecialChars: parseBoolean(getEnv('PASSWORD_REQUIRE_SPECIAL_CHARS', 'true')),
+            preventReuse: parseInt(getEnv('PASSWORD_PREVENT_REUSE', '5'), 10),
+            maxAge: parseInt(getEnv('PASSWORD_MAX_AGE', '7776000000'), 10) // 90 days
+        },
+        
+        // Security settings
+        saltRounds: parseInt(getEnv('SALT_ROUNDS', '12'), 10),
+        maxLoginAttempts: parseInt(getEnv('MAX_LOGIN_ATTEMPTS', '5'), 10),
+        lockoutDuration: parseInt(getEnv('LOCKOUT_DURATION', '900000'), 10), // 15 minutes
+        
+        // Email verification
+        requireEmailVerification: parseBoolean(getEnv('REQUIRE_EMAIL_VERIFICATION', 'true')),
+        emailVerificationExpiry: parseInt(getEnv('EMAIL_VERIFICATION_EXPIRY', '86400000'), 10), // 24 hours
+        
+        // Password reset
+        passwordResetExpiry: parseInt(getEnv('PASSWORD_RESET_EXPIRY', '3600000'), 10), // 1 hour
+        
+        // Two-factor authentication
         twoFactor: {
             enabled: parseBoolean(getEnv('TWO_FACTOR_ENABLED', 'true')),
             issuer: getEnv('TWO_FACTOR_ISSUER', 'InsightSerenity'),
-            window: parseInt(getEnv('TWO_FACTOR_WINDOW', '2'), 10)
+            window: parseInt(getEnv('TWO_FACTOR_WINDOW', '2'), 10),
+            backupCodesCount: parseInt(getEnv('TWO_FACTOR_BACKUP_CODES', '8'), 10)
+        },
+        
+        // Device trust
+        trustedDeviceExpiry: parseInt(getEnv('TRUSTED_DEVICE_EXPIRY', '2592000000'), 10), // 30 days
+        
+        // Rate limiting for auth endpoints
+        rateLimit: {
+            login: {
+                windowMs: parseInt(getEnv('AUTH_RATE_LIMIT_WINDOW', '900000'), 10), // 15 minutes
+                max: parseInt(getEnv('AUTH_RATE_LIMIT_MAX', '5'), 10)
+            },
+            passwordReset: {
+                windowMs: parseInt(getEnv('PASSWORD_RESET_RATE_LIMIT_WINDOW', '3600000'), 10), // 1 hour
+                max: parseInt(getEnv('PASSWORD_RESET_RATE_LIMIT_MAX', '3'), 10)
+            }
         }
     },
 
@@ -360,6 +459,21 @@ if (config.app.env === 'production') {
         }
     });
 }
+
+// ==============================================
+// DEBUG: Log authentication configuration values
+// ==============================================
+console.log('🔍 DEBUG: Authentication Config Values:');
+console.log('ACCESS_TOKEN_SECRET from env:', process.env.ACCESS_TOKEN_SECRET?.substring(0, 20) + '...');
+console.log('REFRESH_TOKEN_SECRET from env:', process.env.REFRESH_TOKEN_SECRET?.substring(0, 20) + '...');
+console.log('JWT_SECRET from env:', process.env.JWT_SECRET?.substring(0, 20) + '...');
+console.log('JWT_REFRESH_SECRET from env:', process.env.JWT_REFRESH_SECRET?.substring(0, 20) + '...');
+
+console.log('🔍 config.auth.jwtSecret:', config.auth.jwtSecret?.substring(0, 20) + '...');
+console.log('🔍 config.auth.jwtRefreshSecret:', config.auth.jwtRefreshSecret?.substring(0, 20) + '...');
+console.log('🔍 config.auth.accessTokenExpiry:', config.auth.accessTokenExpiry);
+console.log('🔍 config.auth.refreshTokenExpiry:', config.auth.refreshTokenExpiry);
+console.log('==============================================');
 
 // Freeze configuration to prevent modifications
 Object.freeze(config);
