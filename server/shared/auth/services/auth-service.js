@@ -269,9 +269,40 @@ class AuthService {
       }
       
       // Check if email verification is required
-      if (config.features.emailVerification && !auth.authMethods.local.isVerified) {
-        throw new AuthenticationError('Please verify your email before logging in');
+      // if (config.features.emailVerification && !auth.authMethods.local.isVerified) {
+      //   throw new AuthenticationError('Please verify your email before logging in');
+      // }
+
+      // Check if email is verified
+      if (!auth.authMethods.local.isVerified && !user.isEmailVerified) {
+        // Log the failed login attempt due to unverified email
+        auth.addLoginAttempt(false, 'email_not_verified');
+        await auth.save();
+        
+        // Audit log
+        await AuditService.log({
+          type: 'login_blocked_unverified_email',
+          action: 'login_attempt',
+          category: 'authentication',
+          result: 'blocked',
+          userId: user._id,
+          metadata: {
+            ...context,
+            reason: 'email_not_verified'
+          }
+        });
+        
+        // Return specific error with verification token option
+        throw new AuthenticationError('Please verify your email address before logging in. Check your inbox or request a new verification email.', 403, {
+          code: 'EMAIL_NOT_VERIFIED',
+          needsEmailVerification: true,
+          canResendVerification: true,
+          email: user.email
+        });
       }
+
+      // Reset login attempts on successful password verification
+      auth.resetLoginAttempts();
       
       // Check if password change is required
       if (this.isPasswordChangeRequired(auth)) {
@@ -396,102 +427,222 @@ class AuthService {
     }
   }
   
-  /**
-   * Logout user
-   * @param {Object} sessionData - Session data
-   * @param {Object} context - Request context
-   * @returns {Promise<Object>} Logout result
-   */
-  static async logout(sessionData, context) {
-    try {
-      const { accessToken, refreshToken, sessionId, userId, logoutAll } = sessionData;
+  // /**
+  //  * Logout user
+  //  * @param {Object} sessionData - Session data
+  //  * @param {Object} context - Request context
+  //  * @returns {Promise<Object>} Logout result
+  //  */
+  // static async logout(sessionData, context) {
+  //   try {
+  //     const { accessToken, refreshToken, sessionId, userId, logoutAll } = sessionData;
       
-      // Verify and decode token
-      let tokenData;
-      if (accessToken) {
-        try {
-          tokenData = jwt.verify(accessToken, config.auth.jwtSecret);
-        } catch (error) {
-          // Token might be expired, but we still want to logout
-          tokenData = jwt.decode(accessToken);
+  //     // Verify and decode token
+  //     let tokenData;
+  //     if (accessToken) {
+  //       try {
+  //         tokenData = jwt.verify(accessToken, config.auth.jwtSecret);
+  //       } catch (error) {
+  //         // Token might be expired, but we still want to logout
+  //         tokenData = jwt.decode(accessToken);
+  //       }
+  //     }
+      
+  //     const effectiveUserId = userId || tokenData?.userId;
+  //     const effectiveSessionId = sessionId || tokenData?.sessionId;
+      
+  //     if (!effectiveUserId) {
+  //       throw new ValidationError('User ID required for logout');
+  //     }
+      
+  //     // Get auth record
+  //     const auth = await Auth.findOne({ userId: effectiveUserId });
+  //     if (!auth) {
+  //       throw new NotFoundError('Authentication record not found');
+  //     }
+      
+  //     // Revoke session(s)
+  //     if (logoutAll) {
+  //       // Revoke all sessions
+  //       auth.sessions.forEach(session => {
+  //         if (session.isActive) {
+  //           session.isActive = false;
+  //           session.revokedAt = new Date();
+  //           session.revokedReason = 'User logged out from all devices';
+  //         }
+  //       });
+  //     } else if (effectiveSessionId) {
+  //       // Revoke specific session
+  //       auth.revokeSession(effectiveSessionId, 'User logged out');
+  //     }
+      
+  //     // Update activity
+  //     auth.activity.lastLogout = new Date();
+  //     await auth.save();
+      
+  //     // Blacklist tokens
+  //     if (accessToken) {
+  //       await TokenBlacklistService.blacklistToken(accessToken, 'access', 'logout');
+  //     }
+  //     if (refreshToken) {
+  //       await TokenBlacklistService.blacklistToken(refreshToken, 'refresh', 'logout');
+  //     }
+      
+  //     // Update user activity
+  //     const user = await User.findById(effectiveUserId);
+  //     if (user) {
+  //       user.activity.lastLogout = new Date();
+  //       await user.save();
+  //     }
+      
+  //     // Audit log
+  //     await AuditService.log({
+  //       type: 'user_logout',
+  //       action: 'logout',
+  //       category: 'authentication',
+  //       result: 'success',
+  //       userId: effectiveUserId,
+  //       target: {
+  //         type: 'user',
+  //         id: effectiveUserId.toString()
+  //       },
+  //       metadata: {
+  //         ...context,
+  //         sessionId: effectiveSessionId,
+  //         logoutAll
+  //       }
+  //     });
+      
+  //     return {
+  //       success: true,
+  //       message: logoutAll ? 'Logged out from all devices' : 'Logout successful'
+  //     };
+      
+  //   } catch (error) {
+  //     logger.error('Logout error', { error });
+  //     throw error;
+  //   }
+  // }
+
+    /**
+     * Logout user with fallback for circular dependency issue
+     * @param {Object} sessionData - Session data
+     * @param {Object} context - Request context
+     * @returns {Promise<Object>} Logout result
+     */
+    static async logout(sessionData, context) {
+      try {
+        const { accessToken, refreshToken, sessionId, userId, logoutAll } = sessionData;
+        
+        // Verify and decode token
+        let tokenData;
+        if (accessToken) {
+          try {
+            tokenData = jwt.verify(accessToken, config.auth.jwtSecret);
+          } catch (error) {
+            // Token might be expired, but we still want to logout
+            tokenData = jwt.decode(accessToken);
+          }
         }
-      }
-      
-      const effectiveUserId = userId || tokenData?.userId;
-      const effectiveSessionId = sessionId || tokenData?.sessionId;
-      
-      if (!effectiveUserId) {
-        throw new ValidationError('User ID required for logout');
-      }
-      
-      // Get auth record
-      const auth = await Auth.findOne({ userId: effectiveUserId });
-      if (!auth) {
-        throw new NotFoundError('Authentication record not found');
-      }
-      
-      // Revoke session(s)
-      if (logoutAll) {
-        // Revoke all sessions
-        auth.sessions.forEach(session => {
-          if (session.isActive) {
-            session.isActive = false;
-            session.revokedAt = new Date();
-            session.revokedReason = 'User logged out from all devices';
+        
+        const effectiveUserId = userId || tokenData?.userId;
+        const effectiveSessionId = sessionId || tokenData?.sessionId;
+        
+        if (!effectiveUserId) {
+          throw new ValidationError('User ID required for logout');
+        }
+        
+        // Get auth record
+        const auth = await Auth.findOne({ userId: effectiveUserId });
+        if (!auth) {
+          throw new NotFoundError('Authentication record not found');
+        }
+        
+        // Revoke session(s)
+        if (logoutAll) {
+          // Revoke all sessions
+          auth.sessions.forEach(session => {
+            if (session.isActive) {
+              session.isActive = false;
+              session.revokedAt = new Date();
+              session.revokedReason = 'User logged out from all devices';
+            }
+          });
+        } else if (effectiveSessionId) {
+          // Revoke specific session
+          auth.revokeSession(effectiveSessionId, 'User logged out');
+        }
+        
+        // Update activity
+        auth.activity.lastLogout = new Date();
+        await auth.save();
+        
+        // Blacklist tokens with error handling for circular dependency
+        try {
+          if (accessToken && TokenBlacklistService && typeof TokenBlacklistService.blacklistToken === 'function') {
+            await TokenBlacklistService.blacklistToken(accessToken, 'access', 'logout');
+          } else {
+            logger.warn('TokenBlacklistService.blacklistToken not available - token not blacklisted', {
+              hasService: !!TokenBlacklistService,
+              hasMethod: !!(TokenBlacklistService && typeof TokenBlacklistService.blacklistToken === 'function'),
+              userId: effectiveUserId
+            });
+          }
+          
+          if (refreshToken && TokenBlacklistService && typeof TokenBlacklistService.blacklistToken === 'function') {
+            await TokenBlacklistService.blacklistToken(refreshToken, 'refresh', 'logout');
+          } else {
+            logger.warn('TokenBlacklistService.blacklistToken not available - refresh token not blacklisted', {
+              hasService: !!TokenBlacklistService,
+              hasMethod: !!(TokenBlacklistService && typeof TokenBlacklistService.blacklistToken === 'function'),
+              userId: effectiveUserId
+            });
+          }
+        } catch (blacklistError) {
+          // Log the error but don't fail the logout
+          logger.error('Token blacklisting failed during logout', {
+            error: blacklistError.message,
+            userId: effectiveUserId,
+            sessionId: effectiveSessionId
+          });
+        }
+        
+        // Update user activity
+        const user = await User.findById(effectiveUserId);
+        if (user) {
+          user.activity.lastLogout = new Date();
+          await user.save();
+        }
+        
+        // Audit log
+        await AuditService.log({
+          type: 'user_logout',
+          action: 'logout',
+          category: 'authentication',
+          result: 'success',
+          userId: effectiveUserId,
+          target: {
+            type: 'user',
+            id: effectiveUserId.toString()
+          },
+          metadata: {
+            ...context,
+            sessionId: effectiveSessionId,
+            logoutAll,
+            tokenBlacklistingSkipped: !TokenBlacklistService || typeof TokenBlacklistService.blacklistToken !== 'function'
           }
         });
-      } else if (effectiveSessionId) {
-        // Revoke specific session
-        auth.revokeSession(effectiveSessionId, 'User logged out');
+        
+        return {
+          success: true,
+          message: logoutAll ? 'Logged out from all devices' : 'Logout successful'
+        };
+        
+      } catch (error) {
+        logger.error('Logout error', { error });
+        throw error;
       }
-      
-      // Update activity
-      auth.activity.lastLogout = new Date();
-      await auth.save();
-      
-      // Blacklist tokens
-      if (accessToken) {
-        await TokenBlacklistService.blacklistToken(accessToken, 'access', 'logout');
-      }
-      if (refreshToken) {
-        await TokenBlacklistService.blacklistToken(refreshToken, 'refresh', 'logout');
-      }
-      
-      // Update user activity
-      const user = await User.findById(effectiveUserId);
-      if (user) {
-        user.activity.lastLogout = new Date();
-        await user.save();
-      }
-      
-      // Audit log
-      await AuditService.log({
-        type: 'user_logout',
-        action: 'logout',
-        category: 'authentication',
-        result: 'success',
-        userId: effectiveUserId,
-        target: {
-          type: 'user',
-          id: effectiveUserId.toString()
-        },
-        metadata: {
-          ...context,
-          sessionId: effectiveSessionId,
-          logoutAll
-        }
-      });
-      
-      return {
-        success: true,
-        message: logoutAll ? 'Logged out from all devices' : 'Logout successful'
-      };
-      
-    } catch (error) {
-      logger.error('Logout error', { error });
-      throw error;
     }
-  }
   
   /**
    * Refresh access token
@@ -1701,6 +1852,79 @@ class AuthService {
     };
   }
 
+  // /**
+  //  * Send verification email with fallback logging
+  //  * @param {Object} user - User object
+  //  * @param {string} token - Verification token
+  //  * @param {Object} context - Request context
+  //  */
+  // static async sendVerificationEmail(user, token, context) {
+  //   try {
+  //     // Construct verification URL using correct config path
+  //     const verificationUrl = `${config.frontend.verifyEmailUrl}?token=${token}`;
+      
+  //     const emailData = {
+  //       to: user.email,
+  //       subject: 'Verify your email address',
+  //       template: 'email-verification',
+  //       data: {
+  //         firstName: user.firstName,
+  //         verificationUrl,
+  //         expiresIn: '24 hours'
+  //       }
+  //     };
+
+  //     // Check if EmailService exists and has sendEmail method
+  //     if (EmailService && typeof EmailService.sendEmail === 'function') {
+  //       await EmailService.sendEmail(emailData);
+  //       logger.info('Verification email sent successfully', {
+  //         to: user.email,
+  //         userId: user._id,
+  //         verificationUrl
+  //       });
+  //     } else {
+  //       // Fallback: Log email details instead of sending
+  //       logger.info('Email service not available - logging verification email details', {
+  //         emailType: 'verification',
+  //         to: user.email,
+  //         subject: emailData.subject,
+  //         firstName: user.firstName,
+  //         verificationUrl,
+  //         token: token.substring(0, 8) + '...', // Log partial token for security
+  //         userId: user._id,
+  //         note: 'This email would have been sent if email service was configured'
+  //       });
+        
+  //       // Also log to console for development visibility
+  //       console.log('📧 VERIFICATION EMAIL (would be sent):');
+  //       console.log(`   To: ${user.email}`);
+  //       console.log(`   Subject: ${emailData.subject}`);
+  //       console.log(`   Verification URL: ${verificationUrl}`);
+  //       console.log(`   Token: ${token}`);
+  //     }
+      
+  //   } catch (error) {
+  //     // Log error but don't fail registration
+  //     logger.error('Failed to send verification email', {
+  //       error: error.message,
+  //       userId: user._id,
+  //       email: user.email
+  //     });
+      
+  //     // Log fallback information
+  //     logger.info('Verification email fallback - registration completed without email', {
+  //       userId: user._id,
+  //       email: user.email,
+  //       token: token.substring(0, 8) + '...',
+  //       note: 'User can verify manually using token if needed'
+  //     });
+      
+  //     console.log('📧 VERIFICATION EMAIL FAILED - Token for manual verification:');
+  //     console.log(`   User: ${user.email}`);
+  //     console.log(`   Token: ${token}`);
+  //   }
+  // }
+
   /**
    * Send verification email with fallback logging
    * @param {Object} user - User object
@@ -1723,6 +1947,30 @@ class AuthService {
         }
       };
 
+      // ✅ ENHANCED DEVELOPMENT LOGGING
+      if (config.app.env === 'development') {
+        console.log('\n🔓 =================== EMAIL VERIFICATION TOKEN (DEVELOPMENT) ===================');
+        console.log(`📧 To: ${user.email}`);
+        console.log(`👤 User: ${user.firstName} ${user.lastName}`);
+        console.log(`🆔 User ID: ${user._id}`);
+        console.log(`🔑 Verification Token: ${token}`);
+        console.log(`🔗 Verification URL: ${verificationUrl}`);
+        console.log(`⏰ Expires: 24 hours from now`);
+        console.log(`📅 Created: ${new Date().toISOString()}`);
+        console.log('================================================================================\n');
+        
+        // Additional logger for development
+        logger.info('🔓 EMAIL VERIFICATION TOKEN (DEVELOPMENT)', {
+          userId: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          fullToken: token, // Full token for development
+          verificationUrl,
+          environment: 'development',
+          note: 'Full token logged for development purposes only'
+        });
+      }
+
       // Check if EmailService exists and has sendEmail method
       if (EmailService && typeof EmailService.sendEmail === 'function') {
         await EmailService.sendEmail(emailData);
@@ -1739,7 +1987,7 @@ class AuthService {
           subject: emailData.subject,
           firstName: user.firstName,
           verificationUrl,
-          token: token.substring(0, 8) + '...', // Log partial token for security
+          token: config.app.env === 'development' ? token : token.substring(0, 8) + '...', // Full token in dev
           userId: user._id,
           note: 'This email would have been sent if email service was configured'
         });
@@ -1749,7 +1997,9 @@ class AuthService {
         console.log(`   To: ${user.email}`);
         console.log(`   Subject: ${emailData.subject}`);
         console.log(`   Verification URL: ${verificationUrl}`);
-        console.log(`   Token: ${token}`);
+        if (config.app.env === 'development') {
+          console.log(`   Full Token: ${token}`);
+        }
       }
       
     } catch (error) {
@@ -1764,13 +2014,9 @@ class AuthService {
       logger.info('Verification email fallback - registration completed without email', {
         userId: user._id,
         email: user.email,
-        token: token.substring(0, 8) + '...',
-        note: 'User can verify manually using token if needed'
+        verificationUrl: `${config.frontend.verifyEmailUrl}?token=${token}`,
+        token: config.app.env === 'development' ? token : 'hidden_for_security'
       });
-      
-      console.log('📧 VERIFICATION EMAIL FAILED - Token for manual verification:');
-      console.log(`   User: ${user.email}`);
-      console.log(`   Token: ${token}`);
     }
   }
 

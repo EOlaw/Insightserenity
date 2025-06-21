@@ -67,70 +67,292 @@ class AuthController {
     responseHandler.success(res, result, 'Registration successful', 201);
   });
   
+  // /**
+  //  * Login user
+  //  * @route   POST /api/auth/login
+  //  * @access  Public
+  //  */
+  // static login = asyncHandler(async (req, res) => {
+  //   const credentials = {
+  //     email: req.body.email,
+  //     password: req.body.password,
+  //     rememberMe: req.body.rememberMe || false,
+  //     deviceId: req.body.deviceId
+  //   };
+    
+  //   const context = {
+  //     ip: req.ip,
+  //     userAgent: req.get('user-agent'),
+  //     origin: req.get('origin')
+  //   };
+    
+  //   const result = await AuthService.login(credentials, context);
+    
+  //   // Handle MFA requirement
+  //   if (result.requiresMfa) {
+  //     return responseHandler.success(res, {
+  //       requiresMfa: true,
+  //       userId: result.userId,
+  //       challengeId: result.challengeId,
+  //       mfaMethods: result.mfaMethods
+  //     }, 'Multi-factor authentication required');
+  //   }
+    
+  //   // Handle password change requirement
+  //   if (result.requiresPasswordChange) {
+  //     return responseHandler.success(res, {
+  //       requiresPasswordChange: true,
+  //       userId: result.userId
+  //     }, 'Password change required');
+  //   }
+    
+  //   // Set cookies
+  //   const cookieOptions = {
+  //     httpOnly: true,
+  //     secure: config.server.isProduction,
+  //     sameSite: 'strict'
+  //   };
+    
+  //   res.cookie('accessToken', result.accessToken, {
+  //     ...cookieOptions,
+  //     maxAge: 15 * 60 * 1000 // 15 minutes
+  //   });
+    
+  //   res.cookie('refreshToken', result.refreshToken, {
+  //     ...cookieOptions,
+  //     maxAge: credentials.rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+  //   });
+    
+  //   if (result.trustToken) {
+  //     res.cookie('trustToken', result.trustToken, {
+  //       ...cookieOptions,
+  //       maxAge: 90 * 24 * 60 * 60 * 1000 // 90 days
+  //     });
+  //   }
+    
+  //   responseHandler.success(res, result, 'Login successful');
+  // });
+
   /**
    * Login user
    * @route   POST /api/auth/login
    * @access  Public
    */
   static login = asyncHandler(async (req, res) => {
+    // Extract and validate credentials (moved outside try block for error handling access)
     const credentials = {
       email: req.body.email,
       password: req.body.password,
       rememberMe: req.body.rememberMe || false,
       deviceId: req.body.deviceId
     };
-    
+
+    // Build request context for audit and security tracking (moved outside try block)
     const context = {
       ip: req.ip,
       userAgent: req.get('user-agent'),
-      origin: req.get('origin')
+      origin: req.get('origin'),
+      language: req.get('accept-language'),
+      source: 'web',
+      timestamp: new Date()
     };
-    
-    const result = await AuthService.login(credentials, context);
-    
-    // Handle MFA requirement
-    if (result.requiresMfa) {
-      return responseHandler.success(res, {
-        requiresMfa: true,
-        userId: result.userId,
-        challengeId: result.challengeId,
-        mfaMethods: result.mfaMethods
-      }, 'Multi-factor authentication required');
-    }
-    
-    // Handle password change requirement
-    if (result.requiresPasswordChange) {
-      return responseHandler.success(res, {
-        requiresPasswordChange: true,
-        userId: result.userId
-      }, 'Password change required');
-    }
-    
-    // Set cookies
-    const cookieOptions = {
-      httpOnly: true,
-      secure: config.server.isProduction,
-      sameSite: 'strict'
-    };
-    
-    res.cookie('accessToken', result.accessToken, {
-      ...cookieOptions,
-      maxAge: 15 * 60 * 1000 // 15 minutes
-    });
-    
-    res.cookie('refreshToken', result.refreshToken, {
-      ...cookieOptions,
-      maxAge: credentials.rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
-    });
-    
-    if (result.trustToken) {
-      res.cookie('trustToken', result.trustToken, {
+
+    try {
+
+      // Log login attempt for security monitoring
+      logger.info('Login attempt initiated', {
+        email: credentials.email,
+        ip: context.ip,
+        userAgent: context.userAgent,
+        rememberMe: credentials.rememberMe
+      });
+
+      // Attempt authentication through AuthService
+      const result = await AuthService.login(credentials, context);
+
+      // Handle multi-factor authentication requirement
+      if (result.requiresMfa) {
+        logger.info('MFA required for login', {
+          userId: result.userId,
+          mfaMethods: result.mfaMethods
+        });
+
+        return responseHandler.success(res, {
+          requiresMfa: true,
+          userId: result.userId,
+          challengeId: result.challengeId,
+          mfaMethods: result.mfaMethods,
+          message: 'Multi-factor authentication required'
+        }, 'Multi-factor authentication required', 202);
+      }
+
+      // Handle mandatory password change requirement
+      if (result.requiresPasswordChange) {
+        logger.info('Password change required for login', {
+          userId: result.userId,
+          reason: result.passwordChangeReason
+        });
+
+        return responseHandler.success(res, {
+          requiresPasswordChange: true,
+          userId: result.userId,
+          reason: result.passwordChangeReason,
+          message: 'Password change required before login'
+        }, 'Password change required', 202);
+      }
+
+      // Configure secure cookie options based on environment
+      const cookieOptions = {
+        httpOnly: true,
+        secure: config.server.isProduction,
+        sameSite: config.server.isProduction ? 'strict' : 'lax',
+        path: '/'
+      };
+
+      // Set access token cookie with appropriate expiration
+      res.cookie('accessToken', result.accessToken, {
         ...cookieOptions,
-        maxAge: 90 * 24 * 60 * 60 * 1000 // 90 days
+        maxAge: 15 * 60 * 1000 // 15 minutes
+      });
+
+      // Set refresh token cookie with extended expiration for remember me
+      const refreshTokenMaxAge = credentials.rememberMe 
+        ? 30 * 24 * 60 * 60 * 1000  // 30 days for remember me
+        : 7 * 24 * 60 * 60 * 1000;  // 7 days standard
+
+      res.cookie('refreshToken', result.refreshToken, {
+        ...cookieOptions,
+        maxAge: refreshTokenMaxAge
+      });
+
+      // Set trust token if device is trusted
+      if (result.trustToken) {
+        res.cookie('trustToken', result.trustToken, {
+          ...cookieOptions,
+          maxAge: 90 * 24 * 60 * 60 * 1000 // 90 days for trusted devices
+        });
+      }
+
+      // Log successful login for audit trail
+      logger.info('Login successful', {
+        userId: result.user.id,
+        email: result.user.email,
+        sessionId: result.sessionId,
+        rememberMe: credentials.rememberMe,
+        hasTrustToken: !!result.trustToken
+      });
+
+      // Return successful login response
+      return responseHandler.success(res, {
+        user: result.user,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: result.expiresIn,
+        sessionId: result.sessionId,
+        rememberMe: credentials.rememberMe
+      }, 'Login successful');
+
+    } catch (error) {
+      // Handle email verification specific error
+      if (error.message && error.message.includes('verify your email')) {
+        logger.warn('Login blocked - email not verified', {
+          email: credentials.email,
+          ip: context.ip,
+          userAgent: context.userAgent
+        });
+
+        return responseHandler.error(res, error.message, 403, {
+          code: 'EMAIL_NOT_VERIFIED',
+          needsEmailVerification: true,
+          canResendVerification: true,
+          email: credentials.email,
+          actions: {
+            resendVerification: {
+              url: '/api/v1/auth/resend-verification',
+              method: 'POST',
+              description: 'Resend email verification'
+            }
+          }
+        });
+      }
+
+      // Handle authentication errors (invalid credentials, locked accounts)
+      if (error instanceof AuthenticationError) {
+        logger.warn('Authentication failed', {
+          email: credentials.email,
+          error: error.message,
+          ip: context.ip,
+          userAgent: context.userAgent,
+          code: error.code
+        });
+
+        // Check if account is locked
+        if (error.message.includes('locked')) {
+          return responseHandler.error(res, error.message, 423, {
+            code: 'ACCOUNT_LOCKED',
+            lockedUntil: error.details?.lockedUntil,
+            message: 'Account temporarily locked due to multiple failed login attempts'
+          });
+        }
+
+        // Handle invalid credentials with remaining attempts info
+        if (error.details && error.details.remainingAttempts !== undefined) {
+          return responseHandler.error(res, error.message, 401, {
+            code: 'INVALID_CREDENTIALS',
+            remainingAttempts: error.details.remainingAttempts,
+            warningThreshold: error.details.remainingAttempts <= 2
+          });
+        }
+
+        // Generic authentication error response
+        return responseHandler.error(res, 'Invalid email or password', 401, {
+          code: 'AUTHENTICATION_FAILED'
+        });
+      }
+
+      // Handle validation errors (malformed input)
+      if (error instanceof ValidationError) {
+        logger.warn('Login validation error', {
+          email: credentials.email,
+          error: error.message,
+          ip: context.ip
+        });
+
+        return responseHandler.error(res, error.message, 400, {
+          code: 'VALIDATION_ERROR',
+          details: error.details
+        });
+      }
+
+      // Handle rate limiting errors
+      if (error.statusCode === 429) {
+        logger.warn('Login rate limit exceeded', {
+          email: credentials.email,
+          ip: context.ip,
+          userAgent: context.userAgent
+        });
+
+        return responseHandler.error(res, 'Too many login attempts. Please try again later.', 429, {
+          code: 'RATE_LIMIT_EXCEEDED',
+          retryAfter: error.retryAfter
+        });
+      }
+
+      // Handle unexpected server errors
+      logger.error('Unexpected login error', {
+        email: credentials.email,
+        error: error.message,
+        stack: error.stack,
+        ip: context.ip,
+        userAgent: context.userAgent
+      });
+
+      return responseHandler.error(res, 'An unexpected error occurred during login', 500, {
+        code: 'INTERNAL_SERVER_ERROR',
+        timestamp: new Date().toISOString()
       });
     }
-    
-    responseHandler.success(res, result, 'Login successful');
   });
   
   /**

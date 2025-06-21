@@ -1,9 +1,9 @@
 // /server/shared/database/seeders/001-seed-initial-data.js
 
 /**
- * @file Initial Data Seeder
+ * @file Initial Data Seeder - FIXED VERSION
  * @description Seeds initial data for development and testing
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 const bcrypt = require('bcryptjs');
@@ -34,7 +34,72 @@ module.exports = {
         apiKeys: []
       };
       
-      // 1. Create Super Admin user
+      // 1. Create Core Business Organization
+      const coreBusinessId = new ObjectId();
+      seedData.organizations.push({
+        _id: coreBusinessId,
+        name: 'Insightserenity Core Business',
+        slug: 'insightserenity-core',
+        type: constants.ORGANIZATION.TYPES.CORE_BUSINESS,
+        status: constants.ORGANIZATION.STATUS.ACTIVE,
+        description: 'Core consulting business operations',
+        website: 'https://insightserenity.com',
+        email: 'contact@insightserenity.com',
+        phone: '+1555123456',
+        industry: 'Management Consulting',
+        size: constants.ORGANIZATION.SIZE_RANGES.MEDIUM,
+        location: {
+          address: '100 Main Street',
+          city: 'Houston',
+          state: 'Texas',
+          country: 'US',
+          postalCode: '77002'
+        },
+        subscription: {
+          tier: constants.ORGANIZATION.SUBSCRIPTION_TIERS.ENTERPRISE,
+          status: 'active',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      
+      // 2. Create Hosted Organization
+      const hostedOrgId = new ObjectId();
+      const hostedOrgOwnerId = new ObjectId();
+      
+      seedData.organizations.push({
+        _id: hostedOrgId,
+        name: 'TechCorp Solutions',
+        slug: 'techcorp-solutions',
+        type: constants.ORGANIZATION.TYPES.HOSTED_BUSINESS,
+        status: constants.ORGANIZATION.STATUS.ACTIVE,
+        description: 'Technology solutions provider',
+        website: 'https://techcorp.example.com',
+        email: 'info@techcorp.example.com',
+        phone: '+1555987654',
+        industry: 'Software Development',
+        size: constants.ORGANIZATION.SIZE_RANGES.SMALL,
+        location: {
+          address: '456 Tech Avenue',
+          city: 'Austin',
+          state: 'Texas',
+          country: 'US',
+          postalCode: '78701'
+        },
+        subscription: {
+          tier: constants.ORGANIZATION.SUBSCRIPTION_TIERS.PROFESSIONAL,
+          status: 'active',
+          startDate: new Date(),
+          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+        },
+        ownerId: hostedOrgOwnerId,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      
+      // 3. Create Super Admin user
       const superAdminId = new ObjectId();
       const superAdminPassword = await bcrypt.hash('Admin@123', 10);
       
@@ -45,153 +110,110 @@ module.exports = {
         firstName: 'Super',
         lastName: 'Admin',
         password: superAdminPassword,
-        status: 'active',
+        userType: constants.USER.TYPES.PLATFORM_ADMIN,
+        role: {
+          primary: 'super_admin',
+          secondary: [],
+          previousRoles: []
+        },
+        status: constants.USER.STATUS.ACTIVE,
+        active: true,
         verified: true,
-        verificationToken: null,
-        verificationExpires: null,
-        roles: [constants.ROLES.PLATFORM.SUPER_ADMIN.name],
-        organizations: [],
+        organization: {
+          current: coreBusinessId,
+          history: [{
+            organizationId: coreBusinessId,
+            role: 'super_admin',
+            joinedAt: new Date(),
+            active: true
+          }]
+        },
         profile: {
-          bio: 'Platform Super Administrator',
-          avatar: null,
-          phone: '+1234567890',
-          location: {
-            city: 'Houston',
-            state: 'Texas',
-            country: 'US'
+          displayName: 'Super Admin',
+          bio: {
+            short: 'Platform Super Administrator',
+            full: 'Platform Super Administrator with full system access'
           },
-          skills: ['Platform Management', 'System Administration']
+          avatar: {
+            url: null,
+            publicId: null,
+            source: 'generated'
+          },
+          location: 'Houston, TX',
+          timezone: 'America/Chicago',
+          professionalInfo: {
+            skills: [
+              { name: 'Platform Management', level: 'expert', yearsOfExperience: 10 },
+              { name: 'System Administration', level: 'expert', yearsOfExperience: 10 }
+            ],
+            industries: ['Technology', 'Consulting'],
+            certifications: [],
+            languages: [{ language: 'English', proficiency: 'native' }]
+          }
         },
         preferences: {
           theme: 'dark',
           language: 'en',
+          timezone: 'America/Chicago',
           notifications: {
-            email: true,
-            sms: false,
-            push: true
+            email: { marketing: false, updates: true, security: true },
+            push: { enabled: true, marketing: false, updates: true },
+            sms: { enabled: false }
           }
         },
-        security: {
-          twoFactorEnabled: false,
-          twoFactorSecret: null,
-          passwordChangedAt: new Date(),
+        auth: {
+          provider: constants.AUTH.PROVIDERS.LOCAL,
+          lastPasswordChange: new Date(),
           passwordHistory: [],
           loginAttempts: 0,
-          lockUntil: null
+          lockUntil: null,
+          twoFactorEnabled: false
         },
-        lastLoginAt: null,
-        lastLoginIp: null,
+        activity: {
+          lastLogin: null,
+          lastActive: new Date(),
+          loginCount: 0,
+          sessionCount: 0
+        },
+        security: {
+          sessions: [],
+          trustedDevices: [],
+          ipWhitelist: [],
+          securityQuestions: []
+        },
+        metadata: {
+          source: 'web',
+          tags: ['admin', 'seeded'],
+          customFields: {},
+          statusHistory: [{
+            status: constants.USER.STATUS.ACTIVE,
+            changedAt: new Date(),
+            reason: 'Account created via initial seeder'
+          }]
+        },
         createdAt: new Date(),
         updatedAt: new Date()
       });
       
-      // 2. Create Core Business (Insightserenity)
-      const coreBusinessId = new ObjectId();
-      
-      seedData.organizations.push({
-        _id: coreBusinessId,
-        name: 'Insightserenity Consulting',
-        slug: 'insightserenity',
-        type: 'core_business',
-        status: 'active',
-        description: 'Leading technology and business consulting firm',
-        website: 'https://insightserenity.com',
-        email: 'info@insightserenity.com',
-        phone: '+1234567890',
-        industry: 'Technology Consulting',
-        size: '51-200',
-        location: {
-          address: '123 Main Street',
-          city: 'Houston',
-          state: 'Texas',
-          country: 'US',
-          postalCode: '77001',
-          coordinates: {
-            lat: 29.7604,
-            lng: -95.3698
-          }
-        },
-        subscription: {
-          tier: 'enterprise',
-          status: 'active',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year
-          trialEndsAt: null
-        },
-        settings: {
-          features: {
-            recruitment: true,
-            projects: true,
-            billing: true,
-            analytics: true,
-            whiteLabel: true
-          }
-        },
-        customDomain: null,
-        branding: {
-          logo: '/assets/logos/insightserenity.png',
-          favicon: '/assets/favicons/insightserenity.ico',
-          primaryColor: '#1a73e8',
-          secondaryColor: '#34a853'
-        },
-        features: {
-          maxUsers: -1,
-          maxProjects: -1,
-          maxStorage: 1099511627776, // 1TB
-          apiAccess: true,
-          customBranding: true,
-          advancedAnalytics: true
-        },
-        limits: {
-          users: -1,
-          projects: -1,
-          storage: 1099511627776,
-          apiCalls: -1
-        },
-        metrics: {
-          totalUsers: 1,
-          activeUsers: 1,
-          totalProjects: 0,
-          storageUsed: 0
-        },
-        ownerId: superAdminId,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-      
-      // Update super admin with organization
-      seedData.users[0].organizations.push({
-        organizationId: coreBusinessId,
-        role: constants.ROLES.CORE_BUSINESS.CEO.name,
-        joinedAt: new Date(),
-        active: true
-      });
-      
-      // 3. Create test users for different roles
+      // 4. Create test users for different roles
       const testUsers = [
-        {
-          email: 'ceo@insightserenity.com',
-          username: 'ceo',
-          firstName: 'John',
-          lastName: 'Doe',
-          role: constants.ROLES.CORE_BUSINESS.CEO.name,
-          orgRole: constants.ROLES.CORE_BUSINESS.CEO.name
-        },
         {
           email: 'consultant@insightserenity.com',
           username: 'consultant1',
           firstName: 'Jane',
           lastName: 'Smith',
-          role: constants.ROLES.CORE_BUSINESS.CONSULTANT.name,
-          orgRole: constants.ROLES.CORE_BUSINESS.CONSULTANT.name
+          role: 'consultant',
+          userType: constants.USER.TYPES.CORE_CONSULTANT,
+          organizationId: coreBusinessId
         },
         {
-          email: 'developer@insightserenity.com',
-          username: 'dev1',
-          firstName: 'Mike',
-          lastName: 'Johnson',
-          role: constants.ROLES.PLATFORM.DEVELOPER.name,
-          orgRole: constants.ROLES.CORE_BUSINESS.CONSULTANT.name
+          email: 'manager@insightserenity.com',
+          username: 'manager1',
+          firstName: 'John',
+          lastName: 'Manager',
+          role: 'manager',
+          userType: constants.USER.TYPES.CORE_CONSULTANT,
+          organizationId: coreBusinessId
         }
       ];
       
@@ -206,128 +228,90 @@ module.exports = {
           firstName: userData.firstName,
           lastName: userData.lastName,
           password,
-          status: 'active',
+          userType: userData.userType,
+          role: {
+            primary: userData.role,
+            secondary: [],
+            previousRoles: []
+          },
+          status: constants.USER.STATUS.ACTIVE,
+          active: true,
           verified: true,
-          verificationToken: null,
-          verificationExpires: null,
-          roles: [userData.role],
-          organizations: [{
-            organizationId: coreBusinessId,
-            role: userData.orgRole,
-            joinedAt: new Date(),
-            active: true
-          }],
+          organization: {
+            current: userData.organizationId,
+            history: [{
+              organizationId: userData.organizationId,
+              role: userData.role,
+              joinedAt: new Date(),
+              active: true
+            }]
+          },
           profile: {
-            bio: `${userData.role} at Insightserenity`,
-            avatar: null,
-            phone: null,
-            location: {
-              city: 'Houston',
-              state: 'Texas',
-              country: 'US'
+            displayName: `${userData.firstName} ${userData.lastName}`,
+            bio: {
+              short: `${userData.role} at Insightserenity`,
+              full: `${userData.role} at Insightserenity`
             },
-            skills: []
+            avatar: {
+              url: null,
+              publicId: null,
+              source: 'generated'
+            },
+            location: 'Houston, TX',
+            timezone: 'America/Chicago',
+            professionalInfo: {
+              skills: [],
+              industries: ['Consulting'],
+              certifications: [],
+              languages: [{ language: 'English', proficiency: 'native' }]
+            }
           },
           preferences: {
             theme: 'light',
             language: 'en',
+            timezone: 'America/Chicago',
             notifications: {
-              email: true,
-              sms: false,
-              push: true
+              email: { marketing: true, updates: true, security: true },
+              push: { enabled: true, marketing: false, updates: true },
+              sms: { enabled: false }
             }
           },
-          security: {
-            twoFactorEnabled: false,
-            twoFactorSecret: null,
-            passwordChangedAt: new Date(),
+          auth: {
+            provider: constants.AUTH.PROVIDERS.LOCAL,
+            lastPasswordChange: new Date(),
             passwordHistory: [],
             loginAttempts: 0,
-            lockUntil: null
+            lockUntil: null,
+            twoFactorEnabled: false
           },
-          lastLoginAt: null,
-          lastLoginIp: null,
+          activity: {
+            lastLogin: null,
+            lastActive: new Date(),
+            loginCount: 0,
+            sessionCount: 0
+          },
+          security: {
+            sessions: [],
+            trustedDevices: [],
+            ipWhitelist: [],
+            securityQuestions: []
+          },
+          metadata: {
+            source: 'web',
+            tags: ['test-user', 'seeded'],
+            customFields: {},
+            statusHistory: [{
+              status: constants.USER.STATUS.ACTIVE,
+              changedAt: new Date(),
+              reason: 'Account created via initial seeder'
+            }]
+          },
           createdAt: new Date(),
           updatedAt: new Date()
         });
       }
       
-      // 4. Create sample hosted organization
-      const hostedOrgId = new ObjectId();
-      const hostedOrgOwnerId = new ObjectId();
-      
-      seedData.organizations.push({
-        _id: hostedOrgId,
-        name: 'TechCorp Solutions',
-        slug: 'techcorp',
-        type: 'hosted_business',
-        status: 'active',
-        description: 'Innovative technology solutions provider',
-        website: 'https://techcorp.example.com',
-        email: 'info@techcorp.example.com',
-        phone: '+1987654321',
-        industry: 'Software Development',
-        size: '11-50',
-        location: {
-          address: '456 Tech Avenue',
-          city: 'Austin',
-          state: 'Texas',
-          country: 'US',
-          postalCode: '78701',
-          coordinates: {
-            lat: 30.2672,
-            lng: -97.7431
-          }
-        },
-        subscription: {
-          tier: 'professional',
-          status: 'active',
-          startDate: new Date(),
-          endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days trial
-          trialEndsAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-        },
-        settings: {
-          features: {
-            recruitment: false,
-            projects: true,
-            billing: true,
-            analytics: true,
-            whiteLabel: false
-          }
-        },
-        customDomain: null,
-        branding: {
-          logo: null,
-          favicon: null,
-          primaryColor: '#2196f3',
-          secondaryColor: '#ff9800'
-        },
-        features: {
-          maxUsers: 100,
-          maxProjects: 50,
-          maxStorage: 107374182400, // 100GB
-          apiAccess: true,
-          customBranding: true,
-          advancedAnalytics: false
-        },
-        limits: {
-          users: 100,
-          projects: 50,
-          storage: 107374182400,
-          apiCalls: 100000
-        },
-        metrics: {
-          totalUsers: 1,
-          activeUsers: 1,
-          totalProjects: 0,
-          storageUsed: 0
-        },
-        ownerId: hostedOrgOwnerId,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-      
-      // Create owner for hosted organization
+      // 5. Create hosted organization owner
       const hostedOrgPassword = await bcrypt.hash('Test@123', 10);
       
       seedData.users.push({
@@ -337,130 +321,88 @@ module.exports = {
         firstName: 'Tech',
         lastName: 'Owner',
         password: hostedOrgPassword,
-        status: 'active',
+        userType: constants.USER.TYPES.HOSTED_ORG_USER,
+        role: {
+          primary: 'org_owner',
+          secondary: [],
+          previousRoles: []
+        },
+        status: constants.USER.STATUS.ACTIVE,
+        active: true,
         verified: true,
-        verificationToken: null,
-        verificationExpires: null,
-        roles: [],
-        organizations: [{
-          organizationId: hostedOrgId,
-          role: constants.ROLES.ORGANIZATION.OWNER.name,
-          joinedAt: new Date(),
-          active: true
-        }],
+        organization: {
+          current: hostedOrgId,
+          history: [{
+            organizationId: hostedOrgId,
+            role: 'org_owner',
+            joinedAt: new Date(),
+            active: true
+          }]
+        },
         profile: {
-          bio: 'Founder and CEO of TechCorp Solutions',
-          avatar: null,
-          phone: null,
-          location: {
-            city: 'Austin',
-            state: 'Texas',
-            country: 'US'
+          displayName: 'Tech Owner',
+          bio: {
+            short: 'Founder and CEO of TechCorp Solutions',
+            full: 'Founder and CEO of TechCorp Solutions'
           },
-          skills: ['Leadership', 'Technology', 'Business Development']
+          avatar: {
+            url: null,
+            publicId: null,
+            source: 'generated'
+          },
+          location: 'Austin, TX',
+          timezone: 'America/Chicago',
+          professionalInfo: {
+            skills: [
+              { name: 'Leadership', level: 'expert', yearsOfExperience: 15 },
+              { name: 'Technology', level: 'advanced', yearsOfExperience: 20 },
+              { name: 'Business Development', level: 'expert', yearsOfExperience: 12 }
+            ],
+            industries: ['Technology', 'Software'],
+            certifications: [],
+            languages: [{ language: 'English', proficiency: 'native' }]
+          }
         },
         preferences: {
           theme: 'light',
           language: 'en',
+          timezone: 'America/Chicago',
           notifications: {
-            email: true,
-            sms: false,
-            push: true
+            email: { marketing: true, updates: true, security: true },
+            push: { enabled: true, marketing: false, updates: true },
+            sms: { enabled: false }
           }
         },
-        security: {
-          twoFactorEnabled: false,
-          twoFactorSecret: null,
-          passwordChangedAt: new Date(),
+        auth: {
+          provider: constants.AUTH.PROVIDERS.LOCAL,
+          lastPasswordChange: new Date(),
           passwordHistory: [],
           loginAttempts: 0,
-          lockUntil: null
+          lockUntil: null,
+          twoFactorEnabled: false
         },
-        lastLoginAt: null,
-        lastLoginIp: null,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-      
-      // 5. Create sample projects
-      const projectIds = [new ObjectId(), new ObjectId()];
-      
-      seedData.projects.push({
-        _id: projectIds[0],
-        name: 'Platform Development Phase 2',
-        description: 'Enhance platform features and scalability',
-        organizationId: coreBusinessId,
-        clientId: null,
-        status: 'active',
-        type: 'internal',
-        priority: 'high',
-        startDate: new Date(),
-        endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
-        budget: {
-          amount: 250000,
-          currency: 'USD',
-          spent: 45000
+        activity: {
+          lastLogin: null,
+          lastActive: new Date(),
+          loginCount: 0,
+          sessionCount: 0
         },
-        team: seedData.users.slice(0, 3).map(user => ({
-          userId: user._id,
-          role: 'member',
-          joinedAt: new Date()
-        })),
-        deliverables: [
-          {
-            name: 'Authentication System Upgrade',
-            description: 'Implement OAuth2 and SSO',
-            status: 'completed',
-            dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-          },
-          {
-            name: 'Analytics Dashboard',
-            description: 'Create comprehensive analytics dashboard',
-            status: 'in_progress',
-            dueDate: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-          }
-        ],
-        tags: ['platform', 'development', 'priority'],
-        attachments: [],
-        progress: 35,
-        createdBy: superAdminId,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      });
-      
-      seedData.projects.push({
-        _id: projectIds[1],
-        name: 'Website Redesign',
-        description: 'Modern redesign of company website',
-        organizationId: hostedOrgId,
-        clientId: null,
-        status: 'planning',
-        type: 'internal',
-        priority: 'medium',
-        startDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        endDate: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000),
-        budget: {
-          amount: 50000,
-          currency: 'USD',
-          spent: 0
+        security: {
+          sessions: [],
+          trustedDevices: [],
+          ipWhitelist: [],
+          securityQuestions: []
         },
-        team: [{
-          userId: hostedOrgOwnerId,
-          role: 'lead',
-          joinedAt: new Date()
-        }],
-        deliverables: [
-          {
-            name: 'Design Mockups',
-            description: 'Create design mockups for all pages',
-            status: 'pending',
-            dueDate: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000)
-          }
-        ],
-        tags: ['website', 'design', 'marketing'],
-        attachments: [],
-        progress: 0,
-        createdBy: hostedOrgOwnerId,
+        metadata: {
+          source: 'web',
+          tags: ['org-owner', 'seeded'],
+          customFields: {},
+          statusHistory: [{
+            status: constants.USER.STATUS.ACTIVE,
+            changedAt: new Date(),
+            reason: 'Account created via initial seeder'
+          }]
+        },
         createdAt: new Date(),
         updatedAt: new Date()
       });
@@ -478,29 +420,11 @@ module.exports = {
         permissions: ['read', 'write'],
         rateLimit: {
           requests: 1000,
-          window: 3600 // 1 hour
-        },
-        active: true,
-        lastUsedAt: null,
-        expiresAt: null,
-        createdAt: new Date()
-      });
-      
-      seedData.apiKeys.push({
-        _id: new ObjectId(),
-        key: `isk_test_${crypto.randomBytes(32).toString('hex')}`,
-        name: 'Test Integration Key',
-        description: 'API key for integration testing',
-        userId: null,
-        organizationId: hostedOrgId,
-        permissions: ['read'],
-        rateLimit: {
-          requests: 100,
           window: 3600
         },
         active: true,
         lastUsedAt: null,
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        expiresAt: null,
         createdAt: new Date()
       });
       
@@ -515,11 +439,6 @@ module.exports = {
         logger.info(`Seeded ${seedData.organizations.length} organizations`);
       }
       
-      if (seedData.projects.length > 0) {
-        await db.collection('projects').insertMany(seedData.projects);
-        logger.info(`Seeded ${seedData.projects.length} projects`);
-      }
-      
       if (seedData.apiKeys.length > 0) {
         await db.collection('apiKeys').insertMany(seedData.apiKeys);
         logger.info(`Seeded ${seedData.apiKeys.length} API keys`);
@@ -532,7 +451,7 @@ module.exports = {
         notifications.push({
           _id: new ObjectId(),
           userId: user._id,
-          organizationId: user.organizations[0]?.organizationId || null,
+          organizationId: user.organization?.current || null,
           type: 'info',
           category: 'system',
           title: 'Welcome to Insightserenity Platform',
@@ -566,9 +485,8 @@ module.exports = {
       // Log test credentials
       logger.info('Test Credentials:');
       logger.info('Super Admin - Email: admin@insightserenity.com, Password: Admin@123');
-      logger.info('CEO - Email: ceo@insightserenity.com, Password: Test@123');
       logger.info('Consultant - Email: consultant@insightserenity.com, Password: Test@123');
-      logger.info('Developer - Email: developer@insightserenity.com, Password: Test@123');
+      logger.info('Manager - Email: manager@insightserenity.com, Password: Test@123');
       logger.info('Hosted Org Owner - Email: owner@techcorp.example.com, Password: Test@123');
       
     } catch (error) {
@@ -590,8 +508,12 @@ module.exports = {
       await db.collection('notifications').deleteMany({});
       await db.collection('apiKeys').deleteMany({});
       await db.collection('projects').deleteMany({});
-      await db.collection('organizations').deleteMany({});
-      await db.collection('users').deleteMany({});
+      await db.collection('organizations').deleteMany({
+        slug: { $in: ['insightserenity-core', 'techcorp-solutions'] }
+      });
+      await db.collection('users').deleteMany({
+        'metadata.tags': { $in: ['admin', 'test-user', 'org-owner', 'seeded'] }
+      });
       
       // Remove seeder record
       await db.collection('seeders').deleteOne({

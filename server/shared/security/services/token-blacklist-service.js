@@ -2,15 +2,19 @@
 /**
  * @file Token Blacklist Service
  * @description Manages revoked tokens and prevents their reuse
- * @version 3.0.1 - Fixed duplicate index definitions
+ * @version 3.0.2 - Fixed circular dependency issue
  */
 
 const mongoose = require('mongoose');
-
+const jwt = require('jsonwebtoken'); // Import jwt directly instead of from AuthService
 const redis = require('../../config/redis');
 const { AppError } = require('../../utils/app-error');
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
+const config = require('../../config/config'); // Import config for JWT secrets
+
+// Remove this line that causes circular dependency:
+// const { refreshToken } = require('../../auth/services/auth-service');
 
 /**
  * Token Blacklist Schema - CORRECTED: Removed duplicate index definitions
@@ -20,13 +24,11 @@ const tokenBlacklistSchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true
-    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   tokenId: {
     type: String,
     required: true
-    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   type: {
@@ -39,7 +41,6 @@ const tokenBlacklistSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
-    // index: true // COMMENTED OUT - defined in schema.index() below
   },
   
   reason: {
@@ -64,17 +65,15 @@ const tokenBlacklistSchema = new mongoose.Schema({
   expiresAt: {
     type: Date,
     required: true
-    // index: true // COMMENTED OUT - TTL index defined below
   },
   
   createdAt: {
     type: Date,
     default: Date.now
-    // index: true // COMMENTED OUT - defined in schema.index() below
   }
 });
 
-// CORRECTED: Define indexes only here to avoid duplicates
+// Define indexes only here to avoid duplicates
 tokenBlacklistSchema.index({ token: 1 }, { unique: true });
 tokenBlacklistSchema.index({ tokenId: 1 });
 tokenBlacklistSchema.index({ userId: 1 });
@@ -116,6 +115,38 @@ class TokenBlacklistService {
   }
   
   /**
+   * Decode token without circular dependency
+   * @param {string} token - Token to decode
+   * @returns {Object|null} Decoded token or null
+   */
+  decodeToken(token) {
+    try {
+      if (!token || typeof token !== 'string') {
+        return null;
+      }
+      
+      // Try to decode without verification first to get basic info
+      const decoded = jwt.decode(token);
+      if (!decoded) {
+        return null;
+      }
+      
+      return decoded;
+    } catch (error) {
+      logger.debug('Failed to decode token for blacklisting', { error: error.message });
+      return null;
+    }
+  }
+  
+  /**
+   * Generate token ID if not present in token
+   * @returns {string} Generated token ID
+   */
+  generateTokenId() {
+    return crypto.randomBytes(16).toString('hex');
+  }
+  
+  /**
    * Blacklist a token
    * @param {string} token - Token to blacklist
    * @param {string} type - Token type
@@ -133,11 +164,11 @@ class TokenBlacklistService {
           type,
           reason
         });
-        return false; // Return false instead of throwing error
+        return false;
       }
 
       // Check if already blacklisted
-      const existingEntry = await this.isTokenBlacklisted(token);
+      const existingEntry = await this.isBlacklisted(token);
       if (existingEntry) {
         logger.debug('Token already blacklisted', { tokenHash: this.hashToken(token) });
         return true;
@@ -182,7 +213,7 @@ class TokenBlacklistService {
         type,
         reason 
       });
-      return false; // Return false instead of throwing
+      return false;
     }
   }
   
@@ -217,6 +248,15 @@ class TokenBlacklistService {
       // Fail open to avoid blocking legitimate requests
       return false;
     }
+  }
+  
+  /**
+   * Alternative method name for compatibility
+   * @param {string} token - Token to check
+   * @returns {Promise<boolean>} Is blacklisted
+   */
+  async isTokenBlacklisted(token) {
+    return this.isBlacklisted(token);
   }
   
   /**
@@ -274,126 +314,6 @@ class TokenBlacklistService {
   }
   
   /**
-   * Blacklist tokens by pattern
-   * @param {Object} criteria - Search criteria
-   * @param {string} reason - Blacklist reason
-   * @returns {Promise<number>} Number of tokens blacklisted
-   */
-  async blacklistByPattern(criteria, reason = 'security_breach') {
-    const {
-      organizationId,
-      ipAddress,
-      userAgent,
-      createdBefore,
-      createdAfter
-    } = criteria;
-    
-    try {
-      const query = {};
-      
-      if (organizationId) {
-        query['metadata.organizationId'] = organizationId;
-      }
-      
-      if (ipAddress) {
-        query['metadata.ipAddress'] = ipAddress;
-      }
-      
-      if (userAgent) {
-        query['metadata.userAgent'] = new RegExp(userAgent, 'i');
-      }
-      
-      if (createdBefore || createdAfter) {
-        query.createdAt = {};
-        if (createdBefore) query.createdAt.$lt = createdBefore;
-        if (createdAfter) query.createdAt.$gt = createdAfter;
-      }
-      
-      // This would need to be implemented based on your token storage
-      // For now, returning 0 as placeholder
-      
-      logger.info('Tokens blacklisted by pattern', {
-        criteria,
-        reason
-      });
-      
-      return 0;
-    } catch (error) {
-      logger.error('Failed to blacklist by pattern', { error, criteria });
-      throw new AppError('Failed to blacklist tokens', 500, 'BLACKLIST_ERROR');
-    }
-  }
-  
-  /**
-   * Clean up expired blacklist entries
-   * @returns {Promise<number>} Number of entries removed
-   */
-  async cleanup() {
-    try {
-      const result = await TokenBlacklist.deleteMany({
-        expiresAt: { $lt: new Date() }
-      });
-      
-      logger.info('Blacklist cleanup completed', {
-        removed: result.deletedCount
-      });
-      
-      return result.deletedCount;
-    } catch (error) {
-      logger.error('Blacklist cleanup failed', { error });
-      return 0;
-    }
-  }
-  
-  /**
-   * Get blacklist statistics
-   * @param {Object} filters - Query filters
-   * @returns {Promise<Object>} Statistics
-   */
-  async getStatistics(filters = {}) {
-    try {
-      const query = {};
-      
-      if (filters.userId) {
-        query.userId = filters.userId;
-      }
-      
-      if (filters.startDate || filters.endDate) {
-        query.createdAt = {};
-        if (filters.startDate) query.createdAt.$gte = filters.startDate;
-        if (filters.endDate) query.createdAt.$lte = filters.endDate;
-      }
-      
-      const [total, byType, byReason] = await Promise.all([
-        TokenBlacklist.countDocuments(query),
-        TokenBlacklist.aggregate([
-          { $match: query },
-          { $group: { _id: '$type', count: { $sum: 1 } } }
-        ]),
-        TokenBlacklist.aggregate([
-          { $match: query },
-          { $group: { _id: '$reason', count: { $sum: 1 } } }
-        ])
-      ]);
-      
-      return {
-        total,
-        byType: byType.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
-        byReason: byReason.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {})
-      };
-    } catch (error) {
-      logger.error('Failed to get blacklist statistics', { error });
-      throw error;
-    }
-  }
-  
-  /**
    * Hash token for secure storage
    * @param {string} token - Token to hash
    * @returns {string} Hashed token
@@ -407,23 +327,6 @@ class TokenBlacklistService {
       .createHash('sha256')
       .update(token)
       .digest('hex');
-  }
-  
-  /**
-   * Calculate token expiry
-   * @param {string} type - Token type
-   * @returns {Date} Expiry date
-   */
-  calculateExpiry(type) {
-    const expiryMinutes = {
-      access: 15,
-      refresh: 10080, // 7 days
-      api_key: 525600, // 1 year
-      session: 1440 // 24 hours
-    };
-    
-    const minutes = expiryMinutes[type] || 60;
-    return new Date(Date.now() + minutes * 60 * 1000);
   }
   
   /**
@@ -475,8 +378,6 @@ class TokenBlacklistService {
     if (!this.redisClient) return;
     
     try {
-      // This would need to track user tokens in Redis
-      // For now, just logging
       logger.debug('Clearing user token cache', { userId });
     } catch (error) {
       logger.debug('Failed to clear user cache', { error });
@@ -484,15 +385,34 @@ class TokenBlacklistService {
   }
   
   /**
-   * Find user's active tokens
+   * Find user's active tokens (placeholder implementation)
    * @param {string} userId - User ID
    * @param {Array} types - Token types
    * @returns {Promise<Array>} User tokens
    */
   async findUserTokens(userId, types) {
-    // This would need to be implemented based on your token storage strategy
-    // Returning empty array as placeholder
     return [];
+  }
+  
+  /**
+   * Clean up expired blacklist entries
+   * @returns {Promise<number>} Number of entries removed
+   */
+  async cleanup() {
+    try {
+      const result = await TokenBlacklist.deleteMany({
+        expiresAt: { $lt: new Date() }
+      });
+      
+      logger.info('Blacklist cleanup completed', {
+        removed: result.deletedCount
+      });
+      
+      return result.deletedCount;
+    } catch (error) {
+      logger.error('Blacklist cleanup failed', { error });
+      return 0;
+    }
   }
   
   /**
