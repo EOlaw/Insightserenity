@@ -1577,6 +1577,78 @@ class AuthService {
       throw error;
     }
   }
+
+  /**
+   * Revoke all other sessions (excluding current session)
+   * @param {string} userId - User ID
+   * @param {string} currentSessionId - Current session ID to exclude
+   * @param {Object} context - Request context
+   * @returns {Promise<Object>} Revoke result
+   */
+  static async revokeAllOtherSessions(userId, currentSessionId, context) {
+    try {
+      const auth = await Auth.findOne({ userId });
+      if (!auth) {
+        throw new NotFoundError('Authentication record not found');
+      }
+      
+      let revokedCount = 0;
+      const revokedSessions = [];
+      
+      // Revoke all sessions except the current one
+      auth.sessions.forEach(session => {
+        if (session.sessionId !== currentSessionId && session.isActive) {
+          session.isActive = false;
+          session.revokedAt = new Date();
+          session.revokedReason = 'User revoked all other sessions';
+          revokedCount++;
+          revokedSessions.push({
+            sessionId: session.sessionId,
+            deviceInfo: session.deviceInfo
+          });
+        }
+      });
+      
+      if (revokedCount === 0) {
+        return {
+          success: true,
+          message: 'No other active sessions to revoke',
+          revokedCount: 0
+        };
+      }
+      
+      // Save changes
+      await auth.save();
+      
+      // Audit log
+      await AuditService.log({
+        type: 'sessions_revoked_bulk',
+        action: 'revoke_all_other_sessions',
+        category: 'authentication',
+        result: 'success',
+        userId,
+        metadata: {
+          ...context,
+          currentSessionId,
+          revokedCount,
+          revokedSessions: revokedSessions.map(s => ({
+            sessionId: s.sessionId,
+            deviceInfo: s.deviceInfo
+          }))
+        }
+      });
+      
+      return {
+        success: true,
+        message: `Successfully revoked ${revokedCount} other session${revokedCount !== 1 ? 's' : ''}`,
+        revokedCount
+      };
+      
+    } catch (error) {
+      logger.error('Revoke all other sessions error', { error, userId, currentSessionId });
+      throw error;
+    }
+  }
   
   /**
    * Get auth statistics for user

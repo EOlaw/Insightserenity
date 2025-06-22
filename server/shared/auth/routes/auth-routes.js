@@ -455,7 +455,7 @@ router.post('/mfa/backup-codes/regenerate',
  * @access  Private
  */
 router.get('/sessions',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.getSessions
 );
 
@@ -465,7 +465,7 @@ router.get('/sessions',
  * @access  Private
  */
 router.delete('/sessions/:sessionId',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('sessionId').notEmpty().withMessage('Session ID is required')
   ],
@@ -479,7 +479,7 @@ router.delete('/sessions/:sessionId',
  * @access  Private
  */
 router.delete('/sessions',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.revokeAllSessions
 );
 

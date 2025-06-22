@@ -175,6 +175,9 @@ class AuthStrategiesManager {
           deviceId: payload.deviceId
         };
 
+        // Add sessionId directly to user object for easy access
+        user.sessionId = payload.sessionId;
+
         // Set organization permissions
         if (user.organization?.current) {
           user.currentOrganization = user.organization.current;

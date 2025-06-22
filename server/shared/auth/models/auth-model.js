@@ -547,6 +547,13 @@ authSchema.methods.addLoginAttempt = function(success = false) {
   }
 };
 
+// Reset login attempts
+authSchema.methods.resetLoginAttempts = function() {
+  this.security.loginAttempts.count = 0;
+  this.security.loginAttempts.lockedUntil = undefined;
+  this.security.loginAttempts.lastAttempt = undefined;
+};
+
 // Check if account is locked
 authSchema.methods.isLocked = function() {
   return !!(this.security.loginAttempts.lockedUntil && 
