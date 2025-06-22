@@ -1488,52 +1488,77 @@ class AuthService {
       throw error;
     }
   }
-  
+
   /**
-   * Get user sessions
+   * Get user sessions with enhanced current session detection
    * @param {string} userId - User ID
-   * @returns {Promise<Object>} User sessions
+   * @param {string} currentSessionId - Current session ID for marking
+   * @returns {Promise<Object>} User sessions with proper current session marking
    */
-  static async getUserSessions(userId) {
+  static async getUserSessions(userId, currentSessionId = null) {
     try {
       const auth = await Auth.findOne({ userId });
       if (!auth) {
         throw new NotFoundError('Authentication record not found');
       }
       
+      const now = new Date();
       const activeSessions = auth.sessions
-        .filter(s => s.isActive && (!s.expiresAt || s.expiresAt > new Date()))
+        .filter(s => {
+          // Session must be active and not expired
+          const isActive = s.isActive && (!s.expiresAt || s.expiresAt > now);
+          return isActive;
+        })
         .map(s => ({
           sessionId: s.sessionId,
-          deviceInfo: s.deviceInfo,
-          location: s.location,
+          deviceInfo: s.deviceInfo || {
+            userAgent: 'Unknown',
+            platform: 'Unknown',
+            browser: 'Unknown'
+          },
+          location: s.location || {
+            ip: 'Unknown',
+            coordinates: {}
+          },
           createdAt: s.createdAt,
           lastActivityAt: s.lastActivityAt,
           expiresAt: s.expiresAt,
-          isCurrent: false // Will be set by controller based on request
+          isCurrent: currentSessionId ? s.sessionId === currentSessionId : false
         }))
         .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+      
+      // Enhanced session analysis
+      const currentSessionIndex = activeSessions.findIndex(s => s.isCurrent);
+      const otherSessionsCount = activeSessions.length - (currentSessionIndex >= 0 ? 1 : 0);
       
       return {
         success: true,
         sessions: activeSessions,
-        totalActive: activeSessions.length
+        totalActive: activeSessions.length,
+        currentSessionExists: currentSessionIndex >= 0,
+        otherSessionsCount,
+        metadata: {
+          hasMultipleSessions: activeSessions.length > 1,
+          oldestSession: activeSessions.length > 0 ? activeSessions[activeSessions.length - 1].createdAt : null,
+          newestSession: activeSessions.length > 0 ? activeSessions[0].createdAt : null
+        }
       };
       
     } catch (error) {
-      logger.error('Get sessions error', { error });
+      logger.error('Get sessions error', { error, userId });
       throw error;
     }
   }
-  
+
   /**
-   * Revoke specific session
+   * Revoke specific session with enterprise behavior
    * @param {string} userId - User ID
    * @param {string} sessionId - Session ID to revoke
+   * @param {string} currentSessionId - Current user's session ID
    * @param {Object} context - Request context
    * @returns {Promise<Object>} Revoke result
    */
-  static async revokeSession(userId, sessionId, context) {
+  static async revokeSession(userId, sessionId, currentSessionId, context) {
     try {
       const auth = await Auth.findOne({ userId });
       if (!auth) {
@@ -1549,13 +1574,54 @@ class AuthService {
         throw new ValidationError('Session is already revoked');
       }
       
+      const isCurrentSession = sessionId === currentSessionId;
+      
       // Revoke session
-      auth.revokeSession(sessionId, 'User revoked session');
+      auth.revokeSession(sessionId, isCurrentSession ? 'User revoked current session' : 'User revoked session');
       await auth.save();
+      
+      // If revoking current session, blacklist associated tokens
+      let tokensBlacklisted = false;
+      if (isCurrentSession) {
+        try {
+          // Find and blacklist all tokens for this session
+          const accessTokens = await Token.find({ 
+            userId, 
+            sessionId,
+            type: 'access',
+            isActive: true 
+          });
+          
+          const refreshTokens = await Token.find({ 
+            userId, 
+            sessionId,
+            type: 'refresh',
+            isActive: true 
+          });
+          
+          // Blacklist all associated tokens
+          for (const token of [...accessTokens, ...refreshTokens]) {
+            if (TokenBlacklistService && typeof TokenBlacklistService.blacklistToken === 'function') {
+              await TokenBlacklistService.blacklistToken(token.value, token.type, 'session_revoked');
+            }
+            token.isActive = false;
+            token.revokedAt = new Date();
+            token.revokedReason = 'session_revoked';
+            await token.save();
+          }
+          tokensBlacklisted = true;
+        } catch (tokenError) {
+          logger.error('Failed to blacklist tokens during session revocation', {
+            error: tokenError.message,
+            userId,
+            sessionId
+          });
+        }
+      }
       
       // Audit log
       await AuditService.log({
-        type: 'session_revoked',
+        type: isCurrentSession ? 'current_session_revoked' : 'session_revoked',
         action: 'revoke_session',
         category: 'authentication',
         result: 'success',
@@ -1563,27 +1629,35 @@ class AuthService {
         metadata: {
           ...context,
           revokedSessionId: sessionId,
-          deviceInfo: session.deviceInfo
+          isCurrentSession,
+          tokensBlacklisted,
+          deviceInfo: session.deviceInfo,
+          immediateLogout: isCurrentSession
         }
       });
       
       return {
         success: true,
-        message: 'Session revoked successfully'
+        message: isCurrentSession 
+          ? 'Current session revoked successfully. You will be logged out immediately.' 
+          : 'Session revoked successfully',
+        isCurrentSession,
+        requiresLogout: isCurrentSession,
+        tokensInvalidated: isCurrentSession && tokensBlacklisted
       };
       
     } catch (error) {
-      logger.error('Revoke session error', { error });
+      logger.error('Revoke session error', { error, userId, sessionId });
       throw error;
     }
   }
 
   /**
-   * Revoke all other sessions (excluding current session)
+   * Revoke all other sessions with enhanced validation
    * @param {string} userId - User ID
-   * @param {string} currentSessionId - Current session ID to exclude
+   * @param {string} currentSessionId - Current session ID to preserve
    * @param {Object} context - Request context
-   * @returns {Promise<Object>} Revoke result
+   * @returns {Promise<Object>} Revoke result with detailed information
    */
   static async revokeAllOtherSessions(userId, currentSessionId, context) {
     try {
@@ -1592,12 +1666,26 @@ class AuthService {
         throw new NotFoundError('Authentication record not found');
       }
       
+      if (!currentSessionId) {
+        throw new ValidationError('Current session ID is required to preserve active session');
+      }
+      
       let revokedCount = 0;
       const revokedSessions = [];
+      const preservedSessions = [];
       
-      // Revoke all sessions except the current one
+      // Process all sessions
       auth.sessions.forEach(session => {
-        if (session.sessionId !== currentSessionId && session.isActive) {
+        if (session.sessionId === currentSessionId) {
+          // Preserve current session
+          if (session.isActive) {
+            preservedSessions.push({
+              sessionId: session.sessionId,
+              deviceInfo: session.deviceInfo
+            });
+          }
+        } else if (session.isActive) {
+          // Revoke other active sessions
           session.isActive = false;
           session.revokedAt = new Date();
           session.revokedReason = 'User revoked all other sessions';
@@ -1609,18 +1697,35 @@ class AuthService {
         }
       });
       
+      // Validate that current session exists and is preserved
+      const currentSessionPreserved = preservedSessions.length > 0;
+      if (!currentSessionPreserved) {
+        logger.warn('Current session not found during bulk revocation', {
+          userId,
+          currentSessionId,
+          totalSessions: auth.sessions.length
+        });
+      }
+      
       if (revokedCount === 0) {
         return {
           success: true,
           message: 'No other active sessions to revoke',
-          revokedCount: 0
+          revokedCount: 0,
+          currentSessionPreserved,
+          details: {
+            totalActiveSessions: preservedSessions.length,
+            message: currentSessionPreserved 
+              ? 'You have only one active session (current session)' 
+              : 'No sessions found to revoke'
+          }
         };
       }
       
       // Save changes
       await auth.save();
       
-      // Audit log
+      // Audit log with enhanced metadata
       await AuditService.log({
         type: 'sessions_revoked_bulk',
         action: 'revoke_all_other_sessions',
@@ -1630,8 +1735,14 @@ class AuthService {
         metadata: {
           ...context,
           currentSessionId,
+          currentSessionPreserved,
           revokedCount,
+          preservedCount: preservedSessions.length,
           revokedSessions: revokedSessions.map(s => ({
+            sessionId: s.sessionId,
+            deviceInfo: s.deviceInfo
+          })),
+          preservedSessions: preservedSessions.map(s => ({
             sessionId: s.sessionId,
             deviceInfo: s.deviceInfo
           }))
@@ -1641,7 +1752,13 @@ class AuthService {
       return {
         success: true,
         message: `Successfully revoked ${revokedCount} other session${revokedCount !== 1 ? 's' : ''}`,
-        revokedCount
+        revokedCount,
+        currentSessionPreserved,
+        details: {
+          revokedSessions: revokedSessions.length,
+          preservedSessions: preservedSessions.length,
+          totalProcessed: revokedCount + preservedSessions.length
+        }
       };
       
     } catch (error) {

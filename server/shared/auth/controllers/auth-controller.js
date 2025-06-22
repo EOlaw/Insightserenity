@@ -864,17 +864,17 @@ class AuthController {
     const userId = req.user._id;
     const currentSessionId = req.user.sessionId;
     
-    const result = await AuthService.getUserSessions(userId);
+    const result = await AuthService.getUserSessions(userId, currentSessionId);
     
-    // Mark current session
-    if (result.sessions) {
-      result.sessions = result.sessions.map(session => ({
-        ...session,
-        isCurrent: session.sessionId === currentSessionId
-      }));
-    }
+    // // Mark current session
+    // if (result.sessions) {
+    //   result.sessions = result.sessions.map(session => ({
+    //     ...session,
+    //     isCurrent: session.sessionId === currentSessionId
+    //   }));
+    // }
     
-    responseHandler.success(res, result, 'Sessions retrieved');
+    responseHandler.success(res, result, 'Sessions retrieved successfully');
   });
   
   /**
@@ -887,18 +887,26 @@ class AuthController {
     const userId = req.user._id;
     const currentSessionId = req.user.sessionId;
     
-    if (sessionId === currentSessionId) {
-      throw new ValidationError('Cannot revoke current session. Use logout instead.');
-    }
-    
     const context = {
       ip: req.ip,
       userAgent: req.get('user-agent')
     };
     
-    const result = await AuthService.revokeSession(userId, sessionId, context);
+    const result = await AuthService.revokeSession(userId, sessionId, currentSessionId, context);
     
-    responseHandler.success(res, result, 'Session revoked');
+    // If user revoked their current session, clear cookies and invalidate authentication
+    if (result.isCurrentSession) {
+      res.clearCookie('accessToken');
+      res.clearCookie('refreshToken');
+      res.clearCookie('trustToken');
+      
+      return responseHandler.success(res, result, result.message, 200, {
+        'X-Auth-Required': 'true',
+        'X-Session-Revoked': 'true'
+      });
+    }
+    
+    responseHandler.success(res, result, result.message);
   });
   
   /**
