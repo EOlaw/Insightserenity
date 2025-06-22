@@ -483,14 +483,35 @@ class AuthController {
    * @access  Public
    */
   static resetPassword = asyncHandler(async (req, res) => {
-    const { token, password } = req.body;
+    const { token, newPassword, confirmPassword } = req.body;
+    
+    // Additional server-side validation
+    if (!token) {
+      return responseHandler.error(res, 'Reset token is required', 400);
+    }
+    
+    if (!newPassword) {
+      return responseHandler.error(res, 'New password is required', 400);
+    }
+    
+    if (!confirmPassword) {
+      return responseHandler.error(res, 'Password confirmation is required', 400);
+    }
+    
+    if (newPassword !== confirmPassword) {
+      return responseHandler.error(res, 'Passwords do not match', 400);
+    }
     
     const context = {
       ip: req.ip,
       userAgent: req.get('user-agent')
     };
     
-    const result = await AuthService.resetPassword({ token, newPassword: password }, context);
+    const result = await AuthService.resetPassword({ 
+      token, 
+      newPassword, 
+      confirmPassword 
+    }, context);
     
     responseHandler.success(res, result, 'Password reset successful');
   });

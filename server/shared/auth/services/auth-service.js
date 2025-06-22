@@ -943,12 +943,33 @@ class AuthService {
   /**
    * Reset password with token
    * @param {Object} resetData - Password reset data
+   * @param {string} resetData.token - Reset token
+   * @param {string} resetData.newPassword - New password
+   * @param {string} resetData.confirmPassword - Password confirmation
    * @param {Object} context - Request context
    * @returns {Promise<Object>} Reset result
    */
   static async resetPassword(resetData, context) {
     try {
-      const { token, newPassword } = resetData;
+      const { token, newPassword, confirmPassword } = resetData;
+      
+      // Validate required fields
+      if (!token) {
+        throw new ValidationError('Reset token is required');
+      }
+      
+      if (!newPassword) {
+        throw new ValidationError('New password is required');
+      }
+      
+      if (!confirmPassword) {
+        throw new ValidationError('Password confirmation is required');
+      }
+      
+      // Validate password confirmation
+      if (newPassword !== confirmPassword) {
+        throw new ValidationError('Passwords do not match');
+      }
       
       // Find auth by reset token
       const auth = await Auth.findByPasswordResetToken(token);
@@ -956,17 +977,34 @@ class AuthService {
         throw new ValidationError('Invalid or expired reset token');
       }
       
-      // Validate new password
+      // Check if token is expired (additional safety check)
+      if (auth.security.passwordReset.expiresAt && 
+          new Date() > new Date(auth.security.passwordReset.expiresAt)) {
+        throw new ValidationError('Reset token has expired');
+      }
+      
+      // Validate new password strength
       const passwordValidation = this.validatePasswordStrength(newPassword);
       if (!passwordValidation.valid) {
         throw new ValidationError(passwordValidation.message);
       }
       
+      // Check if new password is same as current password
+      const isSamePassword = await auth.verifyPassword(newPassword);
+      if (isSamePassword) {
+        throw new ValidationError('New password must be different from your current password');
+      }
+      
       // Set new password
       await auth.setPassword(newPassword);
       
-      // Clear reset token
-      auth.security.passwordReset = {};
+      // Clear reset token and related data
+      auth.security.passwordReset = {
+        token: null,
+        expiresAt: null,
+        requestedAt: null,
+        requestedFrom: null
+      };
       
       // Clear any login attempts
       auth.security.loginAttempts = {
@@ -974,6 +1012,10 @@ class AuthService {
         lastAttempt: null,
         lockedUntil: null
       };
+      
+      // Update security tracking
+      auth.security.passwordChangedAt = new Date();
+      auth.security.requirePasswordChange = false;
       
       // Revoke all sessions for security
       auth.sessions.forEach(session => {
@@ -988,6 +1030,9 @@ class AuthService {
       
       // Get user for email notification
       const user = await User.findById(auth.userId);
+      if (!user) {
+        throw new NotFoundError('User not found');
+      }
       
       // Send password changed notification
       await this.sendPasswordChangedEmail(user, context);
@@ -1000,16 +1045,40 @@ class AuthService {
         result: 'success',
         userId: auth.userId,
         severity: 'high',
-        metadata: context
+        metadata: {
+          ...context,
+          resetTokenUsed: true,
+          sessionsRevoked: auth.sessions.filter(s => !s.isActive).length
+        }
       });
       
       return {
         success: true,
-        message: 'Password reset successful. Please login with your new password.'
+        message: 'Password reset successful. Please login with your new password.',
+        data: {
+          passwordChanged: true,
+          sessionsRevoked: true,
+          loginRequired: true
+        }
       };
       
     } catch (error) {
-      logger.error('Password reset error', { error });
+      // Log the error with context
+      logger.error('Password reset error', {
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        },
+        context,
+        resetData: {
+          token: resetData.token ? '[REDACTED]' : null,
+          hasNewPassword: !!resetData.newPassword,
+          hasConfirmPassword: !!resetData.confirmPassword
+        }
+      });
+      
+      // Re-throw the error to be handled by the controller
       throw error;
     }
   }
@@ -1805,18 +1874,93 @@ class AuthService {
     return challenge;
   }
   
+  // /**
+  //  * Validate password strength - CORRECTED VERSION
+  //  * @param {string} password - Password to validate
+  //  * @returns {Object} Validation result
+  //  */
+  // static validatePasswordStrength(password) {
+  //   // Access the correct configuration paths based on your config structure
+  //   const minLength = config.auth.passwordMinLength || 8;
+  //   const requireUppercase = config.auth.requireUppercase !== false;
+  //   const requireLowercase = config.auth.requireLowercase !== false;
+  //   const requireNumbers = config.auth.requireNumbers !== false;
+  //   const requireSpecialChars = config.auth.requireSpecialChars !== false;
+    
+  //   if (!password) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password is required'
+  //     };
+  //   }
+    
+  //   if (password.length < minLength) {
+  //     return {
+  //       valid: false,
+  //       message: `Password must be at least ${minLength} characters long`
+  //     };
+  //   }
+    
+  //   if (requireUppercase && !/[A-Z]/.test(password)) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password must contain at least one uppercase letter'
+  //     };
+  //   }
+    
+  //   if (requireLowercase && !/[a-z]/.test(password)) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password must contain at least one lowercase letter'
+  //     };
+  //   }
+    
+  //   if (requireNumbers && !/\d/.test(password)) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password must contain at least one number'
+  //     };
+  //   }
+    
+  //   if (requireSpecialChars && !/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password must contain at least one special character'
+  //     };
+  //   }
+    
+  //   // Check for common passwords
+  //   const commonPasswords = ['password', '12345678', 'qwerty', 'abc123', 'password123'];
+  //   if (commonPasswords.includes(password.toLowerCase())) {
+  //     return {
+  //       valid: false,
+  //       message: 'Password is too common. Please choose a more secure password.'
+  //     };
+  //   }
+    
+  //   return {
+  //     valid: true,
+  //     message: 'Password meets security requirements'
+  //   };
+  // }
+
   /**
-   * Validate password strength - CORRECTED VERSION
+   * Validate password strength using configuration-based requirements
    * @param {string} password - Password to validate
+   * @param {Object} userContext - User context for validation (optional)
    * @returns {Object} Validation result
    */
-  static validatePasswordStrength(password) {
-    // Access the correct configuration paths based on your config structure
+  static validatePasswordStrength(password, userContext = {}) {
+    // Access configuration values with appropriate fallbacks
     const minLength = config.auth.passwordMinLength || 8;
+    const maxLength = config.auth.passwordMaxLength || 128;
     const requireUppercase = config.auth.requireUppercase !== false;
     const requireLowercase = config.auth.requireLowercase !== false;
     const requireNumbers = config.auth.requireNumbers !== false;
     const requireSpecialChars = config.auth.requireSpecialChars !== false;
+    const allowCommonPasswords = config.auth.allowCommonPasswords === true;
+    const allowSequentialChars = config.auth.allowSequentialChars === true;
+    const allowRepeatedChars = config.auth.allowRepeatedChars === true;
     
     if (!password) {
       return {
@@ -1825,6 +1969,7 @@ class AuthService {
       };
     }
     
+    // Length validation
     if (password.length < minLength) {
       return {
         valid: false,
@@ -1832,6 +1977,14 @@ class AuthService {
       };
     }
     
+    if (password.length > maxLength) {
+      return {
+        valid: false,
+        message: `Password must not exceed ${maxLength} characters`
+      };
+    }
+    
+    // Character requirement validation
     if (requireUppercase && !/[A-Z]/.test(password)) {
       return {
         valid: false,
@@ -1860,18 +2013,257 @@ class AuthService {
       };
     }
     
-    // Check for common passwords
-    const commonPasswords = ['password', '12345678', 'qwerty', 'abc123', 'password123'];
-    if (commonPasswords.includes(password.toLowerCase())) {
-      return {
-        valid: false,
-        message: 'Password is too common. Please choose a more secure password.'
-      };
+    // Common password validation
+    if (!allowCommonPasswords) {
+      const commonPasswords = [
+        'password', '12345678', 'qwerty', 'abc123', 'password123',
+        'admin123', 'welcome123', 'changeme123', 'newpassword123',
+        'letmein', 'welcome', 'monkey', 'dragon', 'master'
+      ];
+      
+      if (commonPasswords.includes(password.toLowerCase())) {
+        return {
+          valid: false,
+          message: 'Password is too common. Please choose a more secure password.'
+        };
+      }
     }
+    
+    // Sequential character validation
+    if (!allowSequentialChars) {
+      const sequentialPatterns = [
+        /(?:abc|bcd|cde|def|efg|fgh|ghi|hij|ijk|jkl|klm|lmn|mno|nop|opq|pqr|qrs|rst|stu|tuv|uvw|vwx|wxy|xyz)/i,
+        /(?:123|234|345|456|567|678|789|890)/,
+        /(?:qwe|wer|ert|rty|tyu|yui|uio|iop|asd|sdf|dfg|fgh|ghj|hjk|jkl|zxc|xcv|cvb|vbn|bnm)/i
+      ];
+      
+      for (const pattern of sequentialPatterns) {
+        if (pattern.test(password)) {
+          return {
+            valid: false,
+            message: 'Password should not contain sequential characters'
+          };
+        }
+      }
+    }
+    
+    // Repeated character validation
+    if (!allowRepeatedChars) {
+      if (/(.)\1{2,}/.test(password)) {
+        return {
+          valid: false,
+          message: 'Password should not contain three or more repeated characters'
+        };
+      }
+    }
+    
+    // Context-based validation when user information is available
+    if (userContext && typeof userContext === 'object') {
+      if (userContext.email && typeof userContext.email === 'string') {
+        const emailPart = userContext.email.split('@')[0].toLowerCase();
+        if (emailPart.length > 3 && password.toLowerCase().includes(emailPart)) {
+          return {
+            valid: false,
+            message: 'Password should not contain parts of your email address'
+          };
+        }
+      }
+      
+      if (userContext.firstName && typeof userContext.firstName === 'string' && userContext.firstName.length > 2) {
+        if (password.toLowerCase().includes(userContext.firstName.toLowerCase())) {
+          return {
+            valid: false,
+            message: 'Password should not contain your first name'
+          };
+        }
+      }
+      
+      if (userContext.lastName && typeof userContext.lastName === 'string' && userContext.lastName.length > 2) {
+        if (password.toLowerCase().includes(userContext.lastName.toLowerCase())) {
+          return {
+            valid: false,
+            message: 'Password should not contain your last name'
+          };
+        }
+      }
+      
+      if (userContext.username && typeof userContext.username === 'string' && userContext.username.length > 2) {
+        if (password.toLowerCase().includes(userContext.username.toLowerCase())) {
+          return {
+            valid: false,
+            message: 'Password should not contain your username'
+          };
+        }
+      }
+    }
+    
+    // Calculate strength score for additional feedback
+    const strengthResult = this.calculatePasswordStrength(password);
     
     return {
       valid: true,
-      message: 'Password meets security requirements'
+      message: 'Password meets security requirements',
+      strength: strengthResult
+    };
+  }
+
+  /**
+   * Calculate password strength score based on various factors
+   * @param {string} password - Password to analyze
+   * @returns {Object} Strength analysis with score and feedback
+   */
+  static calculatePasswordStrength(password) {
+    if (!password || typeof password !== 'string') {
+      return {
+        score: 0,
+        level: 'invalid',
+        color: 'red',
+        description: 'Invalid password',
+        feedback: ['Password is required']
+      };
+    }
+    
+    let score = 0;
+    const feedback = [];
+    const criteria = {
+      length: false,
+      lowercase: false,
+      uppercase: false,
+      numbers: false,
+      specialChars: false,
+      variety: false,
+      uniqueness: false
+    };
+    
+    // Length scoring with configuration awareness
+    const minLength = config.auth.passwordMinLength || 8;
+    if (password.length >= minLength) {
+      criteria.length = true;
+      score += 2;
+    }
+    if (password.length >= minLength + 4) score += 1;
+    if (password.length >= minLength + 8) score += 1;
+    if (password.length >= minLength + 12) score += 1;
+    
+    // Character variety scoring
+    if (/[a-z]/.test(password)) {
+      criteria.lowercase = true;
+      score += 1;
+    }
+    if (/[A-Z]/.test(password)) {
+      criteria.uppercase = true;
+      score += 1;
+    }
+    if (/[0-9]/.test(password)) {
+      criteria.numbers = true;
+      score += 1;
+    }
+    if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+      criteria.specialChars = true;
+      score += 2;
+    }
+    
+    // Character set variety bonus
+    const charTypes = [
+      criteria.lowercase,
+      criteria.uppercase,
+      criteria.numbers,
+      criteria.specialChars
+    ].filter(Boolean).length;
+    
+    if (charTypes >= 3) {
+      criteria.variety = true;
+      score += 1;
+    }
+    if (charTypes === 4) {
+      score += 1;
+    }
+    
+    // Uniqueness and complexity scoring
+    const uniqueChars = new Set(password.toLowerCase()).size;
+    const uniquenessRatio = uniqueChars / password.length;
+    
+    if (uniquenessRatio > 0.7) {
+      criteria.uniqueness = true;
+      score += 1;
+    }
+    
+    // Deduct points for weaknesses
+    if (/(.)\1{2,}/.test(password)) {
+      score -= 1;
+      feedback.push('Avoid repeating characters');
+    }
+    
+    if (/(?:123|abc|qwe)/i.test(password)) {
+      score -= 1;
+      feedback.push('Avoid sequential patterns');
+    }
+    
+    // Generate feedback based on missing criteria
+    if (!criteria.length) {
+      feedback.push(`Use at least ${minLength} characters`);
+    }
+    if (!criteria.lowercase && config.auth.requireLowercase !== false) {
+      feedback.push('Add lowercase letters');
+    }
+    if (!criteria.uppercase && config.auth.requireUppercase !== false) {
+      feedback.push('Add uppercase letters');
+    }
+    if (!criteria.numbers && config.auth.requireNumbers !== false) {
+      feedback.push('Add numbers');
+    }
+    if (!criteria.specialChars && config.auth.requireSpecialChars !== false) {
+      feedback.push('Add special characters');
+    }
+    if (!criteria.variety) {
+      feedback.push('Use a mix of different character types');
+    }
+    if (!criteria.uniqueness) {
+      feedback.push('Use more varied characters');
+    }
+    
+    // Determine strength level and appearance
+    let level, color, description;
+    if (score < 3) {
+      level = 'very-weak';
+      color = '#dc3545';
+      description = 'Very weak password';
+    } else if (score < 5) {
+      level = 'weak';
+      color = '#fd7e14';
+      description = 'Weak password';
+    } else if (score < 7) {
+      level = 'fair';
+      color = '#ffc107';
+      description = 'Fair password strength';
+    } else if (score < 9) {
+      level = 'good';
+      color = '#20c997';
+      description = 'Good password strength';
+    } else if (score < 11) {
+      level = 'strong';
+      color = '#28a745';
+      description = 'Strong password';
+    } else {
+      level = 'excellent';
+      color = '#007bff';
+      description = 'Excellent password strength';
+    }
+    
+    // Add positive feedback for strong passwords
+    if (score >= 7 && feedback.length === 0) {
+      feedback.push('Password strength is good');
+    }
+    
+    return {
+      score: Math.max(0, score),
+      maxScore: 12,
+      level,
+      color,
+      description,
+      feedback,
+      criteria,
+      percentage: Math.min(100, Math.round((Math.max(0, score) / 12) * 100))
     };
   }
   

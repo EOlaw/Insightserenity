@@ -148,10 +148,27 @@ router.post('/forgot-password',
 router.post('/reset-password',
   rateLimiter('password-reset', { max: 5, windowMs: 60 * 60 * 1000 }),
   [
-    body('token').notEmpty().withMessage('Reset token is required'),
-    body('password').isLength({ min: 12 }).withMessage('Password must be at least 12 characters')
+    body('token')
+      .notEmpty()
+      .withMessage('Reset token is required'),
+    
+    body('newPassword')
+      .isLength({ min: 12 })
+      .withMessage('Password must be at least 12 characters')
+      .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>])/)
+      .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'),
+    
+    body('confirmPassword')
+      .notEmpty()
+      .withMessage('Password confirmation is required')
+      .custom((value, { req }) => {
+        if (value !== req.body.newPassword) {
+          throw new Error('Passwords do not match');
+        }
+        return true;
+      })
   ],
-  // validateRequest,
+  // validateRequest, // Uncomment this to enable validation
   AuthController.resetPassword
 );
 
@@ -161,7 +178,7 @@ router.post('/reset-password',
  * @access  Private
  */
 router.post('/change-password',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('currentPassword').notEmpty().withMessage('Current password is required'),
     body('newPassword').isLength({ min: 12 }).withMessage('New password must be at least 12 characters')
@@ -258,7 +275,7 @@ router.get('/linkedin/callback',
  * @access  Private
  */
 router.post('/oauth/link',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('provider').isIn(['google', 'github', 'linkedin']).withMessage('Invalid OAuth provider')
   ],
@@ -272,7 +289,7 @@ router.post('/oauth/link',
  * @access  Private
  */
 router.delete('/oauth/unlink/:provider',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('provider').isIn(['google', 'github', 'linkedin']).withMessage('Invalid OAuth provider')
   ],
@@ -350,7 +367,7 @@ router.post('/passkey/authenticate/complete',
  * @access  Private
  */
 router.delete('/passkey/:credentialId',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('credentialId').notEmpty().withMessage('Credential ID is required')
   ],
@@ -368,7 +385,7 @@ router.delete('/passkey/:credentialId',
  * @access  Private
  */
 router.get('/mfa/methods',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.getMfaMethods
 );
 
@@ -378,7 +395,7 @@ router.get('/mfa/methods',
  * @access  Private
  */
 router.post('/mfa/setup/:method',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('method').isIn(['totp', 'sms', 'email', 'backup_codes']).withMessage('Invalid MFA method'),
     body('phoneNumber').if(param('method').equals('sms')).isMobilePhone().withMessage('Valid phone number required')
@@ -393,7 +410,7 @@ router.post('/mfa/setup/:method',
  * @access  Private
  */
 router.post('/mfa/verify-setup',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('method').isIn(['totp', 'sms', 'email']).withMessage('Invalid MFA method'),
     body('code').notEmpty().withMessage('Verification code is required'),
@@ -427,7 +444,7 @@ router.post('/mfa/verify',
  * @access  Private
  */
 router.delete('/mfa/:method',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('method').isIn(['totp', 'sms', 'email', 'backup_codes']).withMessage('Invalid MFA method')
   ],
@@ -441,7 +458,7 @@ router.delete('/mfa/:method',
  * @access  Private
  */
 router.post('/mfa/backup-codes/regenerate',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.regenerateBackupCodes
 );
 
@@ -549,7 +566,7 @@ router.get('/sso/:organizationSlug/metadata',
  * @access  Private
  */
 router.get('/security/status',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.getSecurityStatus
 );
 
@@ -559,7 +576,7 @@ router.get('/security/status',
  * @access  Private
  */
 router.get('/security/activity',
-  authenticate({ required: true }),
+  authenticate(),
   [
     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
     query('offset').optional().isInt({ min: 0 }).toInt()
@@ -574,7 +591,7 @@ router.get('/security/activity',
  * @access  Private
  */
 router.post('/security/trusted-devices',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('deviceName').trim().notEmpty().withMessage('Device name is required'),
     body('trustToken').optional().isString()
@@ -589,7 +606,7 @@ router.post('/security/trusted-devices',
  * @access  Private
  */
 router.delete('/security/trusted-devices/:deviceId',
-  authenticate({ required: true }),
+  authenticate(),
   [
     param('deviceId').notEmpty().withMessage('Device ID is required')
   ],
@@ -607,7 +624,7 @@ router.delete('/security/trusted-devices/:deviceId',
  * @access  Private
  */
 router.post('/recovery/questions',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('questions').isArray({ min: 3, max: 5 }).withMessage('3-5 security questions required'),
     body('questions.*.question').notEmpty().withMessage('Question is required'),
@@ -642,7 +659,7 @@ router.post('/recovery/verify',
  * @access  Private
  */
 router.post('/verify/phone',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('phoneNumber').isMobilePhone().withMessage('Valid phone number is required')
   ],
@@ -656,7 +673,7 @@ router.post('/verify/phone',
  * @access  Private
  */
 router.post('/verify/phone/confirm',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('code').notEmpty().withMessage('Verification code is required')
   ],
@@ -674,7 +691,7 @@ router.post('/verify/phone/confirm',
  * @access  Private
  */
 router.post('/account/delete',
-  authenticate({ required: true }),
+  authenticate(),
   [
     body('password').notEmpty().withMessage('Password is required for confirmation'),
     body('reason').optional().trim()
@@ -702,7 +719,7 @@ router.post('/account/delete/confirm',
  * @access  Private
  */
 router.post('/account/delete/cancel',
-  authenticate({ required: true }),
+  authenticate(),
   AuthController.cancelAccountDeletion
 );
 
