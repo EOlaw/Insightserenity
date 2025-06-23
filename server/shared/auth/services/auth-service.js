@@ -314,19 +314,38 @@ class AuthService {
         };
       }
       
+      // Check if MFA is enabled || Uncomment later
+      // if (auth.isMfaEnabled) {
+      //   // Generate MFA challenge
+      //   const mfaChallenge = await this.generateMfaChallenge(user._id, auth);
+        
+      //   return {
+      //     success: false,
+      //     requiresMfa: true,
+      //     userId: user._id,
+      //     challengeId: mfaChallenge.id,
+      //     mfaMethods: auth.mfa.methods
+      //       .filter(m => m.enabled)
+      //       .map(m => ({ type: m.type, isPrimary: m.isPrimary }))
+      //   };
+      // }
+
       // Check if MFA is enabled
       if (auth.isMfaEnabled) {
-        // Generate MFA challenge
-        const mfaChallenge = await this.generateMfaChallenge(user._id, auth);
+        // Get enabled MFA methods
+        const enabledMethods = auth.mfa.methods.filter(m => m.enabled);
+        
+        // For SMS and email methods, create active challenge
+        const smsOrEmailMethod = enabledMethods.find(m => m.type === 'sms' || m.type === 'email');
+        if (smsOrEmailMethod) {
+          await this.createMfaChallenge(user._id, smsOrEmailMethod.type);
+        }
         
         return {
           success: false,
           requiresMfa: true,
           userId: user._id,
-          challengeId: mfaChallenge.id,
-          mfaMethods: auth.mfa.methods
-            .filter(m => m.enabled)
-            .map(m => ({ type: m.type, isPrimary: m.isPrimary }))
+          mfaMethods: enabledMethods.map(m => ({ type: m.type, isPrimary: m.isPrimary }))
         };
       }
       
@@ -1149,14 +1168,82 @@ class AuthService {
     }
   }
   
+  // /**
+  //  * Setup MFA for user
+  //  * @param {string} userId - User ID
+  //  * @param {string} method - MFA method
+  //  * @param {Object} context - Request context
+  //  * @returns {Promise<Object>} Setup result
+  //  */
+  // static async setupMfa(userId, method, context, setupData) {
+  //   try {
+  //     const auth = await Auth.findOne({ userId });
+  //     if (!auth) {
+  //       throw new NotFoundError('Authentication record not found');
+  //     }
+      
+  //     const user = await User.findById(userId);
+  //     if (!user) {
+  //       throw new NotFoundError('User not found');
+  //     }
+      
+  //     let setupData;
+      
+  //     switch (method) {
+  //       case 'totp':
+  //         setupData = await this.setupTotpMfa(user, auth);
+  //         break;
+          
+  //       case 'sms':
+  //         setupData = await this.setupSmsMfa(user, auth);
+  //         break;
+          
+  //       case 'email':
+  //         setupData = await this.setupEmailMfa(user, auth);
+  //         break;
+          
+  //       case 'backup_codes':
+  //         setupData = await this.setupBackupCodes(user, auth);
+  //         break;
+          
+  //       default:
+  //         throw new ValidationError(`Unsupported MFA method: ${method}`);
+  //     }
+      
+  //     // Audit log
+  //     await AuditService.log({
+  //       type: 'mfa_setup_initiated',
+  //       action: 'setup_mfa',
+  //       category: 'authentication',
+  //       result: 'success',
+  //       userId,
+  //       metadata: {
+  //         ...context,
+  //         method
+  //       }
+  //     });
+      
+  //     return {
+  //       success: true,
+  //       method,
+  //       ...setupData
+  //     };
+      
+  //   } catch (error) {
+  //     logger.error('MFA setup error', { error });
+  //     throw error;
+  //   }
+  // }
+
   /**
    * Setup MFA for user
    * @param {string} userId - User ID
    * @param {string} method - MFA method
    * @param {Object} context - Request context
+   * @param {Object} setupData - Setup data (contains phoneNumber for SMS)
    * @returns {Promise<Object>} Setup result
    */
-  static async setupMfa(userId, method, context) {
+  static async setupMfa(userId, method, context, setupData) {
     try {
       const auth = await Auth.findOne({ userId });
       if (!auth) {
@@ -1168,23 +1255,23 @@ class AuthService {
         throw new NotFoundError('User not found');
       }
       
-      let setupData;
+      let result; // Changed from 'setupData' to 'result'
       
       switch (method) {
         case 'totp':
-          setupData = await this.setupTotpMfa(user, auth);
+          result = await this.setupTotpMfa(user, auth);
           break;
           
         case 'sms':
-          setupData = await this.setupSmsMfa(user, auth);
+          result = await this.setupSmsMfa(user, auth, setupData); // Now setupData parameter is accessible
           break;
           
         case 'email':
-          setupData = await this.setupEmailMfa(user, auth);
+          result = await this.setupEmailMfa(user, auth);
           break;
           
         case 'backup_codes':
-          setupData = await this.setupBackupCodes(user, auth);
+          result = await this.setupBackupCodes(user, auth);
           break;
           
         default:
@@ -1207,7 +1294,7 @@ class AuthService {
       return {
         success: true,
         method,
-        ...setupData
+        ...result // Changed from 'setupData' to 'result'
       };
       
     } catch (error) {
@@ -1750,6 +1837,89 @@ class AuthService {
       logger.error('MFA verification error', { error });
       throw error;
     }
+  }
+
+  ////////////////////////////////////// NEW METHODS //////////////////////////////////////
+  static async createMfaChallenge(userId, method) {
+    const auth = await Auth.findOne({ userId });
+    if (!auth) {
+      throw new NotFoundError('Authentication record not found');
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+    
+    const mfaMethod = auth.mfa.methods.find(m => m.type === method && m.enabled);
+    if (!mfaMethod) {
+      throw new ValidationError('MFA method not available');
+    }
+    
+    let challengeResult = {};
+    
+    switch (method) {
+      case 'sms':
+        const verificationCode = crypto.randomInt(100000, 999999).toString();
+        const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
+        
+        auth.mfa.activeChallenge = {
+          method: 'sms',
+          code: hashedCode,
+          expiresAt: new Date(Date.now() + 300000), // 5 minutes
+          attemptsRemaining: 3
+        };
+        
+        await auth.save();
+        
+        // Log for development
+        if (config.app.env === 'development') {
+          logger.info('SMS Login Code (Development)', {
+            phoneNumber: mfaMethod.config.phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
+            code: verificationCode
+          });
+        }
+        
+        challengeResult = {
+          method: 'sms',
+          maskedPhone: mfaMethod.config.phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
+          expiresIn: 300
+        };
+        break;
+        
+      case 'email':
+        const emailCode = crypto.randomInt(100000, 999999).toString();
+        const hashedEmailCode = crypto.createHash('sha256').update(emailCode).digest('hex');
+        
+        auth.mfa.activeChallenge = {
+          method: 'email',
+          code: hashedEmailCode,
+          expiresAt: new Date(Date.now() + 300000), // 5 minutes
+          attemptsRemaining: 3
+        };
+        
+        await auth.save();
+        
+        // Log for development
+        if (config.app.env === 'development') {
+          logger.info('Email Login Code (Development)', {
+            email: user.email,
+            code: emailCode
+          });
+        }
+        
+        challengeResult = {
+          method: 'email',
+          email: user.email,
+          expiresIn: 300
+        };
+        break;
+        
+      default:
+        throw new ValidationError(`Challenge creation not supported for method: ${method}`);
+    }
+    
+    return challengeResult;
   }
   
   /**

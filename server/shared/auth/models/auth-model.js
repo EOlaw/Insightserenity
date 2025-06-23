@@ -202,6 +202,16 @@ const authSchema = new mongoose.Schema({
         generatedAt: Date
       }],
       attemptsRemaining: { type: Number, default: 3 } // ADD THIS LINE
+    },
+    activeChallenge: {
+      method: {
+        type: String,
+        enum: ['sms', 'email']
+      },
+      code: String, // Hashed verification code
+      expiresAt: Date,
+      attemptsRemaining: { type: Number, default: 3 },
+      createdAt: { type: Date, default: Date.now }
     }
   },
   
