@@ -1244,6 +1244,22 @@ class AuthService {
       setupToken,
       expiresAt: new Date(Date.now() + 3600000) // 1 hour
     };
+
+    // console.log('Before save - pendingSetup:', auth.mfa.pendingSetup);
+    // console.log('Auth document ID:', auth._id);
+
+    // try {
+    //   const savedAuth = await auth.save();
+    //   console.log('After save - pendingSetup:', savedAuth.mfa.pendingSetup);
+    //   console.log('Save successful');
+    // } catch (error) {
+    //   console.error('Save failed:', error);
+    //   throw error;
+    // }
+    
+    // // Verify the save by re-querying
+    // const verifyAuth = await Auth.findById(auth._id);
+    // console.log('Verification query - pendingSetup:', verifyAuth.mfa.pendingSetup);
     
     await auth.save();
     
@@ -1283,7 +1299,7 @@ class AuthService {
       switch (method) {
         case 'totp':
           // Decrypt secret
-          const secret = await EncryptionService.decrypt(auth.mfa.pendingSetup.secret);
+          const secret = await EncryptionService.decrypt(auth.mfa.pendingSetup.secret.encrypted);
           
           // Verify code
           verified = speakeasy.totp.verify({
@@ -1375,7 +1391,7 @@ class AuthService {
       switch (method) {
         case 'totp':
           // Decrypt secret
-          const secret = await EncryptionService.decrypt(mfaMethod.config.totpSecret);
+          const secret = await EncryptionService.decrypt(mfaMethod.config.totpSecret.encrypted);
           
           // Verify TOTP code
           verified = speakeasy.totp.verify({

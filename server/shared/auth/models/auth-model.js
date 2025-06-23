@@ -147,7 +147,7 @@ const authSchema = new mongoose.Schema({
       },
       config: {
         // TOTP specific
-        totpSecret: String,
+        totpSecret: mongoose.Schema.Types.Mixed,
         
         // SMS specific
         phoneNumber: String,
@@ -183,7 +183,18 @@ const authSchema = new mongoose.Schema({
         type: Number,
         default: 0
       }
-    }]
+    }],
+    pendingSetup: {
+      method: {
+        type: String,
+        enum: ['totp', 'sms', 'email', 'backup_codes']
+      },
+      secret: mongoose.Schema.Types.Mixed, // For encrypted TOTP secrets
+      setupToken: String,
+      expiresAt: Date,
+      phoneNumber: String, // For SMS setup
+      email: String // For email setup
+    }
   },
   
   // Sessions management
