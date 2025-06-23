@@ -63,6 +63,7 @@ const config = {
 
     // ADD THIS SERVER SECTION:
     server: {
+        name: getEnv('APP_NAME', 'InsightSerenity'),
         isProduction: getEnv('NODE_ENV', 'development') === 'production',
         isDevelopment: getEnv('NODE_ENV', 'development') === 'development',
         host: getEnv('APP_HOST', 'localhost'),

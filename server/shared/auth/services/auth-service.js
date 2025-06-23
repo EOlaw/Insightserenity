@@ -1223,10 +1223,12 @@ class AuthService {
    * @returns {Promise<Object>} TOTP setup data
    */
   static async setupTotpMfa(user, auth) {
+    // Use config.app.name||config.server.name for TOTP issuer
+    const appName = config.app.name || config.server.name || 'Insightserenity';
     // Generate secret
     const secret = speakeasy.generateSecret({
-      name: `${config.server.appName} (${user.email})`,
-      issuer: config.server.appName,
+      name: `${appName} (${user.email})`,
+      issuer: appName,
       length: 32
     });
     
@@ -1268,6 +1270,148 @@ class AuthService {
       secret: secret.base32,
       setupToken,
       message: 'Scan the QR code with your authenticator app and verify with a code'
+    };
+  }
+
+  /**
+   * Setup SMS MFA
+   * @param {Object} user - User object
+   * @param {Object} auth - Auth object
+   * @param {Object} setupData - Contains phoneNumber
+   * @returns {Promise<Object>} SMS setup data
+   */
+  static async setupSmsMfa(user, auth, setupData) {
+    if (!setupData || !setupData.phoneNumber) {
+      throw new ValidationError('Phone number is required for SMS MFA setup');
+    }
+    
+    const { phoneNumber } = setupData;
+    
+    // Validate phone number format
+    const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+    if (!phoneRegex.test(phoneNumber.replace(/[\s\-\(\)]/g, ''))) {
+      throw new ValidationError('Please provide a valid phone number in international format');
+    }
+    
+    // Generate verification code
+    const verificationCode = crypto.randomInt(100000, 999999).toString();
+    const setupToken = crypto.randomBytes(32).toString('hex');
+    
+    // Hash the verification code for storage
+    const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
+    
+    // Store pending setup
+    auth.mfa.pendingSetup = {
+      method: 'sms',
+      phoneNumber,
+      setupToken,
+      verificationCode: hashedCode,
+      expiresAt: new Date(Date.now() + 600000), // 10 minutes
+      attemptsRemaining: 3
+    };
+    
+    await auth.save();
+    
+    // For development, log the code
+    if (config.app.env === 'development') {
+      logger.info('SMS Verification Code (Development)', {
+        phoneNumber: phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
+        code: verificationCode,
+        setupToken
+      });
+    }
+    
+    return {
+      setupToken,
+      phoneNumber: phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
+      expiresIn: 600,
+      message: 'Verification code sent to your phone. Enter the 6-digit code to complete setup.'
+    };
+  }
+
+  /**
+   * Setup Email MFA
+   * @param {Object} user - User object
+   * @param {Object} auth - Auth object
+   * @returns {Promise<Object>} Email setup data
+   */
+  static async setupEmailMfa(user, auth) {
+    // Generate verification code
+    const verificationCode = crypto.randomInt(100000, 999999).toString();
+    const setupToken = crypto.randomBytes(32).toString('hex');
+    
+    // Hash the verification code for storage
+    const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
+    
+    // Store pending setup
+    auth.mfa.pendingSetup = {
+      method: 'email',
+      email: user.email,
+      setupToken,
+      verificationCode: hashedCode,
+      expiresAt: new Date(Date.now() + 600000), // 10 minutes
+      attemptsRemaining: 3
+    };
+    
+    await auth.save();
+    
+    // For development, log the code
+    if (config.app.env === 'development') {
+      logger.info('Email Verification Code (Development)', {
+        email: user.email,
+        code: verificationCode,
+        setupToken
+      });
+    }
+    
+    return {
+      setupToken,
+      email: user.email,
+      expiresIn: 600,
+      message: 'Verification code sent to your email address. Enter the 6-digit code to complete setup.'
+    };
+  }
+
+  /**
+   * Setup Backup Codes MFA
+   * @param {Object} user - User object
+   * @param {Object} auth - Auth object
+   * @returns {Promise<Object>} Backup codes setup data
+   */
+  static async setupBackupCodes(user, auth) {
+    const setupToken = crypto.randomBytes(32).toString('hex');
+    
+    // Generate backup codes
+    const codes = [];
+    const plainCodes = [];
+    
+    for (let i = 0; i < 10; i++) {
+      const plainCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const hashedCode = crypto.createHash('sha256').update(plainCode).digest('hex');
+      
+      codes.push({
+        code: hashedCode,
+        used: false,
+        generatedAt: new Date()
+      });
+      plainCodes.push(plainCode);
+    }
+    
+    // Store pending setup with generated codes
+    auth.mfa.pendingSetup = {
+      method: 'backup_codes',
+      codes,
+      setupToken,
+      expiresAt: new Date(Date.now() + 3600000) // 1 hour
+    };
+    
+    await auth.save();
+    
+    return {
+      setupToken,
+      codes: plainCodes,
+      message: 'Save these backup codes in a secure place. You will need to confirm setup by providing one of these codes.',
+      warning: 'These codes will only be shown once. Store them securely as they can be used to access your account if you lose your primary MFA device.'
     };
   }
   
@@ -1314,6 +1458,71 @@ class AuthService {
             auth.addMfaMethod('totp', {
               totpSecret: auth.mfa.pendingSetup.secret
             });
+          }
+          break;
+
+        case 'sms':
+          // Check remaining attempts
+          if (auth.mfa.pendingSetup.attemptsRemaining <= 0) {
+            throw new ValidationError('Maximum verification attempts exceeded. Please restart SMS setup.');
+          }
+          
+          // Hash the provided code and compare
+          const hashedSmsCode = crypto.createHash('sha256').update(code).digest('hex');
+          
+          if (hashedSmsCode === auth.mfa.pendingSetup.verificationCode) {
+            // Add SMS MFA method
+            auth.addMfaMethod('sms', {
+              phoneNumber: auth.mfa.pendingSetup.phoneNumber,
+              verifiedAt: new Date()
+            });
+            verified = true;
+          } else {
+            // Decrement attempts
+            auth.mfa.pendingSetup.attemptsRemaining -= 1;
+            await auth.save();
+            throw new ValidationError(`Invalid verification code. ${auth.mfa.pendingSetup.attemptsRemaining} attempts remaining.`);
+          }
+          break;
+
+        case 'email':
+          // Check remaining attempts
+          if (auth.mfa.pendingSetup.attemptsRemaining <= 0) {
+            throw new ValidationError('Maximum verification attempts exceeded. Please restart email setup.');
+          }
+          
+          // Hash the provided code and compare
+          const hashedEmailCode = crypto.createHash('sha256').update(code).digest('hex');
+          
+          if (hashedEmailCode === auth.mfa.pendingSetup.verificationCode) {
+            // Add Email MFA method
+            auth.addMfaMethod('email', {
+              email: auth.mfa.pendingSetup.email,
+              verifiedAt: new Date()
+            });
+            verified = true;
+          } else {
+            // Decrement attempts
+            auth.mfa.pendingSetup.attemptsRemaining -= 1;
+            await auth.save();
+            throw new ValidationError(`Invalid verification code. ${auth.mfa.pendingSetup.attemptsRemaining} attempts remaining.`);
+          }
+          break;
+
+        case 'backup_codes':
+          // For backup codes, verify that the user provides one of the generated codes
+          const providedCodeHash = crypto.createHash('sha256').update(code.toUpperCase()).digest('hex');
+          const codeExists = auth.mfa.pendingSetup.codes.some(c => c.code === providedCodeHash);
+          
+          if (codeExists) {
+            // Add backup codes MFA method
+            auth.addMfaMethod('backup_codes', {
+              codes: auth.mfa.pendingSetup.codes,
+              generatedAt: new Date()
+            });
+            verified = true;
+          } else {
+            throw new ValidationError('Invalid backup code. Please provide one of the generated backup codes.');
           }
           break;
           
@@ -1400,6 +1609,38 @@ class AuthService {
             token: code,
             window: 2
           });
+          break;
+
+        case 'sms':
+          // Find temporary SMS challenge
+          const smsChallenge = auth.mfa.activeChallenge;
+          if (!smsChallenge || smsChallenge.method !== 'sms' || smsChallenge.expiresAt < new Date()) {
+            throw new ValidationError('SMS verification session expired. Please restart login process.');
+          }
+          
+          // Verify SMS code
+          const hashedSmsLoginCode = crypto.createHash('sha256').update(code).digest('hex');
+          if (hashedSmsLoginCode === smsChallenge.code) {
+            verified = true;
+            // Clear active challenge
+            auth.mfa.activeChallenge = undefined;
+          }
+          break;
+
+        case 'email':
+          // Find temporary email challenge
+          const emailChallenge = auth.mfa.activeChallenge;
+          if (!emailChallenge || emailChallenge.method !== 'email' || emailChallenge.expiresAt < new Date()) {
+            throw new ValidationError('Email verification session expired. Please restart login process.');
+          }
+          
+          // Verify email code
+          const hashedEmailLoginCode = crypto.createHash('sha256').update(code).digest('hex');
+          if (hashedEmailLoginCode === emailChallenge.code) {
+            verified = true;
+            // Clear active challenge
+            auth.mfa.activeChallenge = undefined;
+          }
           break;
           
         case 'backup_codes':

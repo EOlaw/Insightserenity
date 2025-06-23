@@ -193,7 +193,15 @@ const authSchema = new mongoose.Schema({
       setupToken: String,
       expiresAt: Date,
       phoneNumber: String, // For SMS setup
-      email: String // For email setup
+      email: String, // For email setup
+      verificationCode: String, // For SMS/Email verification codes
+      codes: [{
+        code: String,
+        used: Boolean,
+        usedAt: Date,
+        generatedAt: Date
+      }],
+      attemptsRemaining: { type: Number, default: 3 } // ADD THIS LINE
     }
   },
   
