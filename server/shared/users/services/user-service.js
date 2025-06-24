@@ -489,8 +489,93 @@ class UserService {
     }
   }
   
+  // /**
+  //  * Update user profile
+  //  * @param {string} userId - User ID
+  //  * @param {Object} profileData - Profile data
+  //  * @param {Object} context - Request context
+  //  * @returns {Promise<Object>} Updated user
+  //  */
+  // static async updateUserProfile(userId, profileData, context) {
+  //   try {
+  //     const user = await this.getUserById(userId);
+      
+  //     // Check permissions
+  //     if (context.userId !== userId && !context.hasPermission('users.update')) {
+  //       throw new ForbiddenError('Insufficient permissions to update profile');
+  //     }
+      
+  //     // Update profile fields
+  //     if (profileData.bio) {
+  //       user.profile.bio = { ...user.profile.bio, ...profileData.bio };
+  //     }
+      
+  //     if (profileData.socialLinks) {
+  //       user.profile.socialLinks = { ...user.profile.socialLinks, ...profileData.socialLinks };
+  //     }
+      
+  //     if (profileData.professionalInfo) {
+  //       user.profile.professionalInfo = { 
+  //         ...user.profile.professionalInfo, 
+  //         ...profileData.professionalInfo 
+  //       };
+  //     }
+
+  //     // Handle location transformation if needed
+  //     if (profileData.location) {
+  //       if (typeof profileData.location === 'object') {
+  //         // Option 1: Convert object to formatted string (if schema expects string)
+  //         const locationParts = [
+  //           profileData.location.city,
+  //           profileData.location.state,
+  //           profileData.location.country
+  //         ].filter(Boolean);
+          
+  //         user.profile.location = locationParts.join(', ');
+          
+  //         // Store timezone separately if provided
+  //         if (profileData.location.timezone) {
+  //           user.profile.timezone = profileData.location.timezone;
+  //         }
+          
+  //         // Option 2: Store the entire object (requires schema update)
+  //         // user.profile.location = profileData.location;
+  //       } else {
+  //         // Handle string location
+  //         user.profile.location = profileData.location;
+  //       }
+  //     }
+      
+  //     // Update other profile fields
+  //     const allowedFields = [
+  //       'displayName', 'title', 'department', 'location', 'timezone',
+  //       'dateOfBirth', 'gender', 'languages'
+  //     ];
+      
+  //     allowedFields.forEach(field => {
+  //       if (profileData[field] !== undefined) {
+  //         user.profile[field] = profileData[field];
+  //       }
+  //     });
+      
+  //     // Recalculate profile completeness
+  //     user.calculateProfileCompleteness();
+      
+  //     await user.save();
+      
+  //     // Clear cache
+  //     await CacheService.del(`user:${userId}`);
+      
+  //     return user;
+      
+  //   } catch (error) {
+  //     logger.error('Update user profile error', { error, userId });
+  //     throw error;
+  //   }
+  // }
+
   /**
-   * Update user profile
+   * Update user profile - FIXED VERSION
    * @param {string} userId - User ID
    * @param {Object} profileData - Profile data
    * @param {Object} context - Request context
@@ -520,10 +605,65 @@ class UserService {
           ...profileData.professionalInfo 
         };
       }
+
+      // FIXED: Handle location as object structure to match updated schema
+      if (profileData.location) {
+        if (typeof profileData.location === 'object') {
+          // Store as object structure (matches new schema)
+          const locationObject = {
+            city: profileData.location.city || null,
+            state: profileData.location.state || null,
+            country: profileData.location.country || null,
+            timezone: profileData.location.timezone || null
+          };
+          
+          // Create formatted string for backward compatibility and search
+          const locationParts = [
+            locationObject.city,
+            locationObject.state,
+            locationObject.country
+          ].filter(Boolean);
+          
+          if (locationParts.length > 0) {
+            locationObject.formatted = locationParts.join(', ');
+          }
+          
+          user.profile.location = locationObject;
+          
+          // Store timezone in separate field if provided (for compatibility)
+          if (profileData.location.timezone) {
+            user.profile.timezone = profileData.location.timezone;
+          }
+        } else if (typeof profileData.location === 'string') {
+          // Handle legacy string input by parsing into object structure
+          const locationString = profileData.location.trim();
+          const parts = locationString.split(',').map(part => part.trim());
+          
+          let city = null;
+          let state = null;
+          let country = null;
+          
+          if (parts.length === 1) {
+            city = parts[0];
+          } else if (parts.length === 2) {
+            [city, country] = parts;
+          } else if (parts.length >= 3) {
+            [city, state, country] = parts;
+          }
+          
+          user.profile.location = {
+            city,
+            state,
+            country,
+            timezone: null,
+            formatted: locationString
+          };
+        }
+      }
       
-      // Update other profile fields
+      // Update other profile fields (excluding location since we handled it above)
       const allowedFields = [
-        'displayName', 'title', 'department', 'location', 'timezone',
+        'displayName', 'title', 'department', 'timezone',
         'dateOfBirth', 'gender', 'languages'
       ];
       
@@ -633,8 +773,92 @@ class UserService {
     }
   }
   
+  // /**
+  //  * Search users
+  //  * @param {Object} searchParams - Search parameters
+  //  * @param {Object} context - Request context
+  //  * @returns {Promise<Object>} Search results
+  //  */
+  // static async searchUsers(searchParams, context) {
+  //   try {
+  //     const {
+  //       query,
+  //       userType,
+  //       role,
+  //       organizationId,
+  //       status = 'active',
+  //       skills,
+  //       location,
+  //       activelyLooking,
+  //       page = 1,
+  //       limit = 20,
+  //       sort = '-activity.lastActive'
+  //     } = searchParams;
+      
+  //     const filter = {
+  //       status,
+  //       active: true
+  //     };
+      
+  //     // Text search
+  //     if (query) {
+  //       filter.$or = [
+  //         { firstName: new RegExp(query, 'i') },
+  //         { lastName: new RegExp(query, 'i') },
+  //         { 'profile.displayName': new RegExp(query, 'i') },
+  //         { email: new RegExp(query, 'i') },
+  //         { username: new RegExp(query, 'i') },
+  //         { 'profile.bio.short': new RegExp(query, 'i') }
+  //       ];
+  //     }
+      
+  //     // Apply filters
+  //     if (userType) filter.userType = userType;
+  //     if (role) filter['role.primary'] = role;
+  //     if (organizationId) filter['organization.current'] = organizationId;
+  //     if (location) filter['profile.location'] = new RegExp(location, 'i');
+      
+  //     // Skills filter
+  //     if (skills && skills.length > 0) {
+  //       filter['profile.professionalInfo.skills.name'] = { $in: skills };
+  //     }
+      
+  //     // Job seeker specific filters
+  //     if (activelyLooking !== undefined) {
+  //       filter['profile.candidateProfile.activelyLooking'] = activelyLooking;
+  //     }
+      
+  //     // Execute search
+  //     const skip = (page - 1) * limit;
+      
+  //     const [users, total] = await Promise.all([
+  //       User.find(filter)
+  //         .select('firstName lastName email profile.displayName profile.avatar profile.title profile.location userType role')
+  //         .sort(sort)
+  //         .limit(limit)
+  //         .skip(skip)
+  //         .lean(),
+  //       User.countDocuments(filter)
+  //     ]);
+      
+  //     return {
+  //       users,
+  //       pagination: {
+  //         total,
+  //         page,
+  //         limit,
+  //         pages: Math.ceil(total / limit)
+  //       }
+  //     };
+      
+  //   } catch (error) {
+  //     logger.error('Search users error', { error, searchParams });
+  //     throw error;
+  //   }
+  // }
+
   /**
-   * Search users
+   * Search users - UPDATED for location object structure
    * @param {Object} searchParams - Search parameters
    * @param {Object} context - Request context
    * @returns {Promise<Object>} Search results
@@ -676,7 +900,18 @@ class UserService {
       if (userType) filter.userType = userType;
       if (role) filter['role.primary'] = role;
       if (organizationId) filter['organization.current'] = organizationId;
-      if (location) filter['profile.location'] = new RegExp(location, 'i');
+      
+      // UPDATED: Location filter for object structure
+      if (location) {
+        filter.$or = [
+          // Search in formatted string for backward compatibility
+          { 'profile.location.formatted': new RegExp(location, 'i') },
+          // Search in individual components
+          { 'profile.location.city': new RegExp(location, 'i') },
+          { 'profile.location.state': new RegExp(location, 'i') },
+          { 'profile.location.country': new RegExp(location, 'i') }
+        ];
+      }
       
       // Skills filter
       if (skills && skills.length > 0) {

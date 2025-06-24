@@ -124,7 +124,32 @@ const userSchema = new Schema({
     
     title: String,
     department: String,
-    location: String,
+    location: {
+      city: {
+        type: String,
+        trim: true,
+        maxlength: 100
+      },
+      state: {
+        type: String,
+        trim: true,
+        maxlength: 100
+      },
+      country: {
+        type: String,
+        trim: true,
+        maxlength: 100
+      },
+      timezone: {
+        type: String,
+        trim: true
+      },
+      // Optional: Store as formatted string for backward compatibility
+      formatted: {
+        type: String,
+        trim: true
+      }
+    },
     timezone: String,
     
     dateOfBirth: {
@@ -868,7 +893,10 @@ userSchema.index({ status: 1, active: 1 });
 userSchema.index({ createdAt: -1 });
 userSchema.index({ 'activity.lastLogin': -1 });
 userSchema.index({ 'profile.professionalInfo.skills.name': 1 });
-userSchema.index({ 'profile.location': 1 });
+userSchema.index({ 'profile.location.city': 1 });
+userSchema.index({ 'profile.location.state': 1 });
+userSchema.index({ 'profile.location.country': 1 });
+userSchema.index({ 'profile.location.formatted': 1 }); // For backward compatibility searches
 userSchema.index({ 'profile.candidateProfile.activelyLooking': 1 });
 userSchema.index({ 'subscription.plan': 1, 'subscription.status': 1 });
 userSchema.index({ 'auth.provider': 1 });
@@ -878,6 +906,12 @@ userSchema.index({ 'metadata.source': 1 });
 userSchema.index({ userType: 1, status: 1, active: 1 });
 userSchema.index({ 'organization.current': 1, 'role.primary': 1 });
 userSchema.index({ 'subscription.status': 1, 'subscription.endDate': 1 });
+userSchema.index({ 
+  'profile.location.country': 1, 
+  'profile.location.state': 1, 
+  'profile.location.city': 1 
+});
+userSchema.index({ 'profile.location.formatted': 'text' });
 
 // Virtual fields
 userSchema.virtual('fullName').get(function() {
