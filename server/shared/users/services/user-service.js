@@ -11,7 +11,7 @@ const Organization = require('../../../hosted-organizations/organizations/models
 const config = require('../../../shared/config/config');
 const constants = require('../../../shared/config/constants');
 const AuditService = require('../../../shared/security/services/audit-service');
-const CacheService = require('../../../shared/services/cache-service');
+const { CacheService } = require('../../../shared/services/cache-service');
 const EmailService = require('../../../shared/services/email-service');
 const FileService = require('../../../shared/utils/helpers/file-helper');
 const Auth = require('../../auth/models/auth-model');
@@ -234,7 +234,8 @@ class UserService {
     try {
       // Check cache first
       const cacheKey = `user:${userId}`;
-      const cached = await CacheService.get(cacheKey);
+      // const cached = await CacheService.get(cacheKey);
+      const cached = CacheService.get ? await CacheService.get(cacheKey) : null;
       
       if (cached && !populate && !select) {
         return cached;
@@ -425,14 +426,43 @@ class UserService {
         }
       }
       
+      // Store the old values for comparison
+      const oldFirstName = user.firstName;
+      const oldLastName = user.lastName;
+      
       // Update user
       Object.assign(user, updateData);
       user.activity.lastProfileUpdate = new Date();
       
+      // AUTO-UPDATE DISPLAYNAME LOGIC - ADD THIS SECTION:
+      // If firstName or lastName changed, automatically update displayName
+      const nameChanged = (updateData.firstName && updateData.firstName !== oldFirstName) ||
+                        (updateData.lastName && updateData.lastName !== oldLastName);
+      
+      if (nameChanged) {
+        // Calculate new displayName based on updated firstName and lastName
+        const firstName = user.firstName || '';
+        const lastName = user.lastName || '';
+        const newDisplayName = `${firstName} ${lastName}`.trim();
+        
+        // Only update if the result is not empty
+        if (newDisplayName) {
+          user.profile.displayName = newDisplayName;
+          logger.info('Auto-updated displayName', {
+            userId,
+            oldDisplayName: user.profile.displayName,
+            newDisplayName,
+            firstName,
+            lastName
+          });
+        }
+      }
+      // END AUTO-UPDATE SECTION
+      
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       // Audit log
       await AuditService.log({
@@ -446,7 +476,8 @@ class UserService {
           id: userId
         },
         metadata: {
-          fields: Object.keys(updateData)
+          fields: Object.keys(updateData),
+          displayNameUpdated: nameChanged // Track if displayName was auto-updated
         }
       });
       
@@ -508,7 +539,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       return user;
       
@@ -560,7 +591,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       return user;
       
@@ -592,7 +623,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       return user;
       
@@ -765,7 +796,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       // Send notification
       await this.sendOrganizationWelcomeEmail(user, organization);
@@ -831,7 +862,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       // Audit log
       await AuditService.log({
@@ -940,7 +971,7 @@ class UserService {
       await user.save();
       
       // Clear cache
-      await CacheService.delete(`user:${userId}`);
+      await CacheService.del(`user:${userId}`);
       
       // Also mark auth record as deleted
       await Auth.updateOne(
@@ -1001,7 +1032,7 @@ class UserService {
       
       // Clear cache for all updated users
       await Promise.all(
-        userIds.map(userId => CacheService.delete(`user:${userId}`))
+        userIds.map(userId => CacheService.del(`user:${userId}`))
       );
       
       // Audit log
