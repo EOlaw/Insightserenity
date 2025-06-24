@@ -288,6 +288,54 @@ const config = {
         }
     },
 
+    // SMS configuration
+    sms: {
+        enabled: parseBoolean(getEnv('SMS_ENABLED', 'true')),
+        provider: getEnv('SMS_PROVIDER', 'twilio'),
+        defaultFrom: getEnv('SMS_DEFAULT_FROM'),
+        maxLength: parseInt(getEnv('SMS_MAX_LENGTH', '1600'), 10),
+        bulkBatchSize: parseInt(getEnv('SMS_BULK_BATCH_SIZE', '100'), 10),
+        
+        // Provider configurations
+        twilio: {
+            accountSid: getEnv('TWILIO_ACCOUNT_SID'),
+            authToken: getEnv('TWILIO_AUTH_TOKEN'),
+            phoneNumber: getEnv('TWILIO_PHONE_NUMBER'),
+            webhookUrl: getEnv('TWILIO_WEBHOOK_URL', `${getEnv('APP_URL')}/api/webhooks/sms/twilio`)
+        },
+        
+        sns: {
+            region: getEnv('AWS_SMS_REGION', 'us-east-1'),
+            accessKeyId: getEnv('AWS_SMS_ACCESS_KEY_ID'),
+            secretAccessKey: getEnv('AWS_SMS_SECRET_ACCESS_KEY')
+        },
+        
+        messagebird: {
+            accessKey: getEnv('MESSAGEBIRD_ACCESS_KEY')
+        },
+        
+        nexmo: {
+            apiKey: getEnv('NEXMO_API_KEY'),
+            apiSecret: getEnv('NEXMO_API_SECRET')
+        },
+        
+        // Rate limiting for SMS
+        rateLimit: {
+            enabled: parseBoolean(getEnv('SMS_RATE_LIMIT_ENABLED', 'true')),
+            maxPerMinute: parseInt(getEnv('SMS_RATE_LIMIT_PER_MINUTE', '5'), 10),
+            maxPerHour: parseInt(getEnv('SMS_RATE_LIMIT_PER_HOUR', '20'), 10),
+            maxPerDay: parseInt(getEnv('SMS_RATE_LIMIT_PER_DAY', '50'), 10)
+        },
+        
+        // MFA specific settings
+        mfa: {
+            codeLength: parseInt(getEnv('SMS_MFA_CODE_LENGTH', '6'), 10),
+            codeExpiry: parseInt(getEnv('SMS_MFA_CODE_EXPIRY', '600000'), 10), // 10 minutes
+            maxAttempts: parseInt(getEnv('SMS_MFA_MAX_ATTEMPTS', '3'), 10),
+            resendDelay: parseInt(getEnv('SMS_MFA_RESEND_DELAY', '60000'), 10) // 1 minute
+        }
+    },
+
     // File storage configuration
     storage: {
         provider: getEnv('STORAGE_PROVIDER', 'local'),
