@@ -31,7 +31,7 @@
 //  * @access  Private
 //  */
 // router.get('/me',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   UserController.getMe
 // );
 
@@ -41,7 +41,7 @@
 //  * @access  Private
 //  */
 // router.put('/me',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   rateLimiter('userUpdate', { max: 10, windowMs: 15 * 60 * 1000 }),
 //   [
 //     body('firstName').optional().trim().notEmpty().isLength({ max: 50 }),
@@ -62,7 +62,7 @@
 //  * @access  Private
 //  */
 // router.put('/me/profile',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   rateLimiter('userUpdate', { max: 10, windowMs: 15 * 60 * 1000 }),
 //   [
 //     body('displayName').optional().trim().isLength({ max: 100 }),
@@ -93,7 +93,7 @@
 //  * @access  Private
 //  */
 // router.post('/me/avatar',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   rateLimiter('fileUpload', { max: 5, windowMs: 15 * 60 * 1000 }),
 //   // uploadSingle('avatar', {
 //   //   allowedTypes: ['image/jpeg', 'image/png', 'image/webp'],
@@ -108,7 +108,7 @@
 //  * @access  Private
 //  */
 // router.delete('/me/avatar',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   UserController.removeMyAvatar
 // );
 
@@ -118,7 +118,7 @@
 //  * @access  Private
 //  */
 // router.put('/me/preferences',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     body('language').optional().isString(),
 //     body('timezone').optional().isIn(Intl.supportedValuesOf('timeZone')),
@@ -141,7 +141,7 @@
 //  * @access  Private
 //  */
 // router.get('/me/statistics',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   UserController.getMyStatistics
 // );
 
@@ -151,7 +151,7 @@
 //  * @access  Private
 //  */
 // router.get('/me/export',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   rateLimiter('dataExport', { max: 2, windowMs: 24 * 60 * 60 * 1000 }), // 2 per day
 //   UserController.exportMyData
 // );
@@ -166,7 +166,7 @@
 //  * @access  Private
 //  */
 // router.put('/me/skills',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     body('skills').isArray(),
 //     body('skills.*.name').notEmpty().trim(),
@@ -184,7 +184,7 @@
 //  * @access  Private
 //  */
 // router.put('/me/experience',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     body('experience').isArray(),
 //     body('experience.*.company').notEmpty().trim(),
@@ -206,7 +206,7 @@
 //  * @access  Private
 //  */
 // router.put('/me/education',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     body('education').isArray(),
 //     body('education.*.institution').notEmpty().trim(),
@@ -232,7 +232,7 @@
 //  * @access  Private
 //  */
 // router.post('/me/switch-organization',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     body('organizationId').isMongoId().withMessage('Valid organization ID required')
 //   ],
@@ -246,7 +246,7 @@
 //  * @access  Private
 //  */
 // router.get('/:userId/organizations',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required')
 //   ],
@@ -260,7 +260,7 @@
 //  * @access  Private (Organization Admin)
 //  */
 // router.post('/:userId/organizations',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('organizations.members.add'),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required'),
@@ -278,7 +278,7 @@
 //  * @access  Private (Organization Admin)
 //  */
 // router.delete('/:userId/organizations/:organizationId',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('organizations.members.remove'),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required'),
@@ -298,7 +298,7 @@
 //  * @access  Private
 //  */
 // router.get('/search',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   rateLimiter('search', { max: 30, windowMs: 60 * 1000 }), // 30 per minute
 //   [
 //     query('q').optional().trim(),
@@ -327,7 +327,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.get('/',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.view.all'),
 //   [
 //     query('page').optional().isInt({ min: 1 }).toInt(),
@@ -348,7 +348,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.post('/',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.create'),
 //   rateLimiter('adminAction', { max: 20, windowMs: 15 * 60 * 1000 }),
 //   [
@@ -370,7 +370,7 @@
 //  * @access  Private
 //  */
 // router.get('/:userId',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required'),
 //     query('fields').optional().isString()
@@ -385,7 +385,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.put('/:userId',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.update'),
 //   rateLimiter('adminAction', { max: 20, windowMs: 15 * 60 * 1000 }),
 //   [
@@ -401,7 +401,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.delete('/:userId',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.delete'),
 //   rateLimiter('adminAction', { max: 10, windowMs: 15 * 60 * 1000 }),
 //   [
@@ -417,7 +417,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.put('/bulk',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.bulk.update'),
 //   rateLimiter('adminAction', { max: 5, windowMs: 15 * 60 * 1000 }),
 //   [
@@ -439,7 +439,7 @@
 //  * @access  Private
 //  */
 // router.get('/:userId/statistics',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required')
 //   ],
@@ -453,7 +453,7 @@
 //  * @access  Private (Admin or Self)
 //  */
 // router.get('/:userId/activity',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required'),
 //     query('limit').optional().isInt({ min: 1, max: 100 }).toInt(),
@@ -473,7 +473,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.post('/:userId/verify-email',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.verify'),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required')
@@ -488,7 +488,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.post('/:userId/suspend',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.suspend'),
 //   rateLimiter('adminAction', { max: 10, windowMs: 15 * 60 * 1000 }),
 //   [
@@ -506,7 +506,7 @@
 //  * @access  Private (Admin)
 //  */
 // router.post('/:userId/reactivate',
-//   authenticate({ required: true }),
+//   authenticate(),
 //   authorize('users.reactivate'),
 //   [
 //     param('userId').isMongoId().withMessage('Valid user ID required')
@@ -533,12 +533,12 @@ const { authenticate /*, authorize */ } = require('../../middleware/auth/auth-mi
 const UserController = require('../controllers/user-controller');
 
 router.get('/me',
-  authenticate({ required: true }),
+  authenticate(),
   UserController.getMe
 );
 
 router.put('/me',
-  authenticate({ required: true }),
+  authenticate(),
   // rateLimiter('userUpdate', { max: 10, windowMs: 15 * 60 * 1000 }),
   // [
   //   body('firstName').optional().trim().notEmpty().isLength({ max: 50 }),
@@ -554,7 +554,7 @@ router.put('/me',
 );
 
 router.put('/me/profile',
-  authenticate({ required: true }),
+  authenticate(),
   // rateLimiter('userUpdate', { max: 10, windowMs: 15 * 60 * 1000 }),
   // [
   //   body('displayName').optional().trim().isLength({ max: 100 }),
@@ -566,19 +566,19 @@ router.put('/me/profile',
 );
 
 router.post('/me/avatar',
-  authenticate({ required: true }),
+  authenticate(),
   // rateLimiter('fileUpload', { max: 5, windowMs: 15 * 60 * 1000 }),
   // uploadSingle('avatar', { allowedTypes: [...], maxSize: ... }),
   UserController.updateMyAvatar
 );
 
 router.delete('/me/avatar',
-  authenticate({ required: true }),
+  authenticate(),
   UserController.removeMyAvatar
 );
 
 router.put('/me/preferences',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   body('language').optional().isString(),
   //   ...
@@ -588,18 +588,18 @@ router.put('/me/preferences',
 );
 
 router.get('/me/statistics',
-  authenticate({ required: true }),
+  authenticate(),
   UserController.getMyStatistics
 );
 
 router.get('/me/export',
-  authenticate({ required: true }),
+  authenticate(),
   // rateLimiter('dataExport', { max: 2, windowMs: 24 * 60 * 60 * 1000 }),
   UserController.exportMyData
 );
 
 router.put('/me/skills',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   body('skills').isArray(),
   //   ...
@@ -609,7 +609,7 @@ router.put('/me/skills',
 );
 
 router.put('/me/experience',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   body('experience').isArray(),
   //   ...
@@ -619,7 +619,7 @@ router.put('/me/experience',
 );
 
 router.put('/me/education',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   body('education').isArray(),
   //   ...
@@ -629,7 +629,7 @@ router.put('/me/education',
 );
 
 router.post('/me/switch-organization',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   body('organizationId').isMongoId()
   // ],
@@ -638,7 +638,7 @@ router.post('/me/switch-organization',
 );
 
 router.get('/:userId/organizations',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   param('userId').isMongoId()
   // ],
@@ -647,7 +647,7 @@ router.get('/:userId/organizations',
 );
 
 router.post('/:userId/organizations',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('organizations.members.add'),
   // [
   //   param('userId').isMongoId(),
@@ -658,7 +658,7 @@ router.post('/:userId/organizations',
 );
 
 router.delete('/:userId/organizations/:organizationId',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('organizations.members.remove'),
   // [
   //   param('userId').isMongoId(),
@@ -669,7 +669,7 @@ router.delete('/:userId/organizations/:organizationId',
 );
 
 router.get('/search',
-  authenticate({ required: true }),
+  authenticate(),
   // rateLimiter('search', { max: 30, windowMs: 60 * 1000 }),
   // [
   //   query('q').optional().trim(),
@@ -680,7 +680,7 @@ router.get('/search',
 );
 
 router.get('/',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.view.all'),
   // [
   //   query('page').optional().isInt(),
@@ -691,7 +691,7 @@ router.get('/',
 );
 
 router.post('/',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.create'),
   // rateLimiter('adminAction', { max: 20, windowMs: 15 * 60 * 1000 }),
   // [
@@ -703,7 +703,7 @@ router.post('/',
 );
 
 router.get('/:userId',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   param('userId').isMongoId(),
   //   ...
@@ -713,7 +713,7 @@ router.get('/:userId',
 );
 
 router.put('/:userId',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.update'),
   // rateLimiter('adminAction', { max: 20, windowMs: 15 * 60 * 1000 }),
   // [
@@ -724,7 +724,7 @@ router.put('/:userId',
 );
 
 router.delete('/:userId',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.delete'),
   // rateLimiter('adminAction', { max: 10, windowMs: 15 * 60 * 1000 }),
   // [
@@ -735,7 +735,7 @@ router.delete('/:userId',
 );
 
 router.put('/bulk',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.bulk.update'),
   // rateLimiter('adminAction', { max: 5, windowMs: 15 * 60 * 1000 }),
   // [
@@ -747,7 +747,7 @@ router.put('/bulk',
 );
 
 router.get('/:userId/statistics',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   param('userId').isMongoId()
   // ],
@@ -756,7 +756,7 @@ router.get('/:userId/statistics',
 );
 
 router.get('/:userId/activity',
-  authenticate({ required: true }),
+  authenticate(),
   // [
   //   param('userId').isMongoId(),
   //   ...
@@ -766,7 +766,7 @@ router.get('/:userId/activity',
 );
 
 router.post('/:userId/verify-email',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.verify'),
   // [
   //   param('userId').isMongoId()
@@ -776,7 +776,7 @@ router.post('/:userId/verify-email',
 );
 
 router.post('/:userId/suspend',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.suspend'),
   // rateLimiter('adminAction', { max: 10, windowMs: 15 * 60 * 1000 }),
   // [
@@ -788,7 +788,7 @@ router.post('/:userId/suspend',
 );
 
 router.post('/:userId/reactivate',
-  authenticate({ required: true }),
+  authenticate(),
   // authorize('users.reactivate'),
   // [
   //   param('userId').isMongoId()

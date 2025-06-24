@@ -1623,10 +1623,26 @@ class AuthService {
       
       // Generate backup codes
       const backupCodes = auth.generateBackupCodes();
+
+      try {
+        // Clear pending setup
+        auth.mfa.pendingSetup = undefined;
+        auth.markModified('mfa.pendingSetup');
+        await auth.save();
+
+        // Verify cleanup
+        const verifyAuth = await Auth.findById(auth._id);
+        if (verifyAuth.mfa.pendingSetup) {
+          logger.warn('Failed to clear pendingSetup field after verification', { userId, method });
+        }
+      } catch (error) {
+        logger.error('Error clearing pending setup after MFA verification', { error, userId, method });
+        throw error;
+      }
       
-      // Clear pending setup
-      auth.mfa.pendingSetup = undefined;
-      await auth.save();
+      // // Clear pending setup
+      // auth.mfa.pendingSetup = undefined;
+      // await auth.save();
       
       // Audit log
       await AuditService.log({
