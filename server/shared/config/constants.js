@@ -607,6 +607,29 @@ const Constants = {
       DOCUMENT: 10 * 1024 * 1024, // 10MB
       VIDEO: 100 * 1024 * 1024, // 100MB
       DEFAULT: 10 * 1024 * 1024 // 10MB
+    },
+
+    // Add these new constants for file upload functionality
+    ALLOWED_TYPES: {
+      IMAGE: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'],
+      DOCUMENT: [
+        'application/pdf', 
+        'application/msword', 
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain',
+        'text/csv'
+      ],
+      VIDEO: ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/webm'],
+      AUDIO: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4']
+    },
+    
+    ALLOWED_EXTENSIONS: {
+      IMAGE: ['.jpg', '.jpeg', '.png', '.webp', '.gif'],
+      DOCUMENT: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.csv'],
+      VIDEO: ['.mp4', '.mpeg', '.mov', '.avi', '.webm'],
+      AUDIO: ['.mp3', '.wav', '.ogg', '.m4a']
     }
   },
   

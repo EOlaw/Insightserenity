@@ -531,6 +531,8 @@ const { authenticate /*, authorize */ } = require('../../middleware/auth/auth-mi
 // const { uploadSingle } = require('../../utils/file-upload-middleware');
 // const { validateRequest } = require('../../utils/validation/validator');
 const UserController = require('../controllers/user-controller');
+const fileHelper = require('../../utils/helpers/file-helper');
+
 
 router.get('/me',
   authenticate(),
@@ -567,8 +569,11 @@ router.put('/me/profile',
 
 router.post('/me/avatar',
   authenticate(),
-  // rateLimiter('fileUpload', { max: 5, windowMs: 15 * 60 * 1000 }),
-  // uploadSingle('avatar', { allowedTypes: [...], maxSize: ... }),
+  fileHelper.upload.image('avatar', {
+    folder: 'avatars',
+    maxSize: 5 * 1024 * 1024, // 5MB to match the original code
+    // allowedTypes: ['image/jpeg', 'image/png', 'image/webp']
+  }),
   UserController.updateMyAvatar
 );
 

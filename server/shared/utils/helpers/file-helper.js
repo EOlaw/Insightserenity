@@ -28,9 +28,9 @@ const logger = require('../logger');
  */
 class FileHelper {
   constructor() {
-    this.uploadDir = config.storage.localPath || path.join(__dirname, '../../../../uploads');
+    this.uploadDir = config.storage?.localPath || path.join(__dirname, '../../../../uploads');
     this.tempDir = path.join(this.uploadDir, 'temp');
-    this.storageType = config.storage.type || 'local'; // 'local' or 's3'
+    this.storageType = config.storage?.type || 'local'; // 'local' or 's3'
     
     // Initialize S3 client if needed
     if (this.storageType === 's3') {
@@ -103,7 +103,7 @@ class FileHelper {
    */
   createUploadMiddleware(options = {}) {
     const {
-      maxSize = constants.FILE_UPLOAD.MAX_SIZE.DEFAULT,
+      maxSize = constants.FILE.MAX_SIZES.DEFAULT,
       allowedTypes = [],
       maxFiles = 1,
       folder = 'temp'
@@ -128,9 +128,9 @@ class FileHelper {
             return mimeType === type;
           });
           
-          const isAllowedExt = constants.FILE_UPLOAD.ALLOWED_EXTENSIONS.IMAGE.includes(extension) ||
-                               constants.FILE_UPLOAD.ALLOWED_EXTENSIONS.DOCUMENT.includes(extension) ||
-                               constants.FILE_UPLOAD.ALLOWED_EXTENSIONS.VIDEO.includes(extension);
+          const isAllowedExt = constants.FILE.ALLOWED_EXTENSIONS.IMAGE.includes(extension) ||
+                               constants.FILE.ALLOWED_EXTENSIONS.DOCUMENT.includes(extension) ||
+                               constants.FILE.ALLOWED_EXTENSIONS.VIDEO.includes(extension);
           
           if (!isAllowedMime || !isAllowedExt) {
             return cb(new AppError('File type not allowed', 400));
@@ -204,7 +204,7 @@ class FileHelper {
       }
       
       // Add watermark if requested
-      if (watermark && config.storage.watermarkPath) {
+      if (watermark && config.storage?.watermarkPath) {
         pipeline = pipeline.composite([{
           input: config.storage.watermarkPath,
           gravity: 'southeast',
@@ -525,24 +525,24 @@ class FileHelper {
       image: (fieldName, options = {}) => {
         return this.upload.single(fieldName, {
           ...options,
-          allowedTypes: constants.FILE_UPLOAD.ALLOWED_TYPES.IMAGE,
-          maxSize: options.maxSize || constants.FILE_UPLOAD.MAX_SIZE.IMAGE
+          allowedTypes: constants.FILE.ALLOWED_TYPES.IMAGE,
+          maxSize: options.maxSize || constants.FILE.MAX_SIZES.IMAGE
         });
       },
       
       document: (fieldName, options = {}) => {
         return this.upload.single(fieldName, {
           ...options,
-          allowedTypes: constants.FILE_UPLOAD.ALLOWED_TYPES.DOCUMENT,
-          maxSize: options.maxSize || constants.FILE_UPLOAD.MAX_SIZE.DOCUMENT
+          allowedTypes: constants.FILE.ALLOWED_TYPES.DOCUMENT,
+          maxSize: options.maxSize || constants.FILE.MAX_SIZES.DOCUMENT
         });
       },
       
       video: (fieldName, options = {}) => {
         return this.upload.single(fieldName, {
           ...options,
-          allowedTypes: constants.FILE_UPLOAD.ALLOWED_TYPES.VIDEO,
-          maxSize: options.maxSize || constants.FILE_UPLOAD.MAX_SIZE.VIDEO
+          allowedTypes: constants.FILE.ALLOWED_TYPES.VIDEO,
+          maxSize: options.maxSize || constants.FILE.MAX_SIZES.VIDEO
         });
       }
     };

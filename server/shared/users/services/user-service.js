@@ -13,7 +13,7 @@ const constants = require('../../../shared/config/constants');
 const AuditService = require('../../../shared/security/services/audit-service');
 const { CacheService } = require('../../../shared/services/cache-service');
 const EmailService = require('../../../shared/services/email-service');
-const FileService = require('../../../shared/utils/helpers/file-helper');
+const FileService = require('../../services/file-service');
 const Auth = require('../../auth/models/auth-model');
 const { 
   ValidationError, 
