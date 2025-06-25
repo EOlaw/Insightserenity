@@ -13,165 +13,18 @@ const constants = require('../../../shared/config/constants');
 const { AppError } = require('../../../shared/utils/app-error');
 const logger = require('../../../shared/utils/logger');
 
-/**
- * Service Pricing Schema
- */
-const servicePricingSchema = new Schema({
-  basePrice: {
-    type: Number,
-    required: true,
-    min: 0
-  },
-  currency: {
-    type: String,
-    enum: constants.BILLING.CURRENCIES_ENUM,
-    default: 'USD',
-    uppercase: true
-  },
-  billingCycle: {
-    type: String,
-    enum: ['one_time', 'hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'custom'],
-    required: true
-  },
-  customBillingDays: {
-    type: Number,
-    min: 1,
-    max: 365
-  },
-  discounts: [{
-    name: String,
-    type: {
-      type: String,
-      enum: ['percentage', 'fixed'],
-      required: true
-    },
-    value: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    conditions: {
-      minQuantity: Number,
-      minDuration: Number,
-      customerType: [String],
-      validFrom: Date,
-      validUntil: Date
-    },
-    active: {
-      type: Boolean,
-      default: true
-    }
-  }],
-  taxable: {
-    type: Boolean,
-    default: true
-  },
-  taxRate: {
-    type: Number,
-    min: 0,
-    max: 100
-  }
-}, { _id: false });
+// Import schemas
+const { servicePricingSchema } = require('./schemas/service-pricing-schema');
+const { serviceDeliverableSchema } = require('./schemas/service-deliverable-schema');
+const { serviceRequirementSchema } = require('./schemas/service-requirement-schema');
+const { serviceSLASchema } = require('./schemas/service-sla-schema');
+const { serviceTeamSchema } = require('./schemas/service-team-schema');
+const { serviceProcessSchema } = require('./schemas/service-process-schema');
+const { serviceAvailabilitySchema } = require('./schemas/service-availability-schema');
+const { serviceComplianceSchema } = require('./schemas/service-compliance-schema');
+const { serviceReviewSchema } = require('./schemas/service-review-schema');
 
-/**
- * Service Deliverable Schema
- */
-const serviceDeliverableSchema = new Schema({
-  name: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  description: String,
-  type: {
-    type: String,
-    enum: ['document', 'report', 'presentation', 'code', 'design', 'data', 'other'],
-    required: true
-  },
-  format: String,
-  estimatedDeliveryDays: {
-    type: Number,
-    min: 0
-  },
-  isRequired: {
-    type: Boolean,
-    default: true
-  },
-  order: {
-    type: Number,
-    default: 0
-  }
-}, { _id: false });
 
-/**
- * Service Requirement Schema
- */
-const serviceRequirementSchema = new Schema({
-  type: {
-    type: String,
-    enum: ['skill', 'certification', 'experience', 'tool', 'resource', 'other'],
-    required: true
-  },
-  name: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  description: String,
-  level: {
-    type: String,
-    enum: ['beginner', 'intermediate', 'advanced', 'expert']
-  },
-  isMandatory: {
-    type: Boolean,
-    default: true
-  },
-  alternatives: [String]
-}, { _id: false });
-
-/**
- * Service SLA Schema
- */
-const serviceSLASchema = new Schema({
-  responseTime: {
-    value: Number,
-    unit: {
-      type: String,
-      enum: ['minutes', 'hours', 'days'],
-      default: 'hours'
-    }
-  },
-  resolutionTime: {
-    value: Number,
-    unit: {
-      type: String,
-      enum: ['hours', 'days', 'weeks'],
-      default: 'days'
-    }
-  },
-  availability: {
-    percentage: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 99
-    },
-    businessHoursOnly: {
-      type: Boolean,
-      default: false
-    }
-  },
-  supportLevel: {
-    type: String,
-    enum: ['basic', 'standard', 'premium', 'enterprise'],
-    default: 'standard'
-  },
-  penalties: [{
-    condition: String,
-    penalty: String,
-    maxPenalty: Number
-  }]
-}, { _id: false });
 
 /**
  * Service Schema Definition
@@ -286,92 +139,15 @@ const serviceSchema = new Schema({
   // SLA
   sla: serviceSLASchema,
   
+  
   // Team and Resources
-  team: {
-    minSize: {
-      type: Number,
-      default: 1,
-      min: 1
-    },
-    maxSize: Number,
-    roles: [{
-      role: {
-        type: String,
-        required: true
-      },
-      count: {
-        type: Number,
-        default: 1,
-        min: 1
-      },
-      level: {
-        type: String,
-        enum: ['junior', 'mid', 'senior', 'lead', 'expert']
-      },
-      responsibilities: [String],
-      isOptional: {
-        type: Boolean,
-        default: false
-      }
-    }]
-  },
+  team: serviceTeamSchema,
   
   // Process and Methodology
-  process: {
-    methodology: {
-      type: String,
-      enum: ['agile', 'waterfall', 'hybrid', 'lean', 'custom']
-    },
-    phases: [{
-      name: {
-        type: String,
-        required: true
-      },
-      description: String,
-      duration: {
-        estimated: Number,
-        unit: String
-      },
-      deliverables: [String],
-      order: Number
-    }],
-    qualityChecks: [{
-      name: String,
-      description: String,
-      frequency: String,
-      responsible: String
-    }]
-  },
+  process: serviceProcessSchema,
   
   // Availability and Capacity
-  availability: {
-    status: {
-      type: String,
-      enum: ['available', 'limited', 'booked', 'discontinued', 'coming_soon'],
-      default: 'available'
-    },
-    capacity: {
-      current: {
-        type: Number,
-        default: 0,
-        min: 0
-      },
-      maximum: Number,
-      unit: String
-    },
-    leadTime: {
-      value: Number,
-      unit: {
-        type: String,
-        enum: ['days', 'weeks', 'months']
-      }
-    },
-    blackoutDates: [{
-      startDate: Date,
-      endDate: Date,
-      reason: String
-    }]
-  },
+  availability: serviceAvailabilitySchema,
   
   // Status and Lifecycle
   status: {
@@ -500,61 +276,10 @@ const serviceSchema = new Schema({
   }],
   
   // Compliance and Certifications
-  compliance: {
-    certifications: [{
-      name: String,
-      issuer: String,
-      certificateNumber: String,
-      validFrom: Date,
-      validUntil: Date,
-      documentUrl: String
-    }],
-    standards: [String],
-    regulations: [String],
-    dataHandling: {
-      classification: {
-        type: String,
-        enum: ['public', 'internal', 'confidential', 'restricted']
-      },
-      retention: {
-        period: Number,
-        unit: String
-      },
-      encryption: Boolean,
-      gdprCompliant: Boolean
-    }
-  },
+  compliance: serviceComplianceSchema,
   
   // Reviews and Feedback
-  reviews: [{
-    client: {
-      type: Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    project: {
-      type: Schema.Types.ObjectId,
-      ref: 'Project'
-    },
-    rating: {
-      type: Number,
-      required: true,
-      min: 1,
-      max: 5
-    },
-    feedback: {
-      positive: String,
-      improvement: String,
-      recommendation: Boolean
-    },
-    reviewedAt: {
-      type: Date,
-      default: Date.now
-    },
-    verified: {
-      type: Boolean,
-      default: false
-    }
-  }],
+  reviews: [serviceReviewSchema],
   
   // Metadata
   metadata: {
