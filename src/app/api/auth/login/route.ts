@@ -1,7 +1,7 @@
 // src/app/api/auth/login/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5001/api/v1';
+const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5001/api';
 
 export async function POST(request: NextRequest) {
   try {

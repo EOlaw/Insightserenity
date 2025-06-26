@@ -63,75 +63,19 @@ class AuthController {
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
     }
+
+    // Transform the response structure to match frontend expectations
+    const responseData = {
+      user: result.user,
+      tokens: result.session ? {
+        accessToken: result.session.accessToken,
+        refreshToken: result.session.refreshToken
+      } : null,
+      message: result.message
+    };
     
-    responseHandler.success(res, result, 'Registration successful', 201);
+    responseHandler.success(res, responseData, 'Registration successful', 201);
   });
-  
-  // /**
-  //  * Login user
-  //  * @route   POST /api/auth/login
-  //  * @access  Public
-  //  */
-  // static login = asyncHandler(async (req, res) => {
-  //   const credentials = {
-  //     email: req.body.email,
-  //     password: req.body.password,
-  //     rememberMe: req.body.rememberMe || false,
-  //     deviceId: req.body.deviceId
-  //   };
-    
-  //   const context = {
-  //     ip: req.ip,
-  //     userAgent: req.get('user-agent'),
-  //     origin: req.get('origin')
-  //   };
-    
-  //   const result = await AuthService.login(credentials, context);
-    
-  //   // Handle MFA requirement
-  //   if (result.requiresMfa) {
-  //     return responseHandler.success(res, {
-  //       requiresMfa: true,
-  //       userId: result.userId,
-  //       challengeId: result.challengeId,
-  //       mfaMethods: result.mfaMethods
-  //     }, 'Multi-factor authentication required');
-  //   }
-    
-  //   // Handle password change requirement
-  //   if (result.requiresPasswordChange) {
-  //     return responseHandler.success(res, {
-  //       requiresPasswordChange: true,
-  //       userId: result.userId
-  //     }, 'Password change required');
-  //   }
-    
-  //   // Set cookies
-  //   const cookieOptions = {
-  //     httpOnly: true,
-  //     secure: config.server.isProduction,
-  //     sameSite: 'strict'
-  //   };
-    
-  //   res.cookie('accessToken', result.accessToken, {
-  //     ...cookieOptions,
-  //     maxAge: 15 * 60 * 1000 // 15 minutes
-  //   });
-    
-  //   res.cookie('refreshToken', result.refreshToken, {
-  //     ...cookieOptions,
-  //     maxAge: credentials.rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
-  //   });
-    
-  //   if (result.trustToken) {
-  //     res.cookie('trustToken', result.trustToken, {
-  //       ...cookieOptions,
-  //       maxAge: 90 * 24 * 60 * 60 * 1000 // 90 days
-  //     });
-  //   }
-    
-  //   responseHandler.success(res, result, 'Login successful');
-  // });
 
   /**
    * Login user
@@ -242,16 +186,31 @@ class AuthController {
         hasTrustToken: !!result.trustToken
       });
 
-      // Return successful login response
-      return responseHandler.success(res, {
+      // // Return successful login response
+      // return responseHandler.success(res, {
+      //   user: result.user,
+      //   accessToken: result.accessToken,
+      //   refreshToken: result.refreshToken,
+      //   tokenType: 'Bearer',
+      //   expiresIn: result.expiresIn,
+      //   sessionId: result.sessionId,
+      //   rememberMe: credentials.rememberMe
+      // }, 'Login successful');
+
+      // Transform the response structure to match frontend expectations
+      const loginResponseData = {
         user: result.user,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
+        tokens: {
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken
+        },
         tokenType: 'Bearer',
         expiresIn: result.expiresIn,
         sessionId: result.sessionId,
         rememberMe: credentials.rememberMe
-      }, 'Login successful');
+      };
+
+      return responseHandler.success(res, loginResponseData, 'Login successful');
 
     } catch (error) {
       // Handle email verification specific error
@@ -420,7 +379,20 @@ class AuthController {
       });
     }
     
-    responseHandler.success(res, result, 'Token refreshed successfully');
+    // responseHandler.success(res, result, 'Token refreshed successfully');
+
+    // Transform the response structure to match frontend expectations
+    const refreshResponseData = {
+      tokens: {
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken
+      },
+      tokenType: result.tokenType || 'Bearer',
+      expiresIn: result.expiresIn,
+      sessionId: result.sessionId
+    };
+
+    responseHandler.success(res, refreshResponseData, 'Token refreshed successfully');
   });
   
   /**
