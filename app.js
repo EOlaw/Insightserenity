@@ -297,7 +297,8 @@ class Application {
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
-        const baseApiPath = `${apiPrefix}/${apiVersion}`;
+        const baseApiPath = `${apiPrefix}`;
+        // const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
         this.app.get('/health', (req, res) => {
             const dbHealth = Database.getHealthStatus();
