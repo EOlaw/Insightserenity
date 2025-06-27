@@ -80,17 +80,31 @@ export function RegisterForm() {
       });
 
       if (response.success && response.data) {
-        AuthService.saveTokens(response.data.tokens);
-        AuthService.saveUser(response.data.user);
-        
-        setAlertMessage({
-          type: 'success',
-          message: 'Account created successfully! Redirecting to dashboard...',
-        });
+        // Check if tokens are available (immediate login) or if email verification is required
+        if (response.data.tokens && response.data.tokens.accessToken) {
+          // Immediate login - save tokens and redirect to dashboard
+          AuthService.saveTokens(response.data.tokens);
+          AuthService.saveUser(response.data.user);
+          
+          setAlertMessage({
+            type: 'success',
+            message: 'Account created successfully! Redirecting to dashboard...',
+          });
 
-        setTimeout(() => {
-          router.push('/dashboard');
-        }, 2000);
+          setTimeout(() => {
+            router.push('/dashboard');
+          }, 2000);
+        } else {
+          // Email verification required - show success message and redirect to verification page
+          setAlertMessage({
+            type: 'success',
+            message: 'Account created successfully! Please check your email to verify your account.',
+          });
+
+          setTimeout(() => {
+            router.push('/auth/verify-email?email=' + encodeURIComponent(formData.email));
+          }, 3000);
+        }
       }
     } catch (error: any) {
       setAlertMessage({
@@ -102,132 +116,109 @@ export function RegisterForm() {
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }));
-    // Clear error for this field
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }));
-    }
-  };
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {alertMessage && (
-        <Alert 
-          variant={alertMessage.type} 
-          onClose={() => setAlertMessage(null)}
-        >
-          {alertMessage.message}
-        </Alert>
-      )}
+    <div className="w-full max-w-md mx-auto">
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {alertMessage && (
+          <Alert type={alertMessage.type}>
+            {alertMessage.message}
+          </Alert>
+        )}
 
-      <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Input
+              type="text"
+              placeholder="First Name"
+              value={formData.firstName}
+              onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+              error={errors.firstName}
+              disabled={isLoading}
+              required
+            />
+          </div>
+          <div>
+            <Input
+              type="text"
+              placeholder="Last Name"
+              value={formData.lastName}
+              onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+              error={errors.lastName}
+              disabled={isLoading}
+              required
+            />
+          </div>
+        </div>
+
         <Input
-          label="First Name"
-          type="text"
-          name="firstName"
-          value={formData.firstName}
-          onChange={handleInputChange}
-          error={errors.firstName}
-          placeholder="John"
-          autoComplete="given-name"
+          type="email"
+          placeholder="Email"
+          value={formData.email}
+          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          error={errors.email}
+          disabled={isLoading}
           required
         />
 
         <Input
-          label="Last Name"
-          type="text"
-          name="lastName"
-          value={formData.lastName}
-          onChange={handleInputChange}
-          error={errors.lastName}
-          placeholder="Doe"
-          autoComplete="family-name"
+          type="password"
+          placeholder="Password"
+          value={formData.password}
+          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+          error={errors.password}
+          disabled={isLoading}
           required
         />
-      </div>
 
-      <Input
-        label="Email Address"
-        type="email"
-        name="email"
-        value={formData.email}
-        onChange={handleInputChange}
-        error={errors.email}
-        placeholder="john.doe@company.com"
-        autoComplete="email"
-        required
-      />
+        <Input
+          type="password"
+          placeholder="Confirm Password"
+          value={formData.confirmPassword}
+          onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+          error={errors.confirmPassword}
+          disabled={isLoading}
+          required
+        />
 
-      <Input
-        label="Password"
-        type="password"
-        name="password"
-        value={formData.password}
-        onChange={handleInputChange}
-        error={errors.password}
-        placeholder="••••••••"
-        helperText="Must be at least 12 characters with uppercase, lowercase, number and special character"
-        autoComplete="new-password"
-        required
-      />
-
-      <Input
-        label="Confirm Password"
-        type="password"
-        name="confirmPassword"
-        value={formData.confirmPassword}
-        onChange={handleInputChange}
-        error={errors.confirmPassword}
-        placeholder="••••••••"
-        autoComplete="new-password"
-        required
-      />
-
-      <div className="space-y-2">
-        <label className="flex items-start">
+        <div className="flex items-start space-x-2">
           <input
             type="checkbox"
-            name="acceptTerms"
+            id="acceptTerms"
             checked={formData.acceptTerms}
-            onChange={handleInputChange}
-            className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            onChange={(e) => setFormData({ ...formData, acceptTerms: e.target.checked })}
+            className="mt-1"
+            disabled={isLoading}
           />
-          <span className="ml-2 text-xs text-gray-600">
+          <label htmlFor="acceptTerms" className="text-sm text-gray-600">
             I agree to the{' '}
-            <Link href="/terms" className="text-blue-600 hover:text-blue-500">
+            <Link href="/terms" className="text-blue-600 hover:underline">
               Terms and Conditions
             </Link>{' '}
             and{' '}
-            <Link href="/privacy" className="text-blue-600 hover:text-blue-500">
+            <Link href="/privacy" className="text-blue-600 hover:underline">
               Privacy Policy
             </Link>
-          </span>
-        </label>
+          </label>
+        </div>
         {errors.acceptTerms && (
-          <p className="text-xs text-red-600 ml-5">{errors.acceptTerms}</p>
+          <p className="text-red-500 text-sm">{errors.acceptTerms}</p>
         )}
-      </div>
 
-      <Button
-        type="submit"
-        className="w-full"
-        isLoading={isLoading}
-        disabled={isLoading}
-      >
-        Create Account
-      </Button>
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isLoading}
+        >
+          {isLoading ? 'Creating Account...' : 'Create Account'}
+        </Button>
 
-      <p className="text-center text-xs text-gray-600">
-        Already have an account?{' '}
-        <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">
-          Sign in
-        </Link>
-      </p>
-    </form>
+        <p className="text-center text-sm text-gray-600">
+          Already have an account?{' '}
+          <Link href="/auth/login" className="text-blue-600 hover:underline">
+            Sign in
+          </Link>
+        </p>
+      </form>
+    </div>
   );
 }

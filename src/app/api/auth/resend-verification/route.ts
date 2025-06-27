@@ -1,4 +1,4 @@
-// src/app/api/auth/verify-email/route.ts
+// src/app/api/auth/resend-verification/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 const API_BASE_URL = process.env.BACKEND_API_URL || 'http://localhost:5001/api';
@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Forward request to backend
-    const response = await fetch(`${API_BASE_URL}/auth/verify-email`, {
+    const response = await fetch(`${API_BASE_URL}/auth/resend-verification`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: data.error || { message: 'Email verification failed' },
+          error: data.error || { message: 'Failed to resend verification email' },
         },
         { status: response.status }
       );
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Verify email API error:', error);
+    console.error('Resend verification API error:', error);
     return NextResponse.json(
       {
         success: false,

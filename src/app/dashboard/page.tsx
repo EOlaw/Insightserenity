@@ -8,43 +8,252 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { apiClient } from '@/lib/api';
 
+interface User {
+  _id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: {
+    primary: string;
+    secondary?: string[];
+  };
+  userType: string;
+  status: string;
+  isEmailVerified: boolean;
+  profile?: {
+    displayName?: string;
+    bio?: {
+      short?: string;
+      full?: string;
+    };
+    title?: string;
+    department?: string;
+  };
+  organization?: {
+    current?: {
+      name: string;
+      slug: string;
+      type: string;
+    };
+  };
+  preferences?: {
+    language?: string;
+    timezone?: string;
+    theme?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface DashboardMetrics {
+  activeProjects: number;
+  totalRevenue: number;
+  monthlyRevenue: number;
+  clientSatisfaction: number;
+  hoursLogged: number;
+  upcomingMeetings: number;
+}
+
+interface RecentActivity {
+  id: string;
+  type: 'project' | 'client' | 'meeting' | 'document';
+  title: string;
+  description: string;
+  timestamp: string;
+  status?: string;
+}
+
+interface UpcomingTask {
+  id: string;
+  title: string;
+  description: string;
+  dueDate: string;
+  priority: 'high' | 'medium' | 'low';
+  project?: string;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState(AuthService.getUser());
-  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingLogout, setIsLoadingLogout] = useState(false);
+
+  // Mock data for demonstration - in production, these would come from your backend
+  const [metrics] = useState<DashboardMetrics>({
+    activeProjects: 7,
+    totalRevenue: 245000,
+    monthlyRevenue: 32000,
+    clientSatisfaction: 4.8,
+    hoursLogged: 156,
+    upcomingMeetings: 3
+  });
+
+  const [recentActivities] = useState<RecentActivity[]>([
+    {
+      id: '1',
+      type: 'project',
+      title: 'Digital Transformation Strategy',
+      description: 'Updated project milestone for Phase 2 completion',
+      timestamp: '2 hours ago',
+      status: 'completed'
+    },
+    {
+      id: '2',
+      type: 'meeting',
+      title: 'Client Review - TechCorp',
+      description: 'Quarterly business review scheduled',
+      timestamp: '4 hours ago',
+      status: 'scheduled'
+    },
+    {
+      id: '3',
+      type: 'document',
+      title: 'Market Analysis Report',
+      description: 'Final report submitted to client',
+      timestamp: '1 day ago',
+      status: 'submitted'
+    },
+    {
+      id: '4',
+      type: 'client',
+      title: 'New Client Onboarding',
+      description: 'InnovateStartup added to client portfolio',
+      timestamp: '2 days ago',
+      status: 'active'
+    }
+  ]);
+
+  const [upcomingTasks] = useState<UpcomingTask[]>([
+    {
+      id: '1',
+      title: 'Prepare Q4 Strategy Presentation',
+      description: 'Create executive summary for quarterly review',
+      dueDate: '2025-06-28',
+      priority: 'high',
+      project: 'Strategic Planning Initiative'
+    },
+    {
+      id: '2',
+      title: 'Client Feedback Analysis',
+      description: 'Analyze survey responses and prepare action items',
+      dueDate: '2025-06-30',
+      priority: 'medium',
+      project: 'Customer Experience Project'
+    },
+    {
+      id: '3',
+      title: 'Team Performance Review',
+      description: 'Complete mid-year performance evaluations',
+      dueDate: '2025-07-02',
+      priority: 'medium'
+    },
+    {
+      id: '4',
+      title: 'Invoice Processing',
+      description: 'Submit invoices for completed project milestones',
+      dueDate: '2025-06-27',
+      priority: 'high'
+    }
+  ]);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const user = AuthService.getUser();
-      if (!user) {
-        const validatedUser = await AuthService.validateSession();
-        if (!validatedUser) {
-          router.push('/login');
+    const initializeDashboard = async () => {
+      try {
+        if (!AuthService.isAuthenticated()) {
+          router.push('/auth/login');
           return;
         }
+
+        const storedUser = AuthService.getUser();
+        if (storedUser) {
+          setUser(storedUser);
+        }
+
+        const validatedUser = await AuthService.validateSession();
+        if (!validatedUser) {
+          router.push('/auth/login');
+          return;
+        }
+        
         setUser(validatedUser);
+      } catch (error) {
+        console.error('Dashboard initialization error:', error);
+        router.push('/auth/login');
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    checkAuth();
+    initializeDashboard();
   }, [router]);
 
   const handleLogout = async () => {
-    setIsLoading(true);
+    setIsLoadingLogout(true);
     try {
       await apiClient.logout();
-      router.push('/login');
+      AuthService.clearAuth();
+      router.push('/auth/login');
     } catch (error) {
       console.error('Logout error:', error);
+      AuthService.clearAuth();
+      router.push('/auth/login');
     } finally {
-      setIsLoading(false);
+      setIsLoadingLogout(false);
     }
   };
 
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  const getTimeFromNow = (timestamp: string) => {
+    return timestamp; // In production, use a proper date library like date-fns
+  };
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'high': return 'bg-red-100 text-red-800';
+      case 'medium': return 'bg-yellow-100 text-yellow-800';
+      case 'low': return 'bg-green-100 text-green-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getActivityIcon = (type: string) => {
+    switch (type) {
+      case 'project': return '📋';
+      case 'client': return '👥';
+      case 'meeting': return '📅';
+      case 'document': return '📄';
+      default: return '📌';
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <p className="text-gray-600">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">Unable to load user data</p>
+          <Button onClick={() => router.push('/auth/login')}>
+            Go to Login
+          </Button>
+        </div>
       </div>
     );
   }
@@ -55,22 +264,38 @@ export default function DashboardPage() {
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center">
+            <div className="flex items-center space-x-8">
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                 InsightSerenity
               </h1>
+              <nav className="hidden md:flex space-x-6">
+                <a href="#" className="text-gray-700 hover:text-blue-600 px-3 py-2 text-sm font-medium border-b-2 border-blue-600">
+                  Dashboard
+                </a>
+                <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+                  Projects
+                </a>
+                <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+                  Clients
+                </a>
+                <a href="#" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">
+                  Reports
+                </a>
+              </nav>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-700">
-                Welcome, {user.firstName} {user.lastName}
-              </span>
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-900">{user.firstName} {user.lastName}</p>
+                <p className="text-xs text-gray-500 capitalize">{user.role.primary.replace(/_/g, ' ')}</p>
+              </div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleLogout}
-                isLoading={isLoading}
+                isLoading={isLoadingLogout}
+                disabled={isLoadingLogout}
               >
-                Logout
+                {isLoadingLogout ? 'Signing out...' : 'Sign Out'}
               </Button>
             </div>
           </div>
@@ -79,26 +304,29 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Welcome Section */}
         <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            Welcome to your InsightSerenity dashboard
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">
+            Welcome back, {user.firstName}
+          </h2>
+          <p className="text-gray-600">
+            Here's an overview of your consulting practice and current projects
           </p>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {/* Key Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
           <Card>
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Active Clients</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">24</p>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <span className="text-blue-600 font-semibold">📊</span>
+                  </div>
                 </div>
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                  </svg>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Active Projects</p>
+                  <p className="text-2xl font-bold text-gray-900">{metrics.activeProjects}</p>
                 </div>
               </div>
             </CardContent>
@@ -106,31 +334,15 @@ export default function DashboardPage() {
 
           <Card>
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Active Projects</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">12</p>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                    <span className="text-green-600 font-semibold">💰</span>
+                  </div>
                 </div>
-                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                  </svg>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Revenue This Month</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">$84,250</p>
-                </div>
-                <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Total Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.totalRevenue)}</p>
                 </div>
               </div>
             </CardContent>
@@ -138,101 +350,323 @@ export default function DashboardPage() {
 
           <Card>
             <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Pending Proposals</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">7</p>
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <span className="text-purple-600 font-semibold">📈</span>
+                  </div>
                 </div>
-                <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-yellow-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Monthly Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.monthlyRevenue)}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-yellow-100 rounded-lg flex items-center justify-center">
+                    <span className="text-yellow-600 font-semibold">⭐</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Client Rating</p>
+                  <p className="text-2xl font-bold text-gray-900">{metrics.clientSatisfaction}/5.0</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">
+                    <span className="text-indigo-600 font-semibold">⏱️</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Hours This Month</p>
+                  <p className="text-2xl font-bold text-gray-900">{metrics.hoursLogged}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="flex-shrink-0">
+                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
+                    <span className="text-red-600 font-semibold">📅</span>
+                  </div>
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Upcoming Meetings</p>
+                  <p className="text-2xl font-bold text-gray-900">{metrics.upcomingMeetings}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Quick Actions */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks and actions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Button variant="outline" className="justify-start">
-                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-                New Client
-              </Button>
-              <Button variant="outline" className="justify-start">
-                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Create Proposal
-              </Button>
-              <Button variant="outline" className="justify-start">
-                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                Schedule Meeting
-              </Button>
-              <Button variant="outline" className="justify-start">
-                <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                View Reports
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Main Dashboard Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Left Column - Tasks and Activities */}
+          <div className="lg:col-span-2 space-y-8">
+            
+            {/* Recent Activity */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Activity</CardTitle>
+                <CardDescription>Your latest project updates and activities</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {recentActivities.map((activity) => (
+                    <div key={activity.id} className="flex items-start space-x-4 p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                      <div className="flex-shrink-0">
+                        <span className="text-2xl">{getActivityIcon(activity.type)}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {activity.title}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {activity.description}
+                        </p>
+                        <div className="flex items-center mt-2 space-x-2">
+                          <span className="text-xs text-gray-400">{getTimeFromNow(activity.timestamp)}</span>
+                          {activity.status && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                              activity.status === 'completed' ? 'bg-green-100 text-green-800' :
+                              activity.status === 'scheduled' ? 'bg-blue-100 text-blue-800' :
+                              activity.status === 'submitted' ? 'bg-purple-100 text-purple-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {activity.status}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-6">
+                  <Button variant="outline" className="w-full">
+                    View All Activities
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
-        {/* Recent Activity */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-            <CardDescription>Your latest actions and updates</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
+            {/* Upcoming Tasks */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Upcoming Tasks</CardTitle>
+                <CardDescription>Tasks and deliverables requiring your attention</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {upcomingTasks.map((task) => (
+                    <div key={task.id} className="flex items-start space-x-4 p-4 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors">
+                      <div className="flex-shrink-0 mt-1">
+                        <input type="checkbox" className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium text-gray-900">
+                            {task.title}
+                          </p>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(task.priority)}`}>
+                            {task.priority}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">
+                          {task.description}
+                        </p>
+                        <div className="flex items-center mt-2 space-x-4 text-xs text-gray-400">
+                          <span>Due: {task.dueDate}</span>
+                          {task.project && <span>Project: {task.project}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm text-gray-900">New client onboarded: Acme Corporation</p>
-                  <p className="text-xs text-gray-500 mt-1">2 hours ago</p>
+                <div className="mt-6">
+                  <Button className="w-full">
+                    View All Tasks
+                  </Button>
                 </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right Column - Quick Actions and Summary */}
+          <div className="space-y-8">
+            
+            {/* Quick Actions */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Quick Actions</CardTitle>
+                <CardDescription>Frequently used tools and shortcuts</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">📝</span>
+                    <span className="text-xs">New Project</span>
+                  </Button>
+                  <Button variant="outline" className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">👥</span>
+                    <span className="text-xs">Add Client</span>
+                  </Button>
+                  <Button variant="outline" className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">📊</span>
+                    <span className="text-xs">Generate Report</span>
+                  </Button>
+                  <Button variant="outline" className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">🕐</span>
+                    <span className="text-xs">Log Time</span>
+                  </Button>
+                  <Button variant="outline" className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">💼</span>
+                    <span className="text-xs">Create Proposal</span>
+                  </Button>
+                  <Button variant="outline" className="h-20 flex flex-col items-center justify-center space-y-2">
+                    <span className="text-2xl">📋</span>
+                    <span className="text-xs">Schedule Meeting</span>
+                  </Button>
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm text-gray-900">Proposal accepted by Tech Innovations Ltd</p>
-                  <p className="text-xs text-gray-500 mt-1">5 hours ago</p>
+              </CardContent>
+            </Card>
+
+            {/* Account Status */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Account Status</CardTitle>
+                <CardDescription>Your account information and settings</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">Profile Completion</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-20 bg-gray-200 rounded-full h-2">
+                        <div className="bg-blue-600 h-2 rounded-full" style={{ width: '85%' }}></div>
+                      </div>
+                      <span className="text-sm text-gray-500">85%</span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Email Verification</span>
+                      <span className={`text-sm ${user.isEmailVerified ? 'text-green-600' : 'text-red-600'}`}>
+                        {user.isEmailVerified ? '✓ Verified' : '✗ Pending'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Two-Factor Auth</span>
+                      <span className="text-sm text-yellow-600">⚠ Not Enabled</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Billing Status</span>
+                      <span className="text-sm text-green-600">✓ Active</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-200">
+                    <Button variant="outline" size="sm" className="w-full">
+                      Account Settings
+                    </Button>
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
-                  <svg className="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-                  </svg>
+              </CardContent>
+            </Card>
+
+            {/* Performance Summary */}
+            <Card>
+              <CardHeader>
+                <CardTitle>This Month's Performance</CardTitle>
+                <CardDescription>Key performance indicators for June 2025</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Revenue Target</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-16 bg-gray-200 rounded-full h-2">
+                        <div className="bg-green-500 h-2 rounded-full" style={{ width: '80%' }}></div>
+                      </div>
+                      <span className="text-sm text-gray-500">80%</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Hours Target</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-16 bg-gray-200 rounded-full h-2">
+                        <div className="bg-blue-500 h-2 rounded-full" style={{ width: '95%' }}></div>
+                      </div>
+                      <span className="text-sm text-gray-500">95%</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm">Client Satisfaction</span>
+                    <div className="flex items-center space-x-2">
+                      <div className="w-16 bg-gray-200 rounded-full h-2">
+                        <div className="bg-yellow-500 h-2 rounded-full" style={{ width: '96%' }}></div>
+                      </div>
+                      <span className="text-sm text-gray-500">96%</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-200">
+                    <p className="text-xs text-gray-500 mb-3">Compared to last month:</p>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs">Revenue</span>
+                        <span className="text-xs text-green-600">↗ +12%</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs">New Clients</span>
+                        <span className="text-xs text-green-600">↗ +3</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs">Project Completion</span>
+                        <span className="text-xs text-green-600">↗ +8%</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm text-gray-900">Meeting scheduled with Global Enterprises</p>
-                  <p className="text-xs text-gray-500 mt-1">Yesterday at 3:45 PM</p>
-                </div>
-              </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="mt-12 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-medium text-gray-900">Need assistance with your consulting practice?</h3>
+              <p className="text-sm text-gray-500 mt-1">Our support team is available to help you maximize your productivity and success.</p>
             </div>
-          </CardContent>
-        </Card>
+            <div className="flex space-x-3">
+              <Button variant="outline">
+                Contact Support
+              </Button>
+              <Button>
+                Schedule Demo
+              </Button>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
   );

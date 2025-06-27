@@ -38,16 +38,16 @@ export class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
-    const token = this.getAccessToken();
-
+    // Use the internal API routes for frontend requests
+    const url = `/api${endpoint}`;
+    
     const config: RequestInit = {
       ...options,
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
-        ...(token && { Authorization: `Bearer ${token}` }),
       },
+      credentials: 'include', // Include cookies for authentication
     };
 
     try {
@@ -138,6 +138,18 @@ export class ApiClient {
     return this.request('/auth/resend-verification', {
       method: 'POST',
       body: JSON.stringify({ email }),
+    });
+  }
+
+  // User endpoints (using your existing backend user system)
+  async getCurrentUser(): Promise<{ success: boolean; data: { user: any } }> {
+    return this.request('/users/me');
+  }
+
+  async updateCurrentUser(data: any): Promise<{ success: boolean; data: { user: any } }> {
+    return this.request('/users/me', {
+      method: 'PUT',
+      body: JSON.stringify(data),
     });
   }
 

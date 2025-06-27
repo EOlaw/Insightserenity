@@ -5,11 +5,11 @@ import type { NextRequest } from 'next/server';
 // Define public routes that don't require authentication
 const publicRoutes = [
   '/',
-  '/login',
-  '/register',
-  '/forgot-password',
-  '/reset-password',
-  '/verify-email',
+  '/auth/login',
+  '/auth/register',
+  '/auth/forgot-password',
+  '/auth/reset-password',
+  '/auth/verify-email',
   '/terms',
   '/privacy',
   '/about',
@@ -26,6 +26,7 @@ const publicApiRoutes = [
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/auth/verify-email',
+  '/api/auth/resend-verification',
 ];
 
 export function middleware(request: NextRequest) {
@@ -56,7 +57,7 @@ export function middleware(request: NextRequest) {
       // Redirect to login for web routes
       if (!pathname.startsWith('/api/')) {
         const url = request.nextUrl.clone();
-        url.pathname = '/login';
+        url.pathname = '/auth/login';  // Fixed: Use correct login path
         url.searchParams.set('redirect', pathname);
         return NextResponse.redirect(url);
       }

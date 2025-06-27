@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     // Create response with cookies
     const res = NextResponse.json(data);
 
-    // Set secure HTTP-only cookies
+    // Set secure HTTP-only cookies for authentication
     if (data.data?.tokens) {
       res.cookies.set('accessToken', data.data.tokens.accessToken, {
         httpOnly: true,

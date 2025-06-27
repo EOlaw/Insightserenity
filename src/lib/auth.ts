@@ -7,16 +7,16 @@ const REFRESH_TOKEN_KEY = 'refreshToken';
 const USER_KEY = 'user';
 
 export class AuthService {
-  static saveTokens(tokens: AuthTokens) {
-    if (typeof window !== 'undefined') {
+  static saveTokens(tokens: AuthTokens | null) {
+    if (typeof window !== 'undefined' && tokens && tokens.accessToken && tokens.refreshToken) {
       localStorage.setItem(TOKEN_KEY, tokens.accessToken);
       localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
       apiClient.setAccessToken(tokens.accessToken);
     }
   }
 
-  static saveUser(user: User) {
-    if (typeof window !== 'undefined') {
+  static saveUser(user: User | null) {
+    if (typeof window !== 'undefined' && user) {
       localStorage.setItem(USER_KEY, JSON.stringify(user));
     }
   }
@@ -63,7 +63,7 @@ export class AuthService {
 
     try {
       const response = await apiClient.refreshToken(refreshToken);
-      if (response.success && response.data) {
+      if (response.success && response.data && response.data.tokens) {
         this.saveTokens(response.data.tokens);
         this.saveUser(response.data.user);
         return true;
@@ -77,7 +77,8 @@ export class AuthService {
 
   static async validateSession(): Promise<User | null> {
     try {
-      const response = await apiClient.get<{ success: boolean; data: { user: User } }>('/auth/me');
+      // Updated to use the correct users/me endpoint
+      const response = await apiClient.get<{ success: boolean; data: { user: User } }>('/users/me');
       if (response.success && response.data) {
         this.saveUser(response.data.user);
         return response.data.user;
@@ -91,5 +92,39 @@ export class AuthService {
       }
       return null;
     }
+  }
+
+  /**
+   * Check if user needs email verification
+   * @param user User object
+   * @returns boolean indicating if verification is needed
+   */
+  static requiresEmailVerification(user: User | null): boolean {
+    return user ? !user.isEmailVerified : false;
+  }
+
+  /**
+   * Handle post-registration flow based on user state
+   * @param user User object
+   * @param tokens Authentication tokens (may be null)
+   * @returns object with next action and redirect path
+   */
+  static getPostRegistrationFlow(user: User | null, tokens: AuthTokens | null) {
+    if (!user) {
+      return { action: 'error', redirect: '/auth/register' };
+    }
+
+    if (tokens && tokens.accessToken) {
+      // Immediate authentication - user can proceed to dashboard
+      return { action: 'authenticate', redirect: '/dashboard' };
+    }
+
+    if (this.requiresEmailVerification(user)) {
+      // Email verification required
+      return { action: 'verify_email', redirect: '/auth/verify-email' };
+    }
+
+    // Account created but additional setup may be required
+    return { action: 'setup', redirect: '/auth/setup' };
   }
 }
