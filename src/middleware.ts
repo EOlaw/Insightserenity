@@ -1,21 +1,26 @@
 // src/middleware.ts
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import type { NextRequest } from 'next/request';
 
-// Define public routes that don't require authentication
-const publicRoutes = [
-  '/',
+// Define auth routes that authenticated users should not access
+const authRoutes = [
   '/auth/login',
   '/auth/register',
   '/auth/forgot-password',
   '/auth/reset-password',
   '/auth/verify-email',
+];
+
+// Define public routes that don't require authentication
+const publicRoutes = [
+  '/',
   '/terms',
   '/privacy',
   '/about',
   '/features',
   '/pricing',
   '/contact',
+  ...authRoutes, // Auth routes are still public for unauthenticated users
 ];
 
 // Define API routes that don't require authentication
@@ -32,10 +37,10 @@ const publicApiRoutes = [
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // Check if the route is public
-  const isPublicRoute = publicRoutes.includes(pathname) || 
-                       publicApiRoutes.includes(pathname) ||
-                       pathname.startsWith('/api/auth/');
+  // Check for authentication tokens
+  const accessToken = request.cookies.get('accessToken')?.value;
+  const refreshToken = request.cookies.get('refreshToken')?.value;
+  const hasAuthTokens = accessToken || refreshToken;
   
   // Check if it's a static file or Next.js internal route
   const isStaticFile = pathname.startsWith('/_next') || 
@@ -43,21 +48,33 @@ export function middleware(request: NextRequest) {
                       pathname.includes('.') ||
                       pathname.startsWith('/api/placeholder');
   
-  if (isPublicRoute || isStaticFile) {
+  if (isStaticFile) {
     return NextResponse.next();
   }
   
-  // Check for authentication
-  const accessToken = request.cookies.get('accessToken')?.value;
-  const refreshToken = request.cookies.get('refreshToken')?.value;
+  // PREVENT AUTHENTICATED USERS FROM ACCESSING AUTH PAGES
+  if (authRoutes.includes(pathname) && hasAuthTokens) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/dashboard';
+    return NextResponse.redirect(url);
+  }
   
-  // Protected routes
+  // Check if the route is public
+  const isPublicRoute = publicRoutes.includes(pathname) || 
+                       publicApiRoutes.includes(pathname) ||
+                       pathname.startsWith('/api/auth/');
+  
+  if (isPublicRoute) {
+    return NextResponse.next();
+  }
+  
+  // PROTECT PRIVATE ROUTES - Require authentication
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/api/')) {
-    if (!accessToken && !refreshToken) {
+    if (!hasAuthTokens) {
       // Redirect to login for web routes
       if (!pathname.startsWith('/api/')) {
         const url = request.nextUrl.clone();
-        url.pathname = '/auth/login';  // Fixed: Use correct login path
+        url.pathname = '/auth/login';
         url.searchParams.set('redirect', pathname);
         return NextResponse.redirect(url);
       }
@@ -68,12 +85,9 @@ export function middleware(request: NextRequest) {
         { status: 401 }
       );
     }
-    
-    // If only refresh token exists, we could trigger a refresh here
-    // but for simplicity, we'll handle it in the client
   }
   
-  // Add auth headers for API requests
+  // Add auth headers for authenticated API requests
   if (pathname.startsWith('/api/') && accessToken) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('Authorization', `Bearer ${accessToken}`);
