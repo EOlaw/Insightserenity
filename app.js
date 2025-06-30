@@ -33,6 +33,12 @@ const authRoutes = require('./server/shared/auth/routes/auth-routes');
 const userRoutes = require('./server/shared/users/routes/user-routes');
 const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
 
+// Import domain apps
+// const coreBusinessApp = require('./server/core-business/app');
+// const hostedOrganizationsApp = require('./server/hosted-organizations/app');
+// const recruitmentServicesApp = require('./server/recruitment-services/app');
+// const externalApisApp = require('./server/external-apis/app');
+
 // Middleware imports
 const errorHandler = require('./server/shared/middleware/error-handler');
 const notFoundHandler = require('./server/shared/middleware/not-found-handler');
@@ -297,9 +303,10 @@ class Application {
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
-        const baseApiPath = `${apiPrefix}`;
-        // const baseApiPath = `${apiPrefix}/${apiVersion}`;
+        // const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
+        const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
+        // Health & Status Routes (Always first for monitoring)
         this.app.get('/health', (req, res) => {
             const dbHealth = Database.getHealthStatus();
             res.status(200).json({
@@ -318,10 +325,32 @@ class Application {
             });
         });
 
+        // 2. Authentication Routes (Security first)
         this.app.use(`${baseApiPath}/auth`, authRoutes);
+        // 3. User Management Routes (Core Identity)
         this.app.use(`${baseApiPath}/users`, userRoutes);
+        // 4. Organization Management Routes (Tenant Management)
         this.app.use(`${baseApiPath}/organizations`, organizationRoutes);
+        // 5. Core Business Domain Routes
+        // this.app.use(`${baseApiPath}/core-business`, coreBusiness);
+        // 6. Hosted Organizations Domain Routes
+        // this.app.use(`${baseApiPath}/hosted-organizations`, hostedOrganizations);
+        // 7. Recruitment Services Domain Routes
+        // this.app.use(`${baseApiPath}/recruitment-services`, recruitmentServices);
+        // 8. External APIs Domain Routes
+        // this.app.use(`${baseApiPath}/external-apis`, externalAPIs);
 
+        // 9. Admin Routes (Platform administration - if exists)
+        // if (adminRoutes) {
+        //     this.app.use(`${baseApiPath}/admin`, adminRoutes);
+        // }
+
+        // // 10. Webhook Routes (External callbacks - if exists)
+        // if (webhookRoutes) {
+        //     this.app.use(`${baseApiPath}/webhooks`, webhookRoutes);
+        // }
+
+        // Development-only routes for testing authentication and tenant context
         if (config.app.env === 'development') {
             this.app.get('/test-auth', 
                 this.authManager.authenticate('jwt', { session: false }), 
