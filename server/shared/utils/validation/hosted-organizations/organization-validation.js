@@ -5,7 +5,7 @@
  */
 
 const { body, param, query, validationResult } = require('express-validator');
-const { AppError } = require('../../../shared/utils/app-error');
+const { AppError } = require('../../../../shared/utils/app-error');
 
 /**
  * Validation error handler

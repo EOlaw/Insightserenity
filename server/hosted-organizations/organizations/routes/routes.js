@@ -1,7 +1,7 @@
 /**
  * @file Hosted Organization Routes
  * @description API routes for hosted organization management with tenant integration
- * @version 3.0.0
+ * @version 3.1.0
  */
 
 const express = require('express');
@@ -9,7 +9,7 @@ const express = require('express');
 // Controllers
 const HostedOrganizationController = require('../controllers/organization-controller');
 
-// Shared Middleware
+// Authentication & Authorization Middleware
 const { authenticate, requireAuth } = require('../../../shared/middleware/auth/auth-middleware');
 const { 
   restrictTo, 
@@ -37,28 +37,41 @@ const {
   validateInvitationAccept
 } = require('../../../shared/utils/validation/hosted-organizations/organization-validation');
 
-// Rate Limiting
-const {
-  createRateLimiter,
-  organizationLimiter,
-  sensitiveOperationLimiter
-} = require('../../../shared/security/middleware/rate-limiter');
-
-// Other Middleware
+// API Middleware - Updated Structure
 const { 
   parseQueryOptions,
-  handlePagination 
-} = require('../../../shared/utils/middleware/query-middleware');
+  validateQueryParams 
+} = require('../../../shared/middleware/api/query-middleware');
+
+const {
+  parsePagination,
+  addPaginationHelpers,
+  validatePaginationAccess
+} = require('../../../shared/middleware/api/pagination-middleware');
+
 const { 
   cacheResponse, 
   clearOrganizationCache 
-} = require('../../../shared/utils/middleware/cache-middleware');
+} = require('../../../shared/middleware/api/cache-middleware');
+
+// Security Middleware - Updated Structure
+const {
+  organizationLimiter,
+  sensitiveOperationLimiter,
+  createOrganizationRateLimiter,
+  adminBypass
+} = require('../../../shared/middleware/security/rate-limiter-middleware');
+
+// Tracking Middleware - Updated Structure
 const { 
   trackAnalytics 
-} = require('../../../shared/analytics/middleware/analytics-middleware');
+} = require('../../../shared/middleware/tracking/analytics-middleware');
+
 const {
   auditLog
-} = require('../../../shared/security/middleware/audit-middleware');
+} = require('../../../shared/middleware/tracking/audit-middleware');
+
+const logger = require('../../../shared/utils/logger');
 
 const router = express.Router();
 
@@ -93,7 +106,14 @@ router.use(authenticate);
 // List user's organizations
 router.get('/',
   organizationLimiter,
-  parseQueryOptions,
+  parseQueryOptions({ 
+    allowedSortFields: ['name', 'createdAt', 'updatedAt', 'type'],
+    allowedFilterFields: ['status', 'tier', 'type', 'subscription'],
+    defaultSortBy: 'createdAt',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 20, maxLimit: 100 }),
+  addPaginationHelpers,
   cacheResponse({ ttl: 300 }), // 5 minutes
   HostedOrganizationController.listUserOrganizations
 );
@@ -120,7 +140,7 @@ router.get('/current',
 // Get organization by ID
 router.get('/:id',
   requireAuth,
-  parseQueryOptions,
+  parseQueryOptions(),
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getOrganizationById
 );
@@ -152,8 +172,15 @@ router.delete('/:id',
 router.get('/:id/team',
   requireAuth,
   requireOrganizationMember,
-  parseQueryOptions,
-  handlePagination,
+  parseQueryOptions({
+    allowedSortFields: ['name', 'role', 'joinedAt', 'status'],
+    allowedFilterFields: ['role', 'status', 'department', 'permissions'],
+    defaultSortBy: 'joinedAt',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 50, maxLimit: 200 }),
+  validatePaginationAccess(),
+  addPaginationHelpers,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getTeamMembers
 );
@@ -164,6 +191,7 @@ router.post('/:id/team/members',
   requireOrganizationAdmin,
   detectTenantContext,
   checkResourceLimit('users'), // Check tenant resource limits
+  createOrganizationRateLimiter({ points: 20, duration: 3600 }),
   validateTeamMember,
   clearOrganizationCache,
   auditLog('organization.team.add'),
@@ -241,8 +269,14 @@ router.post('/:id/subscription/cancel',
 router.get('/:id/billing/history',
   requireAuth,
   requireOrganizationAdmin,
-  parseQueryOptions,
-  handlePagination,
+  parseQueryOptions({
+    allowedSortFields: ['date', 'amount', 'status', 'type'],
+    allowedFilterFields: ['status', 'type', 'paymentMethod'],
+    defaultSortBy: 'date',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 20, maxLimit: 100 }),
+  addPaginationHelpers,
   HostedOrganizationController.getBillingHistory
 );
 
@@ -254,6 +288,13 @@ router.get('/:id/billing/history',
 router.get('/:id/domains',
   requireAuth,
   requireOrganizationMember,
+  parseQueryOptions({
+    allowedSortFields: ['domain', 'status', 'createdAt'],
+    allowedFilterFields: ['status', 'verified'],
+    defaultSortBy: 'createdAt'
+  }),
+  parsePagination({ defaultLimit: 20, maxLimit: 50 }),
+  addPaginationHelpers,
   cacheResponse({ ttl: 600 }), // 10 minutes
   HostedOrganizationController.getDomains
 );
@@ -296,6 +337,14 @@ router.get('/:id/usage',
   requireAuth,
   requireOrganizationMember,
   detectTenantContext,
+  parseQueryOptions({
+    allowedFilterFields: ['metric', 'period', 'resourceType'],
+    allowedSortFields: ['timestamp', 'value', 'metric'],
+    defaultSortBy: 'timestamp',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 100, maxLimit: 500 }),
+  addPaginationHelpers,
   cacheResponse({ ttl: 60 }), // 1 minute
   HostedOrganizationController.getResourceUsage
 );
@@ -312,7 +361,21 @@ router.get('/:id/stats',
 router.get('/:id/analytics',
   requireAuth,
   requireOrganizationMember,
-  parseQueryOptions,
+  parseQueryOptions({
+    allowedFilterFields: ['metric', 'dimension', 'period', 'granularity'],
+    allowedSortFields: ['timestamp', 'value', 'metric'],
+    defaultSortBy: 'timestamp',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 1000, maxLimit: 5000 }),
+  validatePaginationAccess({
+    maxLimitForRole: {
+      member: 1000,
+      admin: 3000,
+      owner: 5000
+    }
+  }),
+  addPaginationHelpers,
   trackAnalytics('organization.analytics.view'),
   HostedOrganizationController.getAnalytics
 );
@@ -343,8 +406,21 @@ router.put('/:id/security',
 router.get('/:id/audit-logs',
   requireAuth,
   requireOrganizationAdmin,
-  parseQueryOptions,
-  handlePagination,
+  parseQueryOptions({
+    allowedFilterFields: ['action', 'actor', 'severity', 'category', 'result'],
+    allowedSortFields: ['timestamp', 'severity', 'action', 'category'],
+    defaultSortBy: 'timestamp',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 50, maxLimit: 500 }),
+  validatePaginationAccess({
+    maxLimitForRole: {
+      admin: 500,
+      owner: 1000,
+      super_admin: 2000
+    }
+  }),
+  addPaginationHelpers,
   HostedOrganizationController.getAuditLogs
 );
 
@@ -365,6 +441,13 @@ router.post('/:id/export',
 router.get('/:id/integrations',
   requireAuth,
   requireOrganizationMember,
+  parseQueryOptions({
+    allowedFilterFields: ['status', 'type', 'category'],
+    allowedSortFields: ['name', 'status', 'lastSync', 'createdAt'],
+    defaultSortBy: 'name'
+  }),
+  parsePagination({ defaultLimit: 20, maxLimit: 100 }),
+  addPaginationHelpers,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getIntegrations
 );
@@ -432,8 +515,20 @@ router.put('/:id/branding',
 router.get('/admin/all',
   requireAuth,
   restrictTo('super_admin'),
-  parseQueryOptions,
-  handlePagination,
+  adminBypass, // Bypass rate limiting for admin users
+  parseQueryOptions({
+    allowedSortFields: ['name', 'createdAt', 'tier', 'status', 'memberCount'],
+    allowedFilterFields: ['status', 'tier', 'type', 'subscription'],
+    defaultSortBy: 'createdAt',
+    defaultSortOrder: 'desc'
+  }),
+  parsePagination({ defaultLimit: 50, maxLimit: 500 }),
+  validatePaginationAccess({
+    maxLimitForRole: {
+      super_admin: 1000
+    }
+  }),
+  addPaginationHelpers,
   HostedOrganizationController.getAllOrganizations
 );
 
@@ -441,6 +536,7 @@ router.get('/admin/all',
 router.get('/admin/metrics',
   requireAuth,
   restrictTo('super_admin'),
+  adminBypass,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getPlatformMetrics
 );

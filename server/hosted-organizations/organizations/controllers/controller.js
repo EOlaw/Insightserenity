@@ -4,7 +4,7 @@
  * @version 3.0.0
  */
 
-const HostedOrganizationService = require('../services/organization-service');
+const HostedOrganizationService = require('../services/service');
 const { AppError } = require('../../../shared/utils/app-error');
 const logger = require('../../../shared/utils/logger');
 const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organization-constants');
