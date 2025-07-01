@@ -111,6 +111,75 @@ const requireOrganizationAdmin = (req, res, next) => {
 };
 
 /**
+ * Require organization member role
+ * Checks if user is a member of the organization (includes owner, admin, and regular members)
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next function
+ */
+const requireOrganizationMember = (req, res, next) => {
+  if (!req.organization) {
+    return next(new AppError('Organization context required', 400));
+  }
+  
+  if (!req.user) {
+    return next(new AuthorizationError('Authentication required'));
+  }
+  
+  // System admins always have access
+  if (['admin', 'super_admin'].includes(req.user.role?.primary)) {
+    return next();
+  }
+  
+  // Check if user is owner
+  const isOwner = req.organization.team?.owner?.toString() === req.user._id.toString();
+  
+  // Check if user is admin
+  const isAdmin = req.organization.team?.admins?.some(
+    admin => admin.user.toString() === req.user._id.toString()
+  );
+  
+  // Check if user is a regular member
+  const isMember = req.organization.team?.members?.some(
+    member => member.user.toString() === req.user._id.toString()
+  );
+  
+  // Alternative: Check through user's organizations array
+  const belongsToOrg = req.user.organizations?.some(
+    org => org.organization.toString() === req.organization._id.toString()
+  );
+  
+  if (!isOwner && !isAdmin && !isMember && !belongsToOrg) {
+    logger.warn('Access denied - not a member of organization', {
+      userId: req.user._id,
+      organizationId: req.organization._id,
+      path: req.originalUrl
+    });
+    
+    return next(new AuthorizationError('You must be a member of this organization to access this resource'));
+  }
+  
+  // Set user's role in the organization for downstream use
+  if (isOwner) {
+    req.organizationRole = 'owner';
+    req.userOrganizationPermissions = ['*']; // All permissions
+  } else if (isAdmin) {
+    req.organizationRole = 'admin';
+    req.userOrganizationPermissions = ['read', 'write', 'delete', 'manage_team', 'manage_settings'];
+  } else {
+    // Find the specific member to get their role and permissions
+    const memberRecord = req.organization.team?.members?.find(
+      member => member.user.toString() === req.user._id.toString()
+    );
+    
+    req.organizationRole = memberRecord?.role || 'member';
+    req.userOrganizationPermissions = memberRecord?.permissions || ['read', 'write'];
+  }
+  
+  next();
+};
+
+/**
  * Check specific permission for organization member
  * @param {string} permission - Required permission
  * @returns {Function} - Express middleware
@@ -310,6 +379,7 @@ module.exports = {
   checkOrganizationContext,
   requireOrganizationOwner,
   requireOrganizationAdmin,
+  requireOrganizationMember,
   requireOrganizationPermission,
   requireResourceOwnership,
   roleBasedRateLimit,

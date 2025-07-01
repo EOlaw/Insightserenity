@@ -10,14 +10,14 @@ const express = require('express');
 const OrganizationTenantController = require('../controllers/organization-tenant-controller');
 
 // Shared Middleware
-const { authenticate, requireAuth } = require('../../../shared/middleware/auth/auth-middleware');
+const { authenticate, requireAuth } = require('../../shared/middleware/auth/auth-middleware');
 const { 
   restrictTo, 
   checkPermission,
   requirePlatformAdmin,
   requireTenantOwner,
   requireTenantAdmin
-} = require('../../../shared/middleware/auth/authorization-middleware');
+} = require('../../shared/middleware/auth/authorization-middleware');
 
 // Validation
 const {

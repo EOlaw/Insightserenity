@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const slugify = require('slugify');
 
-const { AppError } = require('../../../shared/utils/app-error');
+const { AppError } = require('../../shared/utils/app-error');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
 /**

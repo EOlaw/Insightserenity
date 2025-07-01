@@ -25,7 +25,7 @@ const {
   requireTenantContext,
   validateTenantAccess,
   checkResourceLimit
-} = require('../../../organization-tenants/middleware/tenant-middleware');
+} = require('../../../organization-tenants/middleware/tenant-context-middleware');
 
 // Validation Middleware
 const {
@@ -35,7 +35,7 @@ const {
   validateTeamMember,
   validateDomain,
   validateInvitationAccept
-} = require('../validation/organization-validation');
+} = require('../../../shared/utils/validation/hosted-organizations/organization-validation');
 
 // Rate Limiting
 const {

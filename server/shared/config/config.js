@@ -1,11 +1,10 @@
 /**
  * @file Configuration Module
- * @description Centralized configuration management for the application
- * @version 3.0.0
+ * @description Centralized configuration management for the application with multi-tenant support
+ * @version 4.0.0
  */
 
 const path = require('path');
-
 const dotenv = require('dotenv');
 
 // Load environment variables
@@ -24,7 +23,7 @@ const parseArray = (value, defaultValue = []) => {
     return value.split(',').map(item => item.trim()).filter(Boolean);
 };
 
-// Helper function to get environment variable with default (ROBUST VERSION)
+// Helper function to get environment variable with default
 const getEnv = (key, defaultValue = '') => {
     const value = process.env[key];
     if (value === undefined || value === null || value === '') {
@@ -33,11 +32,10 @@ const getEnv = (key, defaultValue = '') => {
     return value;
 };
 
-// Helper function to get required environment variable (SAFER VERSION)
+// Helper function to get required environment variable
 const getRequiredEnv = (key) => {
     const value = process.env[key];
     if (!value || value.trim() === '') {
-        // console.warn(`⚠️  Required environment variable ${key} is not set or empty`);
         return ''; // Return empty string instead of throwing
     }
     return value;
@@ -61,7 +59,7 @@ const config = {
         trustProxy: parseBoolean(getEnv('TRUST_PROXY', 'true'))
     },
 
-    // ADD THIS SERVER SECTION:
+    // Server configuration
     server: {
         name: getEnv('APP_NAME', 'InsightSerenity'),
         isProduction: getEnv('NODE_ENV', 'development') === 'production',
@@ -72,7 +70,7 @@ const config = {
         protocol: getEnv('APP_URL', 'https://localhost:5001').startsWith('https') ? 'https' : 'http'
     },
 
-    // Client configuration (for auth controller compatibility)
+    // Client configuration
     client: {
         url: getEnv('CLIENT_URL', 'http://localhost:5001')
     },
@@ -81,6 +79,32 @@ const config = {
     domain: {
         primary: getEnv('DOMAIN', 'localhost'),
         clientUrl: getEnv('CLIENT_URL', 'http://localhost:5001')
+    },
+
+    // Platform configuration
+    platform: {
+        domain: getEnv('PLATFORM_DOMAIN', 'localhost:5001'),
+        appDomain: getEnv('APP_DOMAIN', 'localhost:5001'),
+        subdomainPattern: getEnv('PLATFORM_SUBDOMAIN_PATTERN', '*.localhost:5001'),
+        name: getEnv('PLATFORM_NAME', 'InsightSerenity Platform'),
+        supportEmail: getEnv('PLATFORM_SUPPORT_EMAIL', 'support@insightserenity.com'),
+        maxOrgsPerUser: parseInt(getEnv('PLATFORM_MAX_ORGS_PER_USER', '3'), 10),
+        maxTrialExtensions: parseInt(getEnv('PLATFORM_MAX_TRIAL_EXTENSIONS', '1'), 10),
+        trialExtensionDays: parseInt(getEnv('PLATFORM_TRIAL_EXTENSION_DAYS', '7'), 10)
+    },
+
+    // Tenant configuration
+    tenant: {
+        isolationMode: getEnv('TENANT_ISOLATION_MODE', 'subdomain'),
+        databasePrefix: getEnv('TENANT_DATABASE_PREFIX', 'tenant_'),
+        cachePrefix: getEnv('TENANT_CACHE_PREFIX', 'tenant:'),
+        defaultPlan: getEnv('DEFAULT_TENANT_PLAN', 'starter'),
+        trialDays: parseInt(getEnv('TENANT_TRIAL_DAYS', '14'), 10),
+        resourceCheckInterval: parseInt(getEnv('TENANT_RESOURCE_CHECK_INTERVAL', '300000'), 10),
+        detection: {
+            header: getEnv('TENANT_DETECTION_HEADER', 'X-Tenant-ID'),
+            priority: parseArray(getEnv('TENANT_DETECTION_PRIORITY', 'subdomain,header,path'))
+        }
     },
 
     // Database configuration
@@ -113,13 +137,13 @@ const config = {
             audience: getEnv('REFRESH_TOKEN_AUDIENCE', 'InsightSerenity-Users')
         },
         
-        // CRITICAL: Direct legacy properties (ensuring they have values)
+        // Direct legacy properties
         jwtSecret: getEnv('ACCESS_TOKEN_SECRET') || getEnv('JWT_SECRET') || 'fallback-secret-development-only',
         jwtRefreshSecret: getEnv('REFRESH_TOKEN_SECRET') || getEnv('JWT_REFRESH_SECRET') || 'fallback-refresh-secret-development-only',
         accessTokenExpiry: getEnv('ACCESS_TOKEN_EXPIRES_IN', '15m'),
         refreshTokenExpiry: getEnv('REFRESH_TOKEN_EXPIRES_IN', '7d'),
         
-        // Session durations (CRITICAL - These were missing and causing your error)
+        // Session durations
         sessionDuration: parseInt(getEnv('AUTH_SESSION_DURATION', '86400000'), 10), // 24 hours in milliseconds
         rememberMeDuration: parseInt(getEnv('AUTH_REMEMBER_ME_DURATION', '2592000000'), 10), // 30 days in milliseconds
         
@@ -391,7 +415,103 @@ const config = {
         defaultRole: getEnv('DEFAULT_ORG_ROLE', 'member'),
         invitationExpiry: parseInt(getEnv('ORG_INVITATION_EXPIRY', '604800000'), 10),
         maxOrgsPerUser: parseInt(getEnv('MAX_ORGS_PER_USER', '10'), 10),
-        restrictOneOrgPerUser: parseBoolean(getEnv('RESTRICT_ONE_ORG_PER_USER', 'false'))
+        restrictOneOrgPerUser: parseBoolean(getEnv('RESTRICT_ONE_ORG_PER_USER', 'false')),
+        
+        // Resource limits
+        defaultLimits: {
+            users: parseInt(getEnv('ORG_DEFAULT_USER_LIMIT', '5'), 10),
+            storageGB: parseInt(getEnv('ORG_DEFAULT_STORAGE_LIMIT_GB', '5'), 10),
+            apiCalls: parseInt(getEnv('ORG_DEFAULT_API_CALLS_LIMIT', '10000'), 10),
+            projects: parseInt(getEnv('ORG_DEFAULT_PROJECTS_LIMIT', '10'), 10),
+            customDomains: parseInt(getEnv('ORG_DEFAULT_CUSTOM_DOMAINS_LIMIT', '1'), 10)
+        },
+        
+        // Feature flags
+        features: {
+            customDomains: parseBoolean(getEnv('ORG_ENABLE_CUSTOM_DOMAINS', 'true')),
+            sso: parseBoolean(getEnv('ORG_ENABLE_SSO', 'true')),
+            apiKeys: parseBoolean(getEnv('ORG_ENABLE_API_KEYS', 'true')),
+            webhooks: parseBoolean(getEnv('ORG_ENABLE_WEBHOOKS', 'true')),
+            auditLogs: parseBoolean(getEnv('ORG_ENABLE_AUDIT_LOGS', 'true')),
+            dataExport: parseBoolean(getEnv('ORG_ENABLE_DATA_EXPORT', 'true'))
+        },
+        
+        // Security settings
+        security: {
+            enforce2FA: parseBoolean(getEnv('ORG_ENFORCE_2FA', 'false')),
+            ipWhitelistEnabled: parseBoolean(getEnv('ORG_IP_WHITELIST_ENABLED', 'false')),
+            sessionTimeout: parseInt(getEnv('ORG_SESSION_TIMEOUT', '7200000'), 10),
+            passwordPolicyEnforce: parseBoolean(getEnv('ORG_PASSWORD_POLICY_ENFORCE', 'true'))
+        },
+        
+        // Deletion policy
+        deletion: {
+            softDeleteEnabled: parseBoolean(getEnv('ORG_SOFT_DELETE_ENABLED', 'true')),
+            gracePeriodDays: parseInt(getEnv('ORG_DELETION_GRACE_PERIOD_DAYS', '30'), 10),
+            permanentDeleteAfterDays: parseInt(getEnv('ORG_PERMANENT_DELETE_AFTER_DAYS', '90'), 10)
+        },
+        
+        // Webhook settings
+        webhooks: {
+            timeout: parseInt(getEnv('ORG_WEBHOOK_TIMEOUT', '10000'), 10),
+            maxRetries: parseInt(getEnv('ORG_WEBHOOK_MAX_RETRIES', '3'), 10),
+            retryDelay: parseInt(getEnv('ORG_WEBHOOK_RETRY_DELAY', '5000'), 10)
+        }
+    },
+
+    // Subscription configuration
+    subscription: {
+        gracePeriodDays: parseInt(getEnv('SUBSCRIPTION_GRACE_PERIOD_DAYS', '7'), 10),
+        downgradeAllowed: parseBoolean(getEnv('SUBSCRIPTION_DOWNGRADE_ALLOWED', 'true')),
+        prorateCharges: parseBoolean(getEnv('SUBSCRIPTION_PRORATE_CHARGES', 'true')),
+        
+        // Plan configurations
+        plans: {
+            starter: {
+                name: 'Starter',
+                price: { monthly: 0, yearly: 0 },
+                limits: {
+                    users: 5,
+                    storageGB: 5,
+                    apiCallsPerMonth: 10000,
+                    projects: 10,
+                    customDomains: 1
+                }
+            },
+            growth: {
+                name: 'Growth',
+                price: { monthly: 49, yearly: 470 },
+                limits: {
+                    users: 20,
+                    storageGB: 50,
+                    apiCallsPerMonth: 100000,
+                    projects: 50,
+                    customDomains: 3
+                }
+            },
+            professional: {
+                name: 'Professional',
+                price: { monthly: 149, yearly: 1430 },
+                limits: {
+                    users: 100,
+                    storageGB: 200,
+                    apiCallsPerMonth: 1000000,
+                    projects: -1, // unlimited
+                    customDomains: 10
+                }
+            },
+            enterprise: {
+                name: 'Enterprise',
+                price: { monthly: -1, yearly: -1 }, // custom pricing
+                limits: {
+                    users: -1,
+                    storageGB: -1,
+                    apiCallsPerMonth: -1,
+                    projects: -1,
+                    customDomains: -1
+                }
+            }
+        }
     },
 
     // Payment configuration
@@ -482,21 +602,6 @@ if (config.app.env === 'production') {
         }
     });
 }
-
-// ==============================================
-// DEBUG: Log authentication configuration values
-// ==============================================
-// console.log('🔍 DEBUG: Authentication Config Values:');
-// console.log('ACCESS_TOKEN_SECRET from env:', process.env.ACCESS_TOKEN_SECRET?.substring(0, 20) + '...');
-// console.log('REFRESH_TOKEN_SECRET from env:', process.env.REFRESH_TOKEN_SECRET?.substring(0, 20) + '...');
-// console.log('JWT_SECRET from env:', process.env.JWT_SECRET?.substring(0, 20) + '...');
-// console.log('JWT_REFRESH_SECRET from env:', process.env.JWT_REFRESH_SECRET?.substring(0, 20) + '...');
-
-// console.log('🔍 config.auth.jwtSecret:', config.auth.jwtSecret?.substring(0, 20) + '...');
-// console.log('🔍 config.auth.jwtRefreshSecret:', config.auth.jwtRefreshSecret?.substring(0, 20) + '...');
-// console.log('🔍 config.auth.accessTokenExpiry:', config.auth.accessTokenExpiry);
-// console.log('🔍 config.auth.refreshTokenExpiry:', config.auth.refreshTokenExpiry);
-console.log('==============================================');
 
 // Freeze configuration to prevent modifications
 Object.freeze(config);

@@ -32,6 +32,60 @@ const authenticate = (strategy = 'jwt') => {
 };
 
 /**
+ * Require authentication - stricter version of verifyToken
+ * Ensures user is authenticated and has valid session
+ */
+const requireAuth = asyncHandler(async (req, res, next) => {
+  // First verify the token
+  await verifyToken(req, res, async (error) => {
+    if (error) {
+      return next(error);
+    }
+    
+    // Additional checks for authenticated users
+    if (!req.user) {
+      return next(new AppError('Authentication required', 401));
+    }
+    
+    // Check if user account is verified (if email verification is enabled)
+    if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true' && !req.user.emailVerified) {
+      return next(new AppError('Please verify your email address to continue', 403));
+    }
+    
+    // Check if user has completed profile setup (optional)
+    if (req.user.profileStatus === 'incomplete') {
+      // Allow access to profile completion routes
+      const allowedPaths = ['/api/v1/users/profile', '/api/v1/auth/logout'];
+      if (!allowedPaths.some(path => req.path.startsWith(path))) {
+        return res.status(403).json({
+          status: 'error',
+          message: 'Please complete your profile setup',
+          redirectTo: '/profile/setup'
+        });
+      }
+    }
+    
+    // Check if password reset is required
+    if (req.user.requirePasswordChange) {
+      const allowedPaths = ['/api/v1/auth/change-password', '/api/v1/auth/logout'];
+      if (!allowedPaths.some(path => req.path.startsWith(path))) {
+        return res.status(403).json({
+          status: 'error',
+          message: 'Password change required',
+          redirectTo: '/auth/change-password'
+        });
+      }
+    }
+    
+    // Update last activity
+    req.user.lastActivity = new Date();
+    await req.user.save({ validateBeforeSave: false });
+    
+    next();
+  });
+});
+
+/**
  * Verify JWT token middleware
  */
 const verifyToken = asyncHandler(async (req, res, next) => {
@@ -358,6 +412,7 @@ const checkCorsCredentials = (req, res, next) => {
 
 module.exports = {
   authenticate,
+  requireAuth,
   verifyToken,
   restrictTo,
   restrictToOrganization,

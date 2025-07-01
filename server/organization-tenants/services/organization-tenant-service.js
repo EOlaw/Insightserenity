@@ -8,11 +8,11 @@ const mongoose = require('mongoose');
 const crypto = require('crypto');
 
 const OrganizationTenant = require('../models/organization-tenant-model');
-const { AppError, ValidationError } = require('../../../shared/utils/app-error');
-const logger = require('../../../shared/utils/logger');
-const CacheService = require('../../../shared/services/cache-service');
-const EventEmitter = require('../../../shared/services/event-service');
-const EmailService = require('../../../shared/services/email-service');
+const { AppError, ValidationError } = require('../../shared/utils/app-error');
+const logger = require('../../shared/utils/logger');
+// const CacheService = require('../../shared/services/cache-service');
+// const EventEmitter = require('../../shared/services/event-service');
+const EmailService = require('../../shared/services/email-service');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
 /**
@@ -21,8 +21,8 @@ const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
  */
 class OrganizationTenantService {
   constructor() {
-    this.cache = new CacheService();
-    this.eventEmitter = new EventEmitter();
+    // this.cache = new CacheService();
+    // this.eventEmitter = new EventEmitter();
   }
 
   /**

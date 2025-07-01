@@ -5,8 +5,8 @@
  */
 
 const OrganizationTenantService = require('../services/organization-tenant-service');
-const { AppError } = require('../../../shared/utils/app-error');
-const logger = require('../../../shared/utils/logger');
+const { AppError } = require('../../shared/utils/app-error');
+const logger = require('../../shared/utils/logger');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
 /**

@@ -31,7 +31,9 @@ const AuthStrategiesManager = require('./server/shared/security/passport/strateg
 // Import routes
 const authRoutes = require('./server/shared/auth/routes/auth-routes');
 const userRoutes = require('./server/shared/users/routes/user-routes');
-const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
+const organizationRoutes = require('./server/organization-tenants/routes/organization-tenant-routes');
+
+// const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
 
 // Import domain apps
 // const coreBusinessApp = require('./server/core-business/app');
@@ -303,8 +305,8 @@ class Application {
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
-        // const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
-        const baseApiPath = `${apiPrefix}/${apiVersion}`;
+        const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
+        // const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
         // Health & Status Routes (Always first for monitoring)
         this.app.get('/health', (req, res) => {
