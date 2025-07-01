@@ -5,7 +5,7 @@
  */
 
 const { body, param, query, validationResult } = require('express-validator');
-const { AppError } = require('../../../shared/utils/app-error');
+const { ValidationError, ErrorFactory } = require('../../shared/utils/app-error');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
 /**
@@ -15,17 +15,13 @@ const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   
   if (!errors.isEmpty()) {
-    const errorMessages = errors.array().map(error => ({
+    const formattedErrors = errors.array().map(error => ({
       field: error.param,
       message: error.msg,
       value: error.value
     }));
     
-    return res.status(400).json({
-      status: 'error',
-      message: 'Validation failed',
-      errors: errorMessages
-    });
+    throw new ValidationError('Validation failed', formattedErrors);
   }
   
   next();
@@ -157,7 +153,7 @@ const validateTenantUpdate = [
     .custom((value, { req }) => {
       // Only platform admins can change status
       if (!req.user.roles.includes('admin') && !req.user.roles.includes('super_admin')) {
-        throw new Error('Only platform administrators can change tenant status');
+        throw new ValidationError('Only platform administrators can change tenant status');
       }
       return true;
     }),
@@ -166,7 +162,7 @@ const validateTenantUpdate = [
   body(['tenantId', 'tenantCode', 'owner', 'createdAt', 'createdBy'])
     .custom((value) => {
       if (value !== undefined) {
-        throw new Error('This field cannot be updated');
+        throw new ValidationError('This field cannot be updated');
       }
       return true;
     }),
@@ -198,7 +194,7 @@ const validateSubscriptionUpdate = [
     .isISO8601().withMessage('Invalid date format')
     .custom((value) => {
       if (new Date(value) <= new Date()) {
-        throw new Error('End date must be in the future');
+        throw new ValidationError('End date must be in the future');
       }
       return true;
     }),
@@ -226,7 +222,7 @@ const validateDomainAdd = [
       // Check for reserved domains
       const reservedDomains = ['localhost', 'example.com', 'test.com'];
       if (reservedDomains.includes(value)) {
-        throw new Error('This domain is reserved and cannot be used');
+        throw new ValidationError('This domain is reserved and cannot be used');
       }
       return true;
     }),
@@ -249,7 +245,7 @@ const validateSecuritySettings = [
       const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
       const invalidIPs = value.filter(ip => !ipRegex.test(ip));
       if (invalidIPs.length > 0) {
-        throw new Error(`Invalid IP addresses: ${invalidIPs.join(', ')}`);
+        throw new ValidationError(`Invalid IP addresses: ${invalidIPs.join(', ')}`);
       }
       return true;
     }),
@@ -346,7 +342,7 @@ const validateSearchQuery = [
       const validStatuses = Object.values(TENANT_CONSTANTS.TENANT_STATUS);
       const invalidStatuses = statuses.filter(s => !validStatuses.includes(s));
       if (invalidStatuses.length > 0) {
-        throw new Error(`Invalid status values: ${invalidStatuses.join(', ')}`);
+        throw new ValidationError(`Invalid status values: ${invalidStatuses.join(', ')}`);
       }
       return true;
     }),
@@ -358,7 +354,7 @@ const validateSearchQuery = [
       const validPlans = Object.values(TENANT_CONSTANTS.SUBSCRIPTION_PLANS);
       const invalidPlans = plans.filter(p => !validPlans.includes(p));
       if (invalidPlans.length > 0) {
-        throw new Error(`Invalid plan values: ${invalidPlans.join(', ')}`);
+        throw new ValidationError(`Invalid plan values: ${invalidPlans.join(', ')}`);
       }
       return true;
     }),
@@ -369,7 +365,7 @@ const validateSearchQuery = [
       const industries = Array.isArray(value) ? value : [value];
       const invalidIndustries = industries.filter(i => !TENANT_CONSTANTS.INDUSTRIES.includes(i));
       if (invalidIndustries.length > 0) {
-        throw new Error(`Invalid industry values: ${invalidIndustries.join(', ')}`);
+        throw new ValidationError(`Invalid industry values: ${invalidIndustries.join(', ')}`);
       }
       return true;
     }),
@@ -381,7 +377,7 @@ const validateSearchQuery = [
       const validSizes = Object.values(TENANT_CONSTANTS.COMPANY_SIZES);
       const invalidSizes = sizes.filter(s => !validSizes.includes(s));
       if (invalidSizes.length > 0) {
-        throw new Error(`Invalid size values: ${invalidSizes.join(', ')}`);
+        throw new ValidationError(`Invalid size values: ${invalidSizes.join(', ')}`);
       }
       return true;
     }),
@@ -407,7 +403,10 @@ const validateSearchQuery = [
  */
 
 /**
- * Validate branding colors
+ * Validate branding colors configuration
+ * @param {Object} colors - Color configuration object
+ * @returns {boolean} Returns true if valid
+ * @throws {ValidationError} If validation fails
  */
 const validateBrandingColors = (colors) => {
   const colorRegex = /^#[0-9A-F]{6}$/i;
@@ -415,7 +414,7 @@ const validateBrandingColors = (colors) => {
   
   for (const field of colorFields) {
     if (colors[field] && !colorRegex.test(colors[field])) {
-      throw new Error(`Invalid color format for ${field}. Use hex format (e.g., #FFFFFF)`);
+      throw new ValidationError(`Invalid color format for ${field}. Use hex format (e.g., #FFFFFF)`);
     }
   }
   
@@ -423,7 +422,10 @@ const validateBrandingColors = (colors) => {
 };
 
 /**
- * Validate feature flags
+ * Validate feature flags configuration
+ * @param {Object} features - Feature flags object
+ * @returns {boolean} Returns true if valid
+ * @throws {ValidationError} If validation fails
  */
 const validateFeatureFlags = (features) => {
   const validFeatures = Object.values(TENANT_CONSTANTS.FEATURES);
@@ -431,13 +433,13 @@ const validateFeatureFlags = (features) => {
   
   const invalidFeatures = providedFeatures.filter(f => !validFeatures.includes(f));
   if (invalidFeatures.length > 0) {
-    throw new Error(`Invalid features: ${invalidFeatures.join(', ')}`);
+    throw new ValidationError(`Invalid features: ${invalidFeatures.join(', ')}`);
   }
   
-  // All feature values must be boolean
+  // Verify all feature values are boolean
   for (const [feature, value] of Object.entries(features)) {
     if (typeof value !== 'boolean') {
-      throw new Error(`Feature ${feature} must have a boolean value`);
+      throw new ValidationError(`Feature ${feature} must have a boolean value`);
     }
   }
   
@@ -445,30 +447,85 @@ const validateFeatureFlags = (features) => {
 };
 
 /**
- * Validate webhook configuration
+ * Validate webhook configuration settings
+ * @param {Object} webhook - Webhook configuration object
+ * @returns {boolean} Returns true if valid
+ * @throws {ValidationError} If validation fails
  */
 const validateWebhookConfig = (webhook) => {
   if (!webhook.enabled) return true;
   
   if (!webhook.url) {
-    throw new Error('Webhook URL is required when webhooks are enabled');
+    throw new ValidationError('Webhook URL is required when webhooks are enabled');
   }
   
   try {
     new URL(webhook.url);
   } catch (error) {
-    throw new Error('Invalid webhook URL format');
+    throw new ValidationError('Invalid webhook URL format');
   }
   
   if (!webhook.secret || webhook.secret.length < 16) {
-    throw new Error('Webhook secret must be at least 16 characters');
+    throw new ValidationError('Webhook secret must be at least 16 characters');
   }
   
   if (webhook.events && webhook.events.length > 0) {
     const validEvents = Object.values(TENANT_CONSTANTS.WEBHOOK_EVENTS);
     const invalidEvents = webhook.events.filter(e => !validEvents.includes(e));
     if (invalidEvents.length > 0) {
-      throw new Error(`Invalid webhook events: ${invalidEvents.join(', ')}`);
+      throw new ValidationError(`Invalid webhook events: ${invalidEvents.join(', ')}`);
+    }
+  }
+  
+  return true;
+};
+
+/**
+ * Validate tenant branding configuration
+ * @param {Object} branding - Branding configuration object
+ * @returns {boolean} Returns true if valid
+ * @throws {ValidationError} If validation fails
+ */
+const validateBrandingConfig = (branding) => {
+  if (branding.colors) {
+    validateBrandingColors(branding.colors);
+  }
+  
+  if (branding.logo && branding.logo.url) {
+    try {
+      new URL(branding.logo.url);
+    } catch (error) {
+      throw new ValidationError('Invalid logo URL format');
+    }
+  }
+  
+  if (branding.favicon && branding.favicon.url) {
+    try {
+      new URL(branding.favicon.url);
+    } catch (error) {
+      throw new ValidationError('Invalid favicon URL format');
+    }
+  }
+  
+  return true;
+};
+
+/**
+ * Validate resource usage limits
+ * @param {Object} limits - Resource limits object
+ * @param {Object} currentUsage - Current resource usage
+ * @returns {boolean} Returns true if valid
+ * @throws {ValidationError} If validation fails
+ */
+const validateResourceUsage = (limits, currentUsage) => {
+  const resourceTypes = ['users', 'storage', 'apiCalls', 'projects'];
+  
+  for (const resourceType of resourceTypes) {
+    const limit = limits[resourceType]?.max;
+    const usage = currentUsage[resourceType]?.current || 0;
+    
+    if (limit !== -1 && limit > 0 && usage > limit) {
+      throw new ValidationError(`${resourceType} usage (${usage}) exceeds limit (${limit})`);
     }
   }
   
@@ -487,5 +544,7 @@ module.exports = {
   // Export custom validators for use in other modules
   validateBrandingColors,
   validateFeatureFlags,
-  validateWebhookConfig
+  validateWebhookConfig,
+  validateBrandingConfig,
+  validateResourceUsage
 };

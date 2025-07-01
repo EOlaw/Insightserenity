@@ -67,18 +67,18 @@ app.use(express.json({ limit: config.multiTenant?.requestLimit || '50mb' })); //
 app.use(express.urlencoded({ extended: true, limit: config.multiTenant?.requestLimit || '50mb' }));
 
 // Import route modules
-const organizationRoutes = require('./organizations/routes/organization-routes');
-const subscriptionRoutes = require('./subscriptions/routes/subscription-routes');
-const billingRoutes = require('./billing/routes/billing-routes');
-const tenantRoutes = require('./tenants/routes/tenant-routes');
-const brandingRoutes = require('./branding/routes/branding-routes');
-const domainRoutes = require('./domains/routes/domain-routes');
-const integrationRoutes = require('./integrations/routes/integration-routes');
-const auditRoutes = require('./audit/routes/audit-routes');
-const usageRoutes = require('./usage/routes/usage-routes');
-const migrationRoutes = require('./migrations/routes/migration-routes');
-const backupRoutes = require('./backups/routes/backup-routes');
-const notificationRoutes = require('./notifications/routes/notification-routes');
+const organizationRoutes = require('./organizations/routes/routes');
+// const subscriptionRoutes = require('./subscriptions/routes/subscription-routes');
+// const billingRoutes = require('./billing/routes/billing-routes');
+// const tenantRoutes = require('./tenants/routes/tenant-routes');
+// const brandingRoutes = require('./branding/routes/branding-routes');
+// const domainRoutes = require('./domains/routes/domain-routes');
+// const integrationRoutes = require('./integrations/routes/integration-routes');
+// const auditRoutes = require('./audit/routes/audit-routes');
+// const usageRoutes = require('./usage/routes/usage-routes');
+// const migrationRoutes = require('./migrations/routes/migration-routes');
+// const backupRoutes = require('./backups/routes/backup-routes');
+// const notificationRoutes = require('./notifications/routes/notification-routes');
 
 // Multi-tenant middleware
 const { detectTenant } = require('./middleware/tenant-detection');
@@ -122,41 +122,41 @@ logger.info('Hosted Organizations module initialized', {
  * Mount routes in order of dependency and importance
  */
 
-// 1. Tenant Management (Foundation for multi-tenancy)
-app.use('/tenants', tenantRoutes);
+// // 1. Tenant Management (Foundation for multi-tenancy)
+// app.use('/tenants', tenantRoutes);
 
 // 2. Organization Management (Core entity)
 app.use('/organizations', organizationRoutes);
 
-// 3. Subscription Management (Business model)
-app.use('/subscriptions', validateSubscription, subscriptionRoutes);
+// // 3. Subscription Management (Business model)
+// app.use('/subscriptions', validateSubscription, subscriptionRoutes);
 
-// 4. Billing Management (Revenue operations)
-app.use('/billing', validateSubscription, billingRoutes);
+// // 4. Billing Management (Revenue operations)
+// app.use('/billing', validateSubscription, billingRoutes);
 
-// 5. Usage Tracking (Metering and limits)
-app.use('/usage', trackUsage, usageRoutes);
+// // 5. Usage Tracking (Metering and limits)
+// app.use('/usage', trackUsage, usageRoutes);
 
-// 6. Domain Management (Custom domains)
-app.use('/domains', enforceQuotas, domainRoutes);
+// // 6. Domain Management (Custom domains)
+// app.use('/domains', enforceQuotas, domainRoutes);
 
-// 7. Branding & Customization (White-label support)
-app.use('/branding', brandingRoutes);
+// // 7. Branding & Customization (White-label support)
+// app.use('/branding', brandingRoutes);
 
-// 8. Integrations (Third-party connections)
-app.use('/integrations', enforceQuotas, integrationRoutes);
+// // 8. Integrations (Third-party connections)
+// app.use('/integrations', enforceQuotas, integrationRoutes);
 
-// 9. Audit Trails (Compliance and security)
-app.use('/audit', auditRoutes);
+// // 9. Audit Trails (Compliance and security)
+// app.use('/audit', auditRoutes);
 
-// 10. Data Migration (Import/Export)
-app.use('/migrations', organizationRateLimiter, migrationRoutes);
+// // 10. Data Migration (Import/Export)
+// app.use('/migrations', organizationRateLimiter, migrationRoutes);
 
-// 11. Backup Management (Data protection)
-app.use('/backups', organizationRateLimiter, backupRoutes);
+// // 11. Backup Management (Data protection)
+// app.use('/backups', organizationRateLimiter, backupRoutes);
 
-// 12. Notifications (Organization-level notifications)
-app.use('/notifications', notificationRoutes);
+// // 12. Notifications (Organization-level notifications)
+// app.use('/notifications', notificationRoutes);
 
 // Apply organization-specific rate limiting
 app.use(organizationRateLimiter);

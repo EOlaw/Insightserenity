@@ -13,10 +13,7 @@ const OrganizationTenantController = require('../controllers/organization-tenant
 const { authenticate, requireAuth } = require('../../shared/middleware/auth/auth-middleware');
 const { 
   restrictTo, 
-  checkPermission,
-  requirePlatformAdmin,
-  requireTenantOwner,
-  requireTenantAdmin
+  checkPermission
 } = require('../../shared/middleware/auth/authorization-middleware');
 
 // Validation
@@ -34,23 +31,44 @@ const {
 const { 
   detectTenantContext,
   requireTenantContext,
-  validateTenantAccess
+  validateTenantAccess,
+  requireTenantOwner,
+  requireTenantAdmin,
+  requirePlatformAdmin
 } = require('../middleware/tenant-context-middleware');
 
+// Add this diagnostic code right after your imports
+console.log('=== MIDDLEWARE DIAGNOSTIC ===');
+console.log('detectTenantContext:', typeof detectTenantContext);
+console.log('requireTenantContext:', typeof requireTenantContext);
+console.log('validateTenantAccess:', typeof validateTenantAccess);
+console.log('requireTenantOwner:', typeof requireTenantOwner);
+console.log('requireTenantAdmin:', typeof requireTenantAdmin);
+console.log('requirePlatformAdmin:', typeof requirePlatformAdmin);
+console.log('OrganizationTenantController.updateSettings:', typeof OrganizationTenantController.updateSettings);
+console.log('=== END DIAGNOSTIC ===');
+
 // Rate Limiting
-const { createRateLimiter } = require('../../../shared/security/middleware/rate-limiter');
+// const { createRateLimitMiddleware } = require('../../shared/security/middleware/rate-limiter');
+const { createRateLimitMiddleware } = require('../../shared/utils/rate-limiter');
 
 // Create rate limiters
-const tenantCreateLimiter = createRateLimiter({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // 5 tenant creations per hour
-  message: 'Too many tenant creation attempts'
+const tenantCreateLimiter = createRateLimitMiddleware('tenant_create', {
+  points: 5, // 5 tenant creations
+  duration: 3600, // Per hour (in seconds)
+  blockDuration: 3600 // Block for 1 hour
 });
 
-const sensitiveOperationLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  message: 'Too many sensitive operation attempts'
+const sensitiveOperationLimiter = createRateLimitMiddleware('sensitive_ops', {
+  points: 10, // 10 operations
+  duration: 900, // Per 15 minutes (in seconds)
+  blockDuration: 900 // Block for 15 minutes
+});
+
+const exportRateLimiter = createRateLimitMiddleware('tenant_export', {
+  points: 5, // 5 exports
+  duration: 86400, // Per day (in seconds)
+  blockDuration: 86400 // Block for 1 day
 });
 
 const router = express.Router();
@@ -86,7 +104,7 @@ router.patch('/current/security',
   detectTenantContext,
   requireTenantContext,
   requireTenantOwner,
-  requireAuth({ verify2FA: true }),
+  requireAuth,
   sensitiveOperationLimiter,
   validateSecuritySettings,
   OrganizationTenantController.updateSecuritySettings
@@ -221,7 +239,7 @@ router.patch('/:id/settings',
 router.patch('/:id/security',
   validateTenantAccess,
   requireTenantOwner,
-  requireAuth({ verify2FA: true }),
+  requireAuth,
   sensitiveOperationLimiter,
   validateSecuritySettings,
   OrganizationTenantController.updateSecuritySettings
@@ -239,11 +257,7 @@ router.patch('/:id/branding',
 router.get('/:id/export',
   validateTenantAccess,
   requireTenantOwner,
-  createRateLimiter({
-    windowMs: 24 * 60 * 60 * 1000, // 24 hours
-    max: 5, // 5 exports per day
-    message: 'Export limit exceeded'
-  }),
+  exportRateLimiter,
   OrganizationTenantController.exportTenantData
 );
 

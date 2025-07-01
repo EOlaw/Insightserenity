@@ -37,7 +37,7 @@ const organizationRoutes = require('./server/organization-tenants/routes/organiz
 
 // Import domain apps
 // const coreBusinessApp = require('./server/core-business/app');
-// const hostedOrganizationsApp = require('./server/hosted-organizations/app');
+const hostedOrganizations = require('./server/hosted-organizations/app');
 // const recruitmentServicesApp = require('./server/recruitment-services/app');
 // const externalApisApp = require('./server/external-apis/app');
 
@@ -336,7 +336,7 @@ class Application {
         // 5. Core Business Domain Routes
         // this.app.use(`${baseApiPath}/core-business`, coreBusiness);
         // 6. Hosted Organizations Domain Routes
-        // this.app.use(`${baseApiPath}/hosted-organizations`, hostedOrganizations);
+        this.app.use(`${baseApiPath}/hosted-organizations`, hostedOrganizations);
         // 7. Recruitment Services Domain Routes
         // this.app.use(`${baseApiPath}/recruitment-services`, recruitmentServices);
         // 8. External APIs Domain Routes

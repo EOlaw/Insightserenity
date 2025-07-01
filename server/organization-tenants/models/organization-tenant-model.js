@@ -11,101 +11,10 @@ const slugify = require('slugify');
 const { AppError } = require('../../shared/utils/app-error');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
-/**
- * Tenant Settings Schema
- */
-const tenantSettingsSchema = new mongoose.Schema({
-  features: {
-    multiLanguage: { type: Boolean, default: false },
-    advancedAnalytics: { type: Boolean, default: false },
-    customIntegrations: { type: Boolean, default: false },
-    whiteLabel: { type: Boolean, default: false },
-    sso: { type: Boolean, default: false },
-    apiAccess: { type: Boolean, default: true },
-    customReports: { type: Boolean, default: false },
-    dataExport: { type: Boolean, default: true }
-  },
-  security: {
-    enforceIPWhitelist: { type: Boolean, default: false },
-    ipWhitelist: [{ type: String }],
-    enforce2FA: { type: Boolean, default: false },
-    passwordPolicy: {
-      minLength: { type: Number, default: 8 },
-      requireUppercase: { type: Boolean, default: true },
-      requireLowercase: { type: Boolean, default: true },
-      requireNumbers: { type: Boolean, default: true },
-      requireSpecialChars: { type: Boolean, default: false },
-      expiryDays: { type: Number, default: 0 } // 0 means no expiry
-    },
-    sessionTimeout: { type: Number, default: 1800 }, // 30 minutes in seconds
-    maxLoginAttempts: { type: Number, default: 5 }
-  },
-  notifications: {
-    email: {
-      systemAlerts: { type: Boolean, default: true },
-      usageAlerts: { type: Boolean, default: true },
-      billingAlerts: { type: Boolean, default: true },
-      securityAlerts: { type: Boolean, default: true }
-    },
-    webhook: {
-      enabled: { type: Boolean, default: false },
-      url: { type: String },
-      secret: { type: String },
-      events: [{ type: String }]
-    }
-  },
-  dataRetention: {
-    auditLogDays: { type: Number, default: 365 },
-    activityLogDays: { type: Number, default: 90 },
-    deletedDataDays: { type: Number, default: 30 }
-  }
-});
-
-/**
- * Resource Limits Schema
- */
-const resourceLimitsSchema = new mongoose.Schema({
-  users: { 
-    max: { type: Number, default: -1 }, // -1 means unlimited
-    current: { type: Number, default: 0 }
-  },
-  storage: { 
-    maxGB: { type: Number, default: -1 },
-    currentBytes: { type: Number, default: 0 }
-  },
-  apiCalls: {
-    maxPerMonth: { type: Number, default: -1 },
-    currentMonth: { type: Number, default: 0 }
-  },
-  projects: {
-    max: { type: Number, default: -1 },
-    current: { type: Number, default: 0 }
-  },
-  customDomains: {
-    max: { type: Number, default: 1 },
-    current: { type: Number, default: 0 }
-  }
-});
-
-/**
- * Billing Information Schema
- */
-const billingInfoSchema = new mongoose.Schema({
-  customerId: { type: String }, // Stripe/payment processor customer ID
-  subscriptionId: { type: String },
-  paymentMethodId: { type: String },
-  billingEmail: { type: String },
-  billingAddress: {
-    line1: String,
-    line2: String,
-    city: String,
-    state: String,
-    postalCode: String,
-    country: String
-  },
-  taxId: { type: String },
-  invoicePrefix: { type: String }
-});
+// Import Schema Modules
+const tenantSettingsSchema = require('./schemas/tenant-settings-schema');
+const resourceLimitsSchema = require('./schemas/resource-limits-schema');
+const billingInfoSchema = require('./schemas/billing-info-schema');
 
 /**
  * Organization Tenant Schema
@@ -219,13 +128,13 @@ const organizationTenantSchema = new mongoose.Schema({
     customTerms: { type: mongoose.Schema.Types.Mixed }
   },
   
-  // Resource Management
+  // Resource Management (imported schema)
   resourceLimits: resourceLimitsSchema,
   
-  // Billing
+  // Billing (imported schema)
   billing: billingInfoSchema,
   
-  // Settings
+  // Settings (imported schema)
   settings: tenantSettingsSchema,
   
   // Branding

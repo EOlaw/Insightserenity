@@ -39,20 +39,20 @@ app.use(express.json({ limit: config.app.requestLimit || '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: config.app.requestLimit || '10mb' }));
 
 // Import route modules
-const consultantRoutes = require('./consultants/routes/consultant-routes');
-const projectRoutes = require('./projects/routes/project-routes');
-const teamRoutes = require('./teams/routes/team-routes');
-const serviceRoutes = require('./services/routes/service-routes');
+// const consultantRoutes = require('./consultants/routes/consultant-routes');
+// const projectRoutes = require('./projects/routes/project-routes');
+// const teamRoutes = require('./teams/routes/team-routes');
+// const serviceRoutes = require('./services/routes/service-routes');
 const clientRoutes = require('./clients/routes/client-routes');
-const proposalRoutes = require('./proposals/routes/proposal-routes');
-const contractRoutes = require('./contracts/routes/contract-routes');
-const deliverableRoutes = require('./deliverables/routes/deliverable-routes');
-const timesheetRoutes = require('./timesheets/routes/timesheet-routes');
-const expenseRoutes = require('./expenses/routes/expense-routes');
-const invoiceRoutes = require('./invoices/routes/invoice-routes');
-const reportRoutes = require('./reports/routes/report-routes');
-const knowledgeRoutes = require('./knowledge/routes/knowledge-routes');
-const trainingRoutes = require('./training/routes/training-routes');
+// const proposalRoutes = require('./proposals/routes/proposal-routes');
+// const contractRoutes = require('./contracts/routes/contract-routes');
+// const deliverableRoutes = require('./deliverables/routes/deliverable-routes');
+// const timesheetRoutes = require('./timesheets/routes/timesheet-routes');
+// const expenseRoutes = require('./expenses/routes/expense-routes');
+// const invoiceRoutes = require('./invoices/routes/invoice-routes');
+// const reportRoutes = require('./reports/routes/report-routes');
+// const knowledgeRoutes = require('./knowledge/routes/knowledge-routes');
+// const trainingRoutes = require('./training/routes/training-routes');
 
 // Core business middleware
 const { checkBusinessContext } = require('../shared/middleware/business-context');
@@ -93,45 +93,45 @@ logger.info('Core Business module initialized', {
  * Order matters for middleware application and route precedence
  */
 
-// 1. Consultant Management (Foundation of consultancy business)
-app.use('/consultants', consultantRoutes);
+// // 1. Consultant Management (Foundation of consultancy business)
+// app.use('/consultants', consultantRoutes);
 
 // 2. Client Management (Who we serve)
 app.use('/clients', clientRoutes);
 
-// 3. Service Catalog (What we offer)
-app.use('/services', serviceRoutes);
+// // 3. Service Catalog (What we offer)
+// app.use('/services', serviceRoutes);
 
-// 4. Team Management (How we organize)
-app.use('/teams', teamRoutes);
+// // 4. Team Management (How we organize)
+// app.use('/teams', teamRoutes);
 
-// 5. Project Management (Core operations)
-app.use('/projects', projectRoutes);
+// // 5. Project Management (Core operations)
+// app.use('/projects', projectRoutes);
 
-// 6. Proposal Management (Business development)
-app.use('/proposals', proposalRoutes);
+// // 6. Proposal Management (Business development)
+// app.use('/proposals', proposalRoutes);
 
-// 7. Contract Management (Legal framework)
-app.use('/contracts', contractRoutes);
+// // 7. Contract Management (Legal framework)
+// app.use('/contracts', contractRoutes);
 
-// 8. Deliverable Management (Work products)
-app.use('/deliverables', deliverableRoutes);
+// // 8. Deliverable Management (Work products)
+// app.use('/deliverables', deliverableRoutes);
 
-// 9. Time & Expense Tracking (Resource management)
-app.use('/timesheets', timesheetRoutes);
-app.use('/expenses', expenseRoutes);
+// // 9. Time & Expense Tracking (Resource management)
+// app.use('/timesheets', timesheetRoutes);
+// app.use('/expenses', expenseRoutes);
 
-// 10. Financial Management (Billing & invoicing)
-app.use('/invoices', invoiceRoutes);
+// // 10. Financial Management (Billing & invoicing)
+// app.use('/invoices', invoiceRoutes);
 
-// 11. Reporting & Analytics (Business intelligence)
-app.use('/reports', reportRoutes);
+// // 11. Reporting & Analytics (Business intelligence)
+// app.use('/reports', reportRoutes);
 
-// 12. Knowledge Management (Intellectual capital)
-app.use('/knowledge', knowledgeRoutes);
+// // 12. Knowledge Management (Intellectual capital)
+// app.use('/knowledge', knowledgeRoutes);
 
-// 13. Training & Development (Capability building)
-app.use('/training', trainingRoutes);
+// // 13. Training & Development (Capability building)
+// app.use('/training', trainingRoutes);
 
 // Apply audit logging to all routes
 app.use(auditLog('core-business'));
