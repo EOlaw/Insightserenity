@@ -663,4 +663,5 @@ hostedOrganizationSchema.plugin(require('mongoose-lean-virtuals'));
 /**
  * Export Model
  */
-module.exports = mongoose.model('HostedOrganization', hostedOrganizationSchema);
+const HostedOrganization = mongoose.model('HostedOrganization', hostedOrganizationSchema);
+module.exports = HostedOrganization;

@@ -1,7 +1,7 @@
 /**
  * @file Hosted Organizations Module App
  * @description Express application for multi-tenant hosted organization management
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 const express = require('express');
@@ -80,15 +80,44 @@ const organizationRoutes = require('./organizations/routes/routes');
 // const backupRoutes = require('./backups/routes/backup-routes');
 // const notificationRoutes = require('./notifications/routes/notification-routes');
 
-// Multi-tenant middleware
-const { detectTenant } = require('./middleware/tenant-detection');
-const { enforceQuotas } = require('./middleware/quota-enforcement');
-const { trackUsage } = require('./middleware/usage-tracking');
-const { validateSubscription } = require('./middleware/subscription-validation');
-const { organizationRateLimiter } = require('./middleware/organization-rate-limiter');
+// Multi-tenant middleware - Updated imports
+const { 
+  detectTenant, 
+  requireTenantContext 
+} = require('../shared/middleware/hosted-organizations/tenant-detection');
+
+const { 
+  enforceQuotas,
+  enforceAPIQuotas,
+  enforceStorageQuotas 
+} = require('../shared/middleware/hosted-organizations/quota-enforcement');
+
+const { 
+  trackUsage,
+  trackAPIUsage,
+  trackAllUsage 
+} = require('../shared/middleware/hosted-organizations/usage-tracking');
+
+const { 
+  validateSubscription,
+  requireActiveSubscription,
+  requirePaidSubscription 
+} = require('../shared/middleware/hosted-organizations/subscription-validation');
+
+const { 
+  organizationRateLimiter,
+  generalAPIRateLimiter,
+  sensitiveOperationsRateLimiter
+} = require('../shared/middleware/hosted-organizations/organization-rate-limiter');
 
 // Apply tenant detection globally for this module
 app.use(detectTenant);
+
+// Apply general API rate limiting
+app.use(generalAPIRateLimiter);
+
+// Apply usage tracking for all requests
+app.use(trackAPIUsage);
 
 // Health check with tenant awareness
 app.get('/health', (req, res) => {
@@ -122,47 +151,95 @@ logger.info('Hosted Organizations module initialized', {
  * Mount routes in order of dependency and importance
  */
 
-// // 1. Tenant Management (Foundation for multi-tenancy)
-// app.use('/tenants', tenantRoutes);
+// 1. Organization Management (Core entity) - with subscription validation
+app.use('/organizations', 
+  requireActiveSubscription, // Ensure active subscription for organization operations
+  organizationRoutes
+);
 
-// 2. Organization Management (Core entity)
-app.use('/organizations', organizationRoutes);
+// // 2. Subscription Management (Business model) - with enhanced tracking
+// app.use('/subscriptions', 
+//   validateSubscription, 
+//   trackAllUsage,
+//   subscriptionRoutes
+// );
 
-// // 3. Subscription Management (Business model)
-// app.use('/subscriptions', validateSubscription, subscriptionRoutes);
+// // 3. Billing Management (Revenue operations) - with strict rate limiting
+// app.use('/billing', 
+//   requirePaidSubscription, 
+//   sensitiveOperationsRateLimiter,
+//   trackUsage({ resources: ['billing_operations'] }),
+//   billingRoutes
+// );
 
-// // 4. Billing Management (Revenue operations)
-// app.use('/billing', validateSubscription, billingRoutes);
+// // 4. Usage Tracking (Metering and limits)
+// app.use('/usage', 
+//   trackUsage({ resources: ['usage_queries'] }), 
+//   usageRoutes
+// );
 
-// // 5. Usage Tracking (Metering and limits)
-// app.use('/usage', trackUsage, usageRoutes);
+// // 5. Domain Management (Custom domains) - with quota enforcement
+// app.use('/domains', 
+//   enforceQuotas({ resource: 'domains' }),
+//   sensitiveOperationsRateLimiter,
+//   domainRoutes
+// );
 
-// // 6. Domain Management (Custom domains)
-// app.use('/domains', enforceQuotas, domainRoutes);
+// // 6. Branding & Customization (White-label support)
+// app.use('/branding', 
+//   requirePaidSubscription,
+//   brandingRoutes
+// );
 
-// // 7. Branding & Customization (White-label support)
-// app.use('/branding', brandingRoutes);
+// // 7. Integrations (Third-party connections) - with integration quotas
+// app.use('/integrations', 
+//   enforceQuotas({ resource: 'integrations' }),
+//   trackUsage({ resources: ['integration_calls'] }),
+//   integrationRoutes
+// );
 
-// // 8. Integrations (Third-party connections)
-// app.use('/integrations', enforceQuotas, integrationRoutes);
+// // 8. Audit Trails (Compliance and security)
+// app.use('/audit', 
+//   requirePaidSubscription,
+//   auditRoutes
+// );
 
-// // 9. Audit Trails (Compliance and security)
-// app.use('/audit', auditRoutes);
+// // 9. Data Migration (Import/Export) - with strict rate limiting
+// app.use('/migrations', 
+//   sensitiveOperationsRateLimiter,
+//   enforceStorageQuotas,
+//   trackUsage({ resources: ['migration_operations'] }),
+//   migrationRoutes
+// );
 
-// // 10. Data Migration (Import/Export)
-// app.use('/migrations', organizationRateLimiter, migrationRoutes);
+// // 10. Backup Management (Data protection)
+// app.use('/backups', 
+//   requirePaidSubscription,
+//   sensitiveOperationsRateLimiter,
+//   enforceStorageQuotas,
+//   backupRoutes
+// );
 
-// // 11. Backup Management (Data protection)
-// app.use('/backups', organizationRateLimiter, backupRoutes);
-
-// // 12. Notifications (Organization-level notifications)
-// app.use('/notifications', notificationRoutes);
-
-// Apply organization-specific rate limiting
-app.use(organizationRateLimiter);
+// // 11. Notifications (Organization-level notifications)
+// app.use('/notifications', 
+//   trackUsage({ resources: ['notification_sends'] }),
+//   notificationRoutes
+// );
 
 // Module-specific error handling
 app.use((err, req, res, next) => {
+    // Log error with tenant context
+    logger.error('Hosted Organizations module error', {
+        error: err.message,
+        stack: err.stack,
+        type: err.type,
+        tenantId: req.tenantId,
+        organizationId: req.organizationId,
+        path: req.path,
+        method: req.method,
+        userId: req.user?._id
+    });
+
     if (err.type === 'TenantNotFound') {
         return res.status(404).json({
             status: 'error',
@@ -178,6 +255,39 @@ app.use((err, req, res, next) => {
             type: 'subscription_expired',
             message: 'Organization subscription has expired',
             code: 'SUB_EXPIRED',
+            upgradeUrl: '/billing/upgrade',
+            subscription: err.subscription
+        });
+    }
+
+    if (err.type === 'SubscriptionRequired') {
+        return res.status(402).json({
+            status: 'error',
+            type: 'subscription_required',
+            message: 'An active subscription is required to access this feature',
+            code: 'SUB_REQUIRED',
+            upgradeUrl: '/billing/upgrade'
+        });
+    }
+
+    if (err.type === 'PlanUpgradeRequired') {
+        return res.status(402).json({
+            status: 'error',
+            type: 'plan_upgrade_required',
+            message: 'Your current plan does not include this feature',
+            code: 'PLAN_UPGRADE_REQUIRED',
+            upgradeUrl: '/billing/upgrade',
+            subscription: err.subscription
+        });
+    }
+
+    if (err.type === 'FeatureNotAvailable') {
+        return res.status(403).json({
+            status: 'error',
+            type: 'feature_not_available',
+            message: 'This feature is not available on your current plan',
+            code: 'FEATURE_NOT_AVAILABLE',
+            features: err.features,
             upgradeUrl: '/billing/upgrade'
         });
     }
@@ -193,6 +303,16 @@ app.use((err, req, res, next) => {
             upgradeUrl: '/billing/upgrade'
         });
     }
+
+    if (err.type === 'RateLimitExceeded') {
+        return res.status(429).json({
+            status: 'error',
+            type: 'rate_limit_exceeded',
+            message: err.message,
+            code: 'RATE_LIMIT_EXCEEDED',
+            rateLimit: err.rateLimit
+        });
+    }
     
     if (err.type === 'DomainConflict') {
         return res.status(409).json({
@@ -200,6 +320,16 @@ app.use((err, req, res, next) => {
             type: 'domain_conflict',
             message: 'Domain is already registered to another organization',
             code: 'DOMAIN_CONFLICT'
+        });
+    }
+
+    if (err.type === 'PaymentOverdue') {
+        return res.status(402).json({
+            status: 'error',
+            type: 'payment_overdue',
+            message: 'Your account has overdue payments',
+            code: 'PAYMENT_OVERDUE',
+            upgradeUrl: '/billing/payment'
         });
     }
     
@@ -214,7 +344,6 @@ app.use('*', (req, res) => {
         message: `Hosted organization route ${req.originalUrl} not found`,
         tenant: req.tenantId || 'none',
         availableEndpoints: [
-            '/tenants',
             '/organizations',
             '/subscriptions',
             '/billing',

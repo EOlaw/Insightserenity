@@ -7,7 +7,7 @@
 const express = require('express');
 
 // Controllers
-const HostedOrganizationController = require('../controllers/organization-controller');
+const HostedOrganizationController = require('../controllers/controller');
 
 // Authentication & Authorization Middleware
 const { authenticate, requireAuth } = require('../../../shared/middleware/auth/auth-middleware');
