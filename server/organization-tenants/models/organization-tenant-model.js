@@ -128,8 +128,32 @@ const organizationTenantSchema = new mongoose.Schema({
     customTerms: { type: mongoose.Schema.Types.Mixed }
   },
   
-  // Resource Management (imported schema)
-  resourceLimits: resourceLimitsSchema,
+  // Resource Limits and Usage Tracking (Management)
+  resourceLimits: {
+    type: resourceLimitsSchema,
+    default: () => ({
+      users: { 
+        max: -1, // -1 means unlimited
+        current: 0 
+      },
+      storage: { 
+        maxGB: -1,
+        currentBytes: 0 
+      },
+      apiCalls: {
+        maxPerMonth: -1,
+        currentMonth: 0 
+      },
+      projects: {
+        max: -1,
+        current: 0 
+      },
+      customDomains: {
+        max: 1,
+        current: 0 
+      }
+    })
+  },
   
   // Billing (imported schema)
   billing: billingInfoSchema,
@@ -326,6 +350,9 @@ organizationTenantSchema.virtual('primaryDomain').get(function() {
 /**
  * Pre-save Middleware
  */
+/**
+ * Pre-save Middleware
+ */
 organizationTenantSchema.pre('save', async function(next) {
   try {
     // Generate slug if not provided
@@ -347,6 +374,74 @@ organizationTenantSchema.pre('save', async function(next) {
       this.tenantId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
     
+    // Initialize resourceLimits structure if it doesn't exist or is incomplete
+    if (!this.resourceLimits) {
+      this.resourceLimits = {};
+    }
+
+    // Define default resource limit structures
+    const defaultResourceLimits = {
+      users: { max: -1, current: 0 },
+      storage: { maxGB: -1, currentBytes: 0 },
+      apiCalls: { maxPerMonth: -1, currentMonth: 0 },
+      projects: { max: -1, current: 0 },
+      customDomains: { max: 1, current: 0 }
+    };
+
+    // Ensure all required resource limit structures exist
+    Object.keys(defaultResourceLimits).forEach(resource => {
+      if (!this.resourceLimits[resource]) {
+        this.resourceLimits[resource] = { ...defaultResourceLimits[resource] };
+      } else {
+        // Ensure both max and current properties exist
+        if (typeof this.resourceLimits[resource].max === 'undefined') {
+          this.resourceLimits[resource].max = defaultResourceLimits[resource].max || -1;
+        }
+        if (typeof this.resourceLimits[resource].current === 'undefined') {
+          this.resourceLimits[resource].current = defaultResourceLimits[resource].current || 0;
+        }
+        // Handle storage-specific properties
+        if (resource === 'storage') {
+          if (typeof this.resourceLimits[resource].maxGB === 'undefined') {
+            this.resourceLimits[resource].maxGB = defaultResourceLimits[resource].maxGB || -1;
+          }
+          if (typeof this.resourceLimits[resource].currentBytes === 'undefined') {
+            this.resourceLimits[resource].currentBytes = defaultResourceLimits[resource].currentBytes || 0;
+          }
+        }
+        // Handle apiCalls-specific properties
+        if (resource === 'apiCalls') {
+          if (typeof this.resourceLimits[resource].maxPerMonth === 'undefined') {
+            this.resourceLimits[resource].maxPerMonth = defaultResourceLimits[resource].maxPerMonth || -1;
+          }
+          if (typeof this.resourceLimits[resource].currentMonth === 'undefined') {
+            this.resourceLimits[resource].currentMonth = defaultResourceLimits[resource].currentMonth || 0;
+          }
+        }
+      }
+    });
+
+    // Set resource limits based on subscription plan for new tenants or plan changes
+    if (this.isNew || this.isModified('subscription.plan')) {
+      const planLimits = TENANT_CONSTANTS.PLAN_LIMITS[this.subscription?.plan];
+      
+      if (planLimits) {
+        this.resourceLimits.users.max = planLimits.users;
+        this.resourceLimits.storage.maxGB = planLimits.storageGB;
+        this.resourceLimits.apiCalls.maxPerMonth = planLimits.apiCallsPerMonth;
+        this.resourceLimits.projects.max = planLimits.projects;
+        this.resourceLimits.customDomains.max = planLimits.customDomains;
+      }
+    }
+
+    // Initialize subscription structure if not present
+    if (!this.subscription) {
+      this.subscription = {
+        status: TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
+        plan: TENANT_CONSTANTS.SUBSCRIPTION_PLANS.TRIAL
+      };
+    }
+    
     // Set trial end date for new trials
     if (this.isNew && this.subscription.status === 'trial' && !this.subscription.trialEndsAt) {
       this.subscription.trialEndsAt = new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000);
@@ -366,11 +461,57 @@ organizationTenantSchema.pre('save', async function(next) {
           break;
       }
     }
+
+    // Initialize flags if not present
+    if (!this.flags) {
+      this.flags = {
+        isActive: false,
+        isVerified: false,
+        isLocked: false,
+        isFeatured: false,
+        requiresAttention: false,
+        hasCustomContract: false
+      };
+    }
+
+    // Validate resource limits consistency
+    Object.keys(this.resourceLimits).forEach(resource => {
+      const limit = this.resourceLimits[resource];
+      
+      // Ensure current usage doesn't exceed max limits (except for unlimited -1)
+      if (resource === 'storage') {
+        if (limit.maxGB !== -1 && limit.currentBytes > (limit.maxGB * 1024 * 1024 * 1024)) {
+          throw new Error(`Storage usage exceeds limit for tenant ${this.tenantCode}`);
+        }
+      } else if (resource === 'apiCalls') {
+        if (limit.maxPerMonth !== -1 && limit.currentMonth > limit.maxPerMonth) {
+          throw new Error(`API calls usage exceeds monthly limit for tenant ${this.tenantCode}`);
+        }
+      } else {
+        if (limit.max !== -1 && limit.current > limit.max) {
+          throw new Error(`${resource} usage exceeds limit for tenant ${this.tenantCode}`);
+        }
+      }
+      
+      // Ensure current usage is never negative
+      if (resource === 'storage') {
+        if (limit.currentBytes < 0) limit.currentBytes = 0;
+      } else if (resource === 'apiCalls') {
+        if (limit.currentMonth < 0) limit.currentMonth = 0;
+      } else {
+        if (limit.current < 0) limit.current = 0;
+      }
+    });
     
     // Encrypt sensitive data
-    if (this.isModified('database.connectionString') && this.database.connectionString) {
+    if (this.isModified('database.connectionString') && this.database?.connectionString) {
       // Encrypt connection string (implement encryption service)
       // this.database.connectionString = await EncryptionService.encrypt(this.database.connectionString);
+    }
+
+    // Update the updatedAt timestamp for manual saves
+    if (!this.isNew) {
+      this.updatedAt = new Date();
     }
     
     next();

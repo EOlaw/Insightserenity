@@ -55,7 +55,15 @@ class OrganizationTenantService {
         status: TENANT_CONSTANTS.TENANT_STATUS.PENDING,
         'flags.isActive': false,
         'subscription.status': TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
-        'subscription.trialEndsAt': new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000)
+        'subscription.trialEndsAt': new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
+        // Initialize resourceLimits with proper structure
+        resourceLimits: {
+          users: { max: -1, current: 0 },
+          storage: { maxGB: -1, currentBytes: 0 },
+          apiCalls: { maxPerMonth: -1, currentMonth: 0 },
+          projects: { max: -1, current: 0 },
+          customDomains: { max: 1, current: 0 }
+        }
       });
 
       // Set resource limits based on plan
@@ -761,13 +769,49 @@ class OrganizationTenantService {
   _setResourceLimits(tenant) {
     const planLimits = TENANT_CONSTANTS.PLAN_LIMITS[tenant.subscription.plan];
     
-    if (planLimits) {
-      tenant.resourceLimits.users.max = planLimits.users;
-      tenant.resourceLimits.storage.maxGB = planLimits.storageGB;
-      tenant.resourceLimits.apiCalls.maxPerMonth = planLimits.apiCallsPerMonth;
-      tenant.resourceLimits.projects.max = planLimits.projects;
-      tenant.resourceLimits.customDomains.max = planLimits.customDomains;
+    if (!planLimits) {
+      logger.warn('No plan limits found for plan', { plan: tenant.subscription.plan });
+      return;
     }
+
+    // Initialize resourceLimits structure if it doesn't exist
+    if (!tenant.resourceLimits) {
+      tenant.resourceLimits = {};
+    }
+
+    // Initialize each resource type with default structure
+    if (!tenant.resourceLimits.users) {
+      tenant.resourceLimits.users = { max: -1, current: 0 };
+    }
+
+    if (!tenant.resourceLimits.storage) {
+      tenant.resourceLimits.storage = { maxGB: -1, currentBytes: 0 };
+    }
+
+    if (!tenant.resourceLimits.apiCalls) {
+      tenant.resourceLimits.apiCalls = { maxPerMonth: -1, currentMonth: 0 };
+    }
+
+    if (!tenant.resourceLimits.projects) {
+      tenant.resourceLimits.projects = { max: -1, current: 0 };
+    }
+
+    if (!tenant.resourceLimits.customDomains) {
+      tenant.resourceLimits.customDomains = { max: 1, current: 0 };
+    }
+
+    // Now safely set the limits
+    tenant.resourceLimits.users.max = planLimits.users;
+    tenant.resourceLimits.storage.maxGB = planLimits.storageGB;
+    tenant.resourceLimits.apiCalls.maxPerMonth = planLimits.apiCallsPerMonth;
+    tenant.resourceLimits.projects.max = planLimits.projects;
+    tenant.resourceLimits.customDomains.max = planLimits.customDomains;
+
+    logger.debug('Resource limits set successfully', { 
+      tenantId: tenant._id || tenant.tenantId,
+      plan: tenant.subscription.plan,
+      limits: tenant.resourceLimits
+    });
   }
 
   /**
