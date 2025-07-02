@@ -103,7 +103,7 @@ router.post('/invitations/accept',
 /**
  * All routes below require authentication
  */
-router.use(authenticate);
+// router.use(authenticate());
 
 /**
  * Organization Management Routes
@@ -126,10 +126,10 @@ router.get('/',
 
 // Create new organization (creates tenant infrastructure too)
 router.post('/',
-  // authenticate(),
-  // sensitiveOperationLimiter,
-  // validateOrganizationCreate,
-  // auditLog('organization.create'),
+  authenticate(),
+  sensitiveOperationLimiter,
+  validateOrganizationCreate,
+  auditLog('organization.create'),
   HostedOrganizationController.createOrganization
 );
 
