@@ -153,7 +153,7 @@ logger.info('Hosted Organizations module initialized', {
 
 // 1. Organization Management (Core entity) - with subscription validation
 app.use('/organizations', 
-  requireActiveSubscription, // Ensure active subscription for organization operations
+  // requireActiveSubscription, // Ensure active subscription for organization operations
   organizationRoutes
 );
 

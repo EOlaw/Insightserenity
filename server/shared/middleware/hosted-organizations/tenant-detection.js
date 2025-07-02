@@ -12,30 +12,172 @@ const OrganizationTenantService = require('../../../organization-tenants/service
  * Detect tenant context for hosted organizations
  * Extracts tenant information from various sources and sets it in request context
  */
+// const detectTenant = async (req, res, next) => {
+//   try {
+//     // Skip tenant detection for certain routes
+//     const skipPaths = [
+//       '/health', 
+//       '/ping', 
+//       '/metrics',
+//       '/api/v1/hosted-organizations'
+//     ];
+//     // Add debugging
+//     console.log('=== TENANT DETECTION DEBUG ===');
+//     console.log('req.path:', req.path);
+//     console.log('req.originalUrl:', req.originalUrl);
+//     console.log('skipPaths:', skipPaths);
+//     console.log('should skip:', skipPaths.some(path => req.path.startsWith(path)));
+//     console.log('=== END DEBUG ===');
+//     if (skipPaths.some(path => req.path.startsWith(path))) {
+//       console.log('SKIPPING tenant detection for path:', req.path);
+//       return next();
+//     }
+
+//     // Extract tenant ID from multiple sources (priority order)
+//     const tenantId = extractTenantId(req);
+    
+//     if (!tenantId) {
+//       // No tenant context found - continue without setting tenant
+//       logger.debug('No tenant context detected', {
+//         path: req.path,
+//         method: req.method,
+//         headers: {
+//           'x-tenant-id': req.headers['x-tenant-id'],
+//           'x-organization-id': req.headers['x-organization-id'],
+//           host: req.headers.host
+//         }
+//       });
+//       return next();
+//     }
+
+//     // Add this check before calling getTenantById
+//     if (req.path.startsWith('/api/v1/hosted-organizations')) {
+//       logger.debug('Skipping tenant validation for hosted organization creation');
+//       return next();
+//     }
+
+//     // Validate and load tenant information
+//     try {
+//       const tenant = await OrganizationTenantService.getTenantById(tenantId, {
+//         includeInactive: false,
+//         lean: true
+//       });
+
+//       if (!tenant) {
+//         logger.warn('Invalid tenant ID provided', {
+//           tenantId,
+//           path: req.path,
+//           method: req.method,
+//           userId: req.user?._id
+//         });
+//         return next(new AppError('Invalid tenant context', 400));
+//       }
+
+//       // Check tenant status
+//       if (tenant.status !== 'active') {
+//         logger.warn('Inactive tenant access attempt', {
+//           tenantId,
+//           status: tenant.status,
+//           path: req.path,
+//           userId: req.user?._id
+//         });
+//         return next(new AppError('Tenant is not active', 403));
+//       }
+
+//       // Set tenant context in request
+//       req.tenantId = tenantId;
+//       req.tenant = tenant;
+//       req.organizationId = tenant.organizationId;
+
+//       // Set response headers for client reference
+//       res.setHeader('X-Tenant-ID', tenantId);
+//       res.setHeader('X-Organization-ID', tenant.organizationId);
+
+//       logger.debug('Tenant context established', {
+//         tenantId,
+//         organizationId: tenant.organizationId,
+//         tenantName: tenant.name,
+//         status: tenant.status,
+//         path: req.path,
+//         method: req.method
+//       });
+
+//     } catch (error) {
+//       logger.error('Error loading tenant context', {
+//         tenantId,
+//         error: error.message,
+//         path: req.path,
+//         method: req.method
+//       });
+//       return next(new AppError('Failed to load tenant context', 500));
+//     }
+    
+//     next();
+//   } catch (error) {
+//     logger.error('Tenant detection middleware error', {
+//       error: error.message,
+//       stack: error.stack,
+//       path: req.path,
+//       method: req.method
+//     });
+//     next(); // Continue without tenant context rather than failing the request
+//   }
+// };
+
 const detectTenant = async (req, res, next) => {
   try {
     // Skip tenant detection for certain routes
-    const skipPaths = ['/health', '/ping', '/metrics'];
-    if (skipPaths.some(path => req.path.startsWith(path))) {
+    const skipPaths = [
+      '/health', 
+      '/ping', 
+      '/metrics',
+      '/api/v1/hosted-organizations'
+    ];
+
+    // Use originalUrl for proper path checking within router context
+    const shouldSkip = skipPaths.some(path => req.originalUrl.startsWith(path));
+    
+    // Enhanced debugging for development
+    logger.debug('Tenant detection path analysis', {
+      path: req.path,
+      originalUrl: req.originalUrl,
+      method: req.method,
+      shouldSkip: shouldSkip,
+      host: req.get('host')
+    });
+
+    if (shouldSkip) {
+      logger.debug('Skipping tenant detection', { 
+        originalUrl: req.originalUrl,
+        reason: 'Path matches skip patterns'
+      });
       return next();
     }
 
-    // Extract tenant ID from multiple sources (priority order)
+    // Extract tenant ID from multiple sources with priority order
     const tenantId = extractTenantId(req);
     
     if (!tenantId) {
       // No tenant context found - continue without setting tenant
       logger.debug('No tenant context detected', {
         path: req.path,
+        originalUrl: req.originalUrl,
         method: req.method,
-        headers: {
+        extractionSources: {
           'x-tenant-id': req.headers['x-tenant-id'],
           'x-organization-id': req.headers['x-organization-id'],
-          host: req.headers.host
+          host: req.headers.host,
+          subdomain: extractTenantFromSubdomain(req),
+          queryParam: req.query.tenantId
         }
       });
       return next();
     }
+
+    logger.debug('Tenant ID extracted, validating tenant', { 
+      tenantId, 
+      originalUrl: req.originalUrl 
+    });
 
     // Validate and load tenant information
     try {
@@ -48,24 +190,26 @@ const detectTenant = async (req, res, next) => {
         logger.warn('Invalid tenant ID provided', {
           tenantId,
           path: req.path,
+          originalUrl: req.originalUrl,
           method: req.method,
           userId: req.user?._id
         });
         return next(new AppError('Invalid tenant context', 400));
       }
 
-      // Check tenant status
+      // Check tenant status for active operations
       if (tenant.status !== 'active') {
         logger.warn('Inactive tenant access attempt', {
           tenantId,
           status: tenant.status,
           path: req.path,
+          originalUrl: req.originalUrl,
           userId: req.user?._id
         });
         return next(new AppError('Tenant is not active', 403));
       }
 
-      // Set tenant context in request
+      // Set tenant context in request object
       req.tenantId = tenantId;
       req.tenant = tenant;
       req.organizationId = tenant.organizationId;
@@ -80,6 +224,7 @@ const detectTenant = async (req, res, next) => {
         tenantName: tenant.name,
         status: tenant.status,
         path: req.path,
+        originalUrl: req.originalUrl,
         method: req.method
       });
 
@@ -87,21 +232,43 @@ const detectTenant = async (req, res, next) => {
       logger.error('Error loading tenant context', {
         tenantId,
         error: error.message,
+        errorType: error.constructor.name,
         path: req.path,
+        originalUrl: req.originalUrl,
         method: req.method
       });
+
+      // For development environments, continue without tenant context rather than failing
+      if (process.env.NODE_ENV === 'development') {
+        logger.warn('Development mode: Continuing without tenant context due to error', {
+          tenantId,
+          error: error.message
+        });
+        return next();
+      }
+
       return next(new AppError('Failed to load tenant context', 500));
     }
     
     next();
+
   } catch (error) {
     logger.error('Tenant detection middleware error', {
       error: error.message,
       stack: error.stack,
       path: req.path,
+      originalUrl: req.originalUrl,
       method: req.method
     });
-    next(); // Continue without tenant context rather than failing the request
+
+    // In development, continue without tenant context to prevent blocking requests
+    if (process.env.NODE_ENV === 'development') {
+      logger.warn('Development mode: Bypassing tenant detection due to middleware error');
+      return next();
+    }
+
+    // In production, this should be handled more strictly
+    next(error);
   }
 };
 
@@ -151,14 +318,41 @@ function extractTenantId(req) {
  * @param {Object} req - Express request object
  * @returns {string|null} - Tenant ID or null
  */
+// function extractTenantFromSubdomain(req) {
+//   const host = req.get('host');
+//   if (!host) return null;
+
+//   const subdomain = host.split('.')[0];
+  
+//   // Skip common subdomains that aren't tenant identifiers
+//   const skipSubdomains = ['www', 'api', 'app', 'admin', 'localhost', 'staging', 'dev'];
+  
+//   if (subdomain && !skipSubdomains.includes(subdomain.toLowerCase())) {
+//     return subdomain.toLowerCase();
+//   }
+  
+//   return null;
+// }
 function extractTenantFromSubdomain(req) {
   const host = req.get('host');
   if (!host) return null;
 
-  const subdomain = host.split('.')[0];
+  // Handle localhost and IP addresses in development
+  if (host.startsWith('localhost') || host.startsWith('127.0.0.1') || /^\d+\.\d+\.\d+\.\d+/.test(host)) {
+    return null;
+  }
+
+  const parts = host.split('.');
+  
+  // Need at least 2 parts for a valid subdomain (subdomain.domain.com)
+  if (parts.length < 2) {
+    return null;
+  }
+
+  const subdomain = parts[0];
   
   // Skip common subdomains that aren't tenant identifiers
-  const skipSubdomains = ['www', 'api', 'app', 'admin', 'localhost', 'staging', 'dev'];
+  const skipSubdomains = ['www', 'api', 'app', 'admin', 'staging', 'dev', 'mail', 'ftp'];
   
   if (subdomain && !skipSubdomains.includes(subdomain.toLowerCase())) {
     return subdomain.toLowerCase();

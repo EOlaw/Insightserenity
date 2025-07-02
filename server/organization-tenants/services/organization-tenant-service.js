@@ -10,8 +10,8 @@ const crypto = require('crypto');
 const OrganizationTenant = require('../models/organization-tenant-model');
 const { AppError, ValidationError } = require('../../shared/utils/app-error');
 const logger = require('../../shared/utils/logger');
-// const CacheService = require('../../shared/services/cache-service');
-// const EventEmitter = require('../../shared/services/event-service');
+const { CacheService } = require('../../shared/services/cache-service');
+const { EventEmitter } = require('../../shared/utils/events/event-emitter');
 const EmailService = require('../../shared/services/email-service');
 const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
 
@@ -21,8 +21,8 @@ const { TENANT_CONSTANTS } = require('../constants/tenant-constants');
  */
 class OrganizationTenantService {
   constructor() {
-    // this.cache = new CacheService();
-    // this.eventEmitter = new EventEmitter();
+    this.cache = CacheService;
+    this.eventEmitter = EventEmitter;
   }
 
   /**
@@ -114,6 +114,12 @@ class OrganizationTenantService {
    */
   async getTenantById(tenantId, options = {}) {
     try {
+      // Validate ObjectId format
+      if (!mongoose.Types.ObjectId.isValid(tenantId)) {
+        logger.debug('Invalid tenant ID format', { tenantId });
+        throw new AppError(TENANT_CONSTANTS.ERROR_MESSAGES.TENANT_NOT_FOUND, 404);
+      }
+      
       // Check cache first
       const cacheKey = `${TENANT_CONSTANTS.CACHE_KEYS.TENANT_BY_ID}${tenantId}`;
       const cached = await this.cache.get(cacheKey);

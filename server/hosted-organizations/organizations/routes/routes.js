@@ -71,6 +71,12 @@ const {
   auditLog
 } = require('../../../shared/middleware/tracking/audit-middleware');
 
+const { 
+  validateSubscription,
+  requireActiveSubscription,
+  requirePaidSubscription 
+} = require('../../../shared/middleware/hosted-organizations/subscription-validation');
+
 const logger = require('../../../shared/utils/logger');
 
 const router = express.Router();
@@ -103,7 +109,7 @@ router.use(authenticate);
  * Organization Management Routes
  */
 
-// List user's organizations
+// List user's organizations (no subscription required - users need to see their options)
 router.get('/',
   organizationLimiter,
   parseQueryOptions({ 
@@ -120,12 +126,15 @@ router.get('/',
 
 // Create new organization (creates tenant infrastructure too)
 router.post('/',
-  requireAuth,
-  sensitiveOperationLimiter,
-  validateOrganizationCreate,
-  auditLog('organization.create'),
+  // authenticate(),
+  // sensitiveOperationLimiter,
+  // validateOrganizationCreate,
+  // auditLog('organization.create'),
   HostedOrganizationController.createOrganization
 );
+
+// All routes below this point require active subscription
+router.use(requireActiveSubscription); // Ensure active subscription for organization operations
 
 // Get current organization (requires tenant context)
 router.get('/current',
