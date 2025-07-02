@@ -355,6 +355,11 @@ organizationTenantSchema.virtual('primaryDomain').get(function() {
  */
 organizationTenantSchema.pre('save', async function(next) {
   try {
+    // CRITICAL: Generate tenant ID first, before any other operations that might fail
+    if (!this.tenantId && this.isNew) {
+      this.tenantId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+    
     // Generate slug if not provided
     if (!this.slug && this.name) {
       this.slug = slugify(this.name, { lower: true, strict: true });
@@ -362,108 +367,41 @@ organizationTenantSchema.pre('save', async function(next) {
       // Ensure slug uniqueness
       let suffix = 0;
       let uniqueSlug = this.slug;
-      while (await mongoose.model('OrganizationTenant').findOne({ slug: uniqueSlug, _id: { $ne: this._id } })) {
+      while (await mongoose.model('OrganizationTenant').findOne({ 
+        slug: uniqueSlug, 
+        _id: { $ne: this._id } 
+      })) {
         suffix++;
         uniqueSlug = `${this.slug}-${suffix}`;
       }
       this.slug = uniqueSlug;
     }
     
-    // Generate tenant ID if not provided
-    if (!this.tenantId && this.isNew) {
-      this.tenantId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    }
-    
-    // Initialize resourceLimits structure if it doesn't exist or is incomplete
-    if (!this.resourceLimits) {
-      this.resourceLimits = {};
-    }
-
-    // Define default resource limit structures
-    const defaultResourceLimits = {
-      users: { max: -1, current: 0 },
-      storage: { maxGB: -1, currentBytes: 0 },
-      apiCalls: { maxPerMonth: -1, currentMonth: 0 },
-      projects: { max: -1, current: 0 },
-      customDomains: { max: 1, current: 0 }
-    };
-
-    // Ensure all required resource limit structures exist
-    Object.keys(defaultResourceLimits).forEach(resource => {
-      if (!this.resourceLimits[resource]) {
-        this.resourceLimits[resource] = { ...defaultResourceLimits[resource] };
-      } else {
-        // Ensure both max and current properties exist
-        if (typeof this.resourceLimits[resource].max === 'undefined') {
-          this.resourceLimits[resource].max = defaultResourceLimits[resource].max || -1;
-        }
-        if (typeof this.resourceLimits[resource].current === 'undefined') {
-          this.resourceLimits[resource].current = defaultResourceLimits[resource].current || 0;
-        }
-        // Handle storage-specific properties
-        if (resource === 'storage') {
-          if (typeof this.resourceLimits[resource].maxGB === 'undefined') {
-            this.resourceLimits[resource].maxGB = defaultResourceLimits[resource].maxGB || -1;
-          }
-          if (typeof this.resourceLimits[resource].currentBytes === 'undefined') {
-            this.resourceLimits[resource].currentBytes = defaultResourceLimits[resource].currentBytes || 0;
-          }
-        }
-        // Handle apiCalls-specific properties
-        if (resource === 'apiCalls') {
-          if (typeof this.resourceLimits[resource].maxPerMonth === 'undefined') {
-            this.resourceLimits[resource].maxPerMonth = defaultResourceLimits[resource].maxPerMonth || -1;
-          }
-          if (typeof this.resourceLimits[resource].currentMonth === 'undefined') {
-            this.resourceLimits[resource].currentMonth = defaultResourceLimits[resource].currentMonth || 0;
-          }
-        }
-      }
-    });
-
-    // Set resource limits based on subscription plan for new tenants or plan changes
-    if (this.isNew || this.isModified('subscription.plan')) {
-      const planLimits = TENANT_CONSTANTS.PLAN_LIMITS[this.subscription?.plan];
-      
-      if (planLimits) {
-        this.resourceLimits.users.max = planLimits.users;
-        this.resourceLimits.storage.maxGB = planLimits.storageGB;
-        this.resourceLimits.apiCalls.maxPerMonth = planLimits.apiCallsPerMonth;
-        this.resourceLimits.projects.max = planLimits.projects;
-        this.resourceLimits.customDomains.max = planLimits.customDomains;
-      }
-    }
-
-    // Initialize subscription structure if not present
-    if (!this.subscription) {
+    // Initialize subscription structure with defaults
+    if (!this.subscription || typeof this.subscription !== 'object') {
       this.subscription = {
         status: TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
         plan: TENANT_CONSTANTS.SUBSCRIPTION_PLANS.TRIAL
       };
     }
     
-    // Set trial end date for new trials
-    if (this.isNew && this.subscription.status === 'trial' && !this.subscription.trialEndsAt) {
-      this.subscription.trialEndsAt = new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    // Ensure subscription has required fields
+    if (!this.subscription.status) {
+      this.subscription.status = TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL;
+    }
+    if (!this.subscription.plan) {
+      this.subscription.plan = TENANT_CONSTANTS.SUBSCRIPTION_PLANS.TRIAL;
     }
     
-    // Update lifecycle stage based on status
-    if (this.isModified('status')) {
-      switch (this.status) {
-        case 'active':
-          if (!this.activatedAt) this.activatedAt = new Date();
-          break;
-        case 'suspended':
-          this.suspendedAt = new Date();
-          break;
-        case 'terminated':
-          this.terminatedAt = new Date();
-          break;
-      }
+    // Set trial end date for new trials
+    if (this.isNew && this.subscription.status === 'trial' && !this.subscription.trialEndsAt) {
+      this.subscription.trialEndsAt = new Date(
+        Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000
+      );
     }
-
-    // Initialize flags if not present
-    if (!this.flags) {
+    
+    // Initialize flags with defaults
+    if (!this.flags || typeof this.flags !== 'object') {
       this.flags = {
         isActive: false,
         isVerified: false,
@@ -473,49 +411,164 @@ organizationTenantSchema.pre('save', async function(next) {
         hasCustomContract: false
       };
     }
-
-    // Validate resource limits consistency
-    Object.keys(this.resourceLimits).forEach(resource => {
-      const limit = this.resourceLimits[resource];
-      
-      // Ensure current usage doesn't exceed max limits (except for unlimited -1)
-      if (resource === 'storage') {
-        if (limit.maxGB !== -1 && limit.currentBytes > (limit.maxGB * 1024 * 1024 * 1024)) {
-          throw new Error(`Storage usage exceeds limit for tenant ${this.tenantCode}`);
-        }
-      } else if (resource === 'apiCalls') {
-        if (limit.maxPerMonth !== -1 && limit.currentMonth > limit.maxPerMonth) {
-          throw new Error(`API calls usage exceeds monthly limit for tenant ${this.tenantCode}`);
-        }
-      } else {
-        if (limit.max !== -1 && limit.current > limit.max) {
-          throw new Error(`${resource} usage exceeds limit for tenant ${this.tenantCode}`);
-        }
-      }
-      
-      // Ensure current usage is never negative
-      if (resource === 'storage') {
-        if (limit.currentBytes < 0) limit.currentBytes = 0;
-      } else if (resource === 'apiCalls') {
-        if (limit.currentMonth < 0) limit.currentMonth = 0;
-      } else {
-        if (limit.current < 0) limit.current = 0;
+    
+    // Ensure all required flags exist
+    const defaultFlags = {
+      isActive: false,
+      isVerified: false,
+      isLocked: false,
+      isFeatured: false,
+      requiresAttention: false,
+      hasCustomContract: false
+    };
+    
+    Object.keys(defaultFlags).forEach(flag => {
+      if (typeof this.flags[flag] === 'undefined') {
+        this.flags[flag] = defaultFlags[flag];
       }
     });
     
-    // Encrypt sensitive data
+    // Initialize resource limits with complete structure
+    const defaultResourceLimits = {
+      users: { max: -1, current: 0 },
+      storage: { maxGB: -1, currentBytes: 0 },
+      apiCalls: { maxPerMonth: -1, currentMonth: 0 },
+      projects: { max: -1, current: 0 },
+      customDomains: { max: 1, current: 0 }
+    };
+    
+    // Simplified resource limits initialization
+    if (!this.resourceLimits || typeof this.resourceLimits !== 'object') {
+      this.resourceLimits = JSON.parse(JSON.stringify(defaultResourceLimits));
+    } else {
+      // Ensure all required resource types exist with correct structure
+      Object.keys(defaultResourceLimits).forEach(resource => {
+        if (!this.resourceLimits[resource] || typeof this.resourceLimits[resource] !== 'object') {
+          this.resourceLimits[resource] = JSON.parse(JSON.stringify(defaultResourceLimits[resource]));
+        } else {
+          // Merge missing properties from defaults
+          Object.keys(defaultResourceLimits[resource]).forEach(prop => {
+            if (typeof this.resourceLimits[resource][prop] === 'undefined') {
+              this.resourceLimits[resource][prop] = defaultResourceLimits[resource][prop];
+            }
+          });
+        }
+      });
+    }
+    
+    // Apply plan-based resource limits for new tenants or plan changes
+    if (this.isNew || this.isModified('subscription.plan')) {
+      const planLimits = TENANT_CONSTANTS.PLAN_LIMITS?.[this.subscription?.plan];
+      
+      if (planLimits) {
+        this.resourceLimits.users.max = planLimits.users ?? -1;
+        this.resourceLimits.storage.maxGB = planLimits.storageGB ?? -1;
+        this.resourceLimits.apiCalls.maxPerMonth = planLimits.apiCallsPerMonth ?? -1;
+        this.resourceLimits.projects.max = planLimits.projects ?? -1;
+        this.resourceLimits.customDomains.max = planLimits.customDomains ?? 1;
+      }
+    }
+    
+    // Update lifecycle timestamps based on status changes
+    if (this.isModified('status')) {
+      const now = new Date();
+      switch (this.status) {
+        case 'active':
+          if (!this.activatedAt) this.activatedAt = now;
+          break;
+        case 'suspended':
+          this.suspendedAt = now;
+          break;
+        case 'terminated':
+          this.terminatedAt = now;
+          break;
+      }
+    }
+    
+    // Validate resource limits consistency (with error handling)
+    try {
+      Object.keys(this.resourceLimits).forEach(resource => {
+        const limit = this.resourceLimits[resource];
+        
+        if (!limit || typeof limit !== 'object') {
+          return; // Skip invalid resource limit objects
+        }
+        
+        // Normalize negative values to zero for current usage
+        if (resource === 'storage') {
+          if (typeof limit.currentBytes === 'number' && limit.currentBytes < 0) {
+            limit.currentBytes = 0;
+          }
+        } else if (resource === 'apiCalls') {
+          if (typeof limit.currentMonth === 'number' && limit.currentMonth < 0) {
+            limit.currentMonth = 0;
+          }
+        } else {
+          if (typeof limit.current === 'number' && limit.current < 0) {
+            limit.current = 0;
+          }
+        }
+        
+        // Check for limit violations (log warning instead of throwing error)
+        if (resource === 'storage' && typeof limit.maxGB === 'number' && limit.maxGB !== -1) {
+          const maxBytes = limit.maxGB * 1024 * 1024 * 1024;
+          if (typeof limit.currentBytes === 'number' && limit.currentBytes > maxBytes) {
+            logger.warn('Storage usage exceeds limit', {
+              tenantCode: this.tenantCode,
+              current: limit.currentBytes,
+              max: maxBytes
+            });
+          }
+        } else if (resource === 'apiCalls' && typeof limit.maxPerMonth === 'number' && limit.maxPerMonth !== -1) {
+          if (typeof limit.currentMonth === 'number' && limit.currentMonth > limit.maxPerMonth) {
+            logger.warn('API calls usage exceeds monthly limit', {
+              tenantCode: this.tenantCode,
+              current: limit.currentMonth,
+              max: limit.maxPerMonth
+            });
+          }
+        } else if (typeof limit.max === 'number' && limit.max !== -1) {
+          if (typeof limit.current === 'number' && limit.current > limit.max) {
+            logger.warn(`${resource} usage exceeds limit`, {
+              tenantCode: this.tenantCode,
+              resource,
+              current: limit.current,
+              max: limit.max
+            });
+          }
+        }
+      });
+    } catch (validationError) {
+      logger.error('Resource limits validation error', {
+        error: validationError.message,
+        tenantCode: this.tenantCode,
+        resourceLimits: this.resourceLimits
+      });
+      // Continue execution rather than failing the save operation
+    }
+    
+    // Handle sensitive data encryption
     if (this.isModified('database.connectionString') && this.database?.connectionString) {
-      // Encrypt connection string (implement encryption service)
+      // Note: Implement encryption service when available
       // this.database.connectionString = await EncryptionService.encrypt(this.database.connectionString);
     }
-
-    // Update the updatedAt timestamp for manual saves
+    
+    // Update timestamp for existing documents
     if (!this.isNew) {
       this.updatedAt = new Date();
     }
     
     next();
   } catch (error) {
+    logger.error('Pre-save middleware error', {
+      error: error.message,
+      stack: error.stack,
+      tenantData: {
+        name: this.name,
+        tenantCode: this.tenantCode,
+        tenantId: this.tenantId
+      }
+    });
     next(error);
   }
 });

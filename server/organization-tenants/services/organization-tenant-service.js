@@ -36,9 +36,13 @@ class OrganizationTenantService {
     session.startTransaction();
 
     try {
-      logger.info('Creating new organization tenant', { userId, tenantName: tenantData.name });
+      logger.info('Creating new organization tenant', { 
+        userId, 
+        tenantName: tenantData.name,
+        timestamp: new Date().toISOString()
+      });
 
-      // Validate required fields
+      // Validate required fields before any processing
       this._validateTenantData(tenantData);
 
       // Generate tenant code if not provided
@@ -46,71 +50,421 @@ class OrganizationTenantService {
         tenantData.tenantCode = await this._generateUniqueTenantCode(tenantData.name);
       }
 
-      // Set defaults
-      const tenant = new OrganizationTenant({
+      // Generate unique tenant ID explicitly (failsafe before document creation)
+      if (!tenantData.tenantId) {
+        tenantData.tenantId = await this._generateUniqueTenantId();
+      }
+
+      // Prepare complete tenant data structure
+      const tenantDocumentData = {
         ...tenantData,
         owner: userId,
         createdBy: userId,
         updatedBy: userId,
         status: TENANT_CONSTANTS.TENANT_STATUS.PENDING,
-        'flags.isActive': false,
-        'subscription.status': TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
-        'subscription.trialEndsAt': new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
-        // Initialize resourceLimits with proper structure
+        
+        // Explicit flag initialization
+        flags: {
+          isActive: false,
+          isVerified: false,
+          isLocked: false,
+          isFeatured: false,
+          requiresAttention: false,
+          hasCustomContract: false,
+          ...(tenantData.flags || {})
+        },
+        
+        // Explicit subscription initialization
+        subscription: {
+          status: TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
+          plan: TENANT_CONSTANTS.SUBSCRIPTION_PLANS.TRIAL,
+          startDate: new Date(),
+          trialEndsAt: new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
+          autoRenew: true,
+          ...(tenantData.subscription || {})
+        },
+        
+        // Explicit resource limits initialization
         resourceLimits: {
           users: { max: -1, current: 0 },
           storage: { maxGB: -1, currentBytes: 0 },
           apiCalls: { maxPerMonth: -1, currentMonth: 0 },
           projects: { max: -1, current: 0 },
-          customDomains: { max: 1, current: 0 }
+          customDomains: { max: 1, current: 0 },
+          ...(tenantData.resourceLimits || {})
         }
+      };
+
+      logger.debug('Creating tenant document', {
+        tenantId: tenantDocumentData.tenantId,
+        tenantCode: tenantDocumentData.tenantCode,
+        subscriptionPlan: tenantDocumentData.subscription.plan
       });
 
-      // Set resource limits based on plan
+      // Create tenant document
+      const tenant = new OrganizationTenant(tenantDocumentData);
+
+      // Apply plan-based resource limits
       this._setResourceLimits(tenant);
 
-      // Save tenant
+      // Validate tenant data before saving
+      const validationError = tenant.validateSync();
+      if (validationError) {
+        logger.error('Tenant validation failed before save', {
+          validationError: validationError.message,
+          errors: Object.keys(validationError.errors),
+          tenantId: tenant.tenantId
+        });
+        throw validationError;
+      }
+
+      // Save tenant with session
       await tenant.save({ session });
 
+      logger.info('Tenant document saved successfully', {
+        tenantId: tenant._id,
+        tenantCode: tenant.tenantCode,
+        generatedTenantId: tenant.tenantId
+      });
+
       // Create tenant database if using dedicated strategy
-      if (tenant.database.strategy === TENANT_CONSTANTS.DATABASE_STRATEGIES.DEDICATED) {
-        await this._createTenantDatabase(tenant, session);
+      if (tenant.database?.strategy === TENANT_CONSTANTS.DATABASE_STRATEGIES.DEDICATED) {
+        try {
+          await this._createTenantDatabase(tenant, session);
+          logger.debug('Dedicated tenant database created', { tenantId: tenant._id });
+        } catch (dbError) {
+          logger.error('Failed to create tenant database', {
+            error: dbError.message,
+            tenantId: tenant._id
+          });
+          throw new Error(`Database creation failed: ${dbError.message}`);
+        }
       }
 
       // Initialize tenant settings
-      await this._initializeTenantSettings(tenant, session);
+      try {
+        await this._initializeTenantSettings(tenant, session);
+        logger.debug('Tenant settings initialized', { tenantId: tenant._id });
+      } catch (settingsError) {
+        logger.error('Failed to initialize tenant settings', {
+          error: settingsError.message,
+          tenantId: tenant._id
+        });
+        // Non-critical error - continue with tenant creation
+      }
 
-      // Send welcome email
-      await this._sendWelcomeEmail(tenant);
-
-      // Emit event
-      this.eventEmitter.emit(TENANT_CONSTANTS.EVENT_TYPES.TENANT_CREATED, {
-        tenantId: tenant._id,
-        tenantCode: tenant.tenantCode,
-        ownerId: userId
-      });
-
+      // Commit transaction before external operations
       await session.commitTransaction();
 
       logger.info('Organization tenant created successfully', { 
         tenantId: tenant._id, 
-        tenantCode: tenant.tenantCode 
+        tenantCode: tenant.tenantCode,
+        generatedTenantId: tenant.tenantId,
+        subscriptionPlan: tenant.subscription.plan
+      });
+
+      // Post-creation operations (non-blocking)
+      setImmediate(async () => {
+        try {
+          // Send welcome email
+          await this._sendWelcomeEmail(tenant);
+          logger.debug('Welcome email sent', { tenantId: tenant._id });
+        } catch (emailError) {
+          logger.warn('Welcome email sending failed (non-critical)', {
+            error: emailError.message,
+            tenantId: tenant._id
+          });
+        }
+
+        try {
+          // Emit tenant creation event
+          this.eventEmitter.emit(TENANT_CONSTANTS.EVENT_TYPES.TENANT_CREATED, {
+            tenantId: tenant._id,
+            tenantCode: tenant.tenantCode,
+            generatedTenantId: tenant.tenantId,
+            ownerId: userId
+          });
+          logger.debug('Tenant creation event emitted', { tenantId: tenant._id });
+        } catch (eventError) {
+          logger.warn('Event emission failed (non-critical)', {
+            error: eventError.message,
+            tenantId: tenant._id
+          });
+        }
       });
 
       return tenant;
 
     } catch (error) {
       await session.abortTransaction();
-      logger.error('Failed to create organization tenant', { error, userId });
       
+      logger.error('Failed to create organization tenant', { 
+        error: {
+          message: error.message,
+          name: error.name,
+          code: error.code,
+          stack: error.stack
+        },
+        userId,
+        tenantData: {
+          name: tenantData.name,
+          tenantCode: tenantData.tenantCode,
+          tenantId: tenantData.tenantId
+        }
+      });
+      
+      // Enhanced error handling with specific error types
       if (error.code === 11000) {
-        const field = Object.keys(error.keyPattern)[0];
+        const field = Object.keys(error.keyPattern || {})[0] || 'unknown field';
         throw new ValidationError(`A tenant with this ${field} already exists`);
+      }
+      
+      if (error.name === 'ValidationError') {
+        const validationErrors = Object.keys(error.errors || {}).map(
+          key => `${key}: ${error.errors[key].message}`
+        );
+        throw new ValidationError(`Tenant validation failed: ${validationErrors.join(', ')}`);
+      }
+      
+      if (error.name === 'MongoNetworkError' || error.name === 'MongoTimeoutError') {
+        throw new Error('Database connection issue during tenant creation. Please try again.');
       }
       
       throw error;
     } finally {
       session.endSession();
+    }
+  }
+
+  /**
+   * Create a new organization tenant
+   * @param {Object} tenantData - The tenant data
+   * @param {string} userId - The ID of the user creating the tenant
+   * @param {Object} [externalSession] - Optional external session for transaction coordination
+   * @returns {Promise<Object>} - The created tenant
+   */
+  async createTenant(tenantData, userId, externalSession = null) {
+    let session = externalSession;
+    let shouldCommit = false;
+
+    // Only create and manage session if no external session provided
+    if (!session) {
+      session = await mongoose.startSession();
+      session.startTransaction();
+      shouldCommit = true;
+    }
+
+    try {
+      logger.info('Creating new organization tenant', { 
+        userId, 
+        tenantName: tenantData.name,
+        hasExternalSession: !!externalSession,
+        timestamp: new Date().toISOString()
+      });
+
+      // Validate required fields before any processing
+      this._validateTenantData(tenantData);
+
+      // Generate tenant code if not provided
+      if (!tenantData.tenantCode) {
+        tenantData.tenantCode = await this._generateUniqueTenantCode(tenantData.name);
+      }
+
+      // Generate unique tenant ID explicitly (failsafe before document creation)
+      if (!tenantData.tenantId) {
+        tenantData.tenantId = await this._generateUniqueTenantId();
+      }
+
+      // Prepare complete tenant data structure
+      const tenantDocumentData = {
+        ...tenantData,
+        owner: userId,
+        createdBy: userId,
+        updatedBy: userId,
+        status: TENANT_CONSTANTS.TENANT_STATUS.PENDING,
+        
+        // Explicit flag initialization
+        flags: {
+          isActive: false,
+          isVerified: false,
+          isLocked: false,
+          isFeatured: false,
+          requiresAttention: false,
+          hasCustomContract: false,
+          ...(tenantData.flags || {})
+        },
+        
+        // Explicit subscription initialization
+        subscription: {
+          status: TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL,
+          plan: TENANT_CONSTANTS.SUBSCRIPTION_PLANS.TRIAL,
+          startDate: new Date(),
+          trialEndsAt: new Date(Date.now() + TENANT_CONSTANTS.TRIAL_DURATION_DAYS * 24 * 60 * 60 * 1000),
+          autoRenew: true,
+          ...(tenantData.subscription || {})
+        },
+        
+        // Explicit resource limits initialization
+        resourceLimits: {
+          users: { max: -1, current: 0 },
+          storage: { maxGB: -1, currentBytes: 0 },
+          apiCalls: { maxPerMonth: -1, currentMonth: 0 },
+          projects: { max: -1, current: 0 },
+          customDomains: { max: 1, current: 0 },
+          ...(tenantData.resourceLimits || {})
+        }
+      };
+
+      logger.debug('Creating tenant document', {
+        tenantId: tenantDocumentData.tenantId,
+        tenantCode: tenantDocumentData.tenantCode,
+        subscriptionPlan: tenantDocumentData.subscription.plan,
+        usingExternalSession: !!externalSession
+      });
+
+      // Create tenant document
+      const tenant = new OrganizationTenant(tenantDocumentData);
+
+      // Apply plan-based resource limits
+      this._setResourceLimits(tenant);
+
+      // Validate tenant data before saving
+      const validationError = tenant.validateSync();
+      if (validationError) {
+        logger.error('Tenant validation failed before save', {
+          validationError: validationError.message,
+          errors: Object.keys(validationError.errors),
+          tenantId: tenant.tenantId
+        });
+        throw validationError;
+      }
+
+      // Save tenant with session
+      await tenant.save({ session });
+
+      logger.info('Tenant document saved successfully', {
+        tenantId: tenant._id,
+        tenantCode: tenant.tenantCode,
+        generatedTenantId: tenant.tenantId
+      });
+
+      // Create tenant database if using dedicated strategy
+      if (tenant.database?.strategy === TENANT_CONSTANTS.DATABASE_STRATEGIES.DEDICATED) {
+        try {
+          await this._createTenantDatabase(tenant, session);
+          logger.debug('Dedicated tenant database created', { tenantId: tenant._id });
+        } catch (dbError) {
+          logger.error('Failed to create tenant database', {
+            error: dbError.message,
+            tenantId: tenant._id
+          });
+          throw new Error(`Database creation failed: ${dbError.message}`);
+        }
+      }
+
+      // Initialize tenant settings
+      try {
+        await this._initializeTenantSettings(tenant, session);
+        logger.debug('Tenant settings initialized', { tenantId: tenant._id });
+      } catch (settingsError) {
+        logger.error('Failed to initialize tenant settings', {
+          error: settingsError.message,
+          tenantId: tenant._id
+        });
+        // Non-critical error - continue with tenant creation
+      }
+
+      // Only commit if we created the session
+      if (shouldCommit) {
+        await session.commitTransaction();
+        logger.info('Tenant transaction committed independently', { 
+          tenantId: tenant._id 
+        });
+      }
+
+      logger.info('Organization tenant created successfully', { 
+        tenantId: tenant._id, 
+        tenantCode: tenant.tenantCode,
+        generatedTenantId: tenant.tenantId,
+        subscriptionPlan: tenant.subscription.plan
+      });
+
+      // Post-creation operations only if this is an independent transaction
+      if (shouldCommit) {
+        setImmediate(async () => {
+          try {
+            // Send welcome email
+            await this._sendWelcomeEmail(tenant);
+            logger.debug('Welcome email sent', { tenantId: tenant._id });
+          } catch (emailError) {
+            logger.warn('Welcome email sending failed (non-critical)', {
+              error: emailError.message,
+              tenantId: tenant._id
+            });
+          }
+
+          try {
+            // Emit tenant creation event
+            this.eventEmitter.emit(TENANT_CONSTANTS.EVENT_TYPES.TENANT_CREATED, {
+              tenantId: tenant._id,
+              tenantCode: tenant.tenantCode,
+              generatedTenantId: tenant.tenantId,
+              ownerId: userId
+            });
+            logger.debug('Tenant creation event emitted', { tenantId: tenant._id });
+          } catch (eventError) {
+            logger.warn('Event emission failed (non-critical)', {
+              error: eventError.message,
+              tenantId: tenant._id
+            });
+          }
+        });
+      }
+
+      return tenant;
+
+    } catch (error) {
+      if (shouldCommit) {
+        await session.abortTransaction();
+      }
+      
+      logger.error('Failed to create organization tenant', { 
+        error: {
+          message: error.message,
+          name: error.name,
+          code: error.code,
+          stack: error.stack
+        },
+        userId,
+        tenantData: {
+          name: tenantData.name,
+          tenantCode: tenantData.tenantCode,
+          tenantId: tenantData.tenantId
+        }
+      });
+      
+      // Enhanced error handling with specific error types
+      if (error.code === 11000) {
+        const field = Object.keys(error.keyPattern || {})[0] || 'unknown field';
+        throw new ValidationError(`A tenant with this ${field} already exists`);
+      }
+      
+      if (error.name === 'ValidationError') {
+        const validationErrors = Object.keys(error.errors || {}).map(
+          key => `${key}: ${error.errors[key].message}`
+        );
+        throw new ValidationError(`Tenant validation failed: ${validationErrors.join(', ')}`);
+      }
+      
+      if (error.name === 'MongoNetworkError' || error.name === 'MongoTimeoutError') {
+        throw new Error('Database connection issue during tenant creation. Please try again.');
+      }
+      
+      throw error;
+    } finally {
+      if (shouldCommit) {
+        session.endSession();
+      }
     }
   }
 
@@ -760,6 +1114,31 @@ class OrganizationTenantService {
     }
 
     return code;
+  }
+
+  /**
+   * Generate unique tenant ID with collision detection
+   * @private
+   * @returns {Promise<string>} - Unique tenant ID
+   */
+  async _generateUniqueTenantId() {
+    const maxAttempts = 5;
+    let attempts = 0;
+    
+    while (attempts < maxAttempts) {
+      const tenantId = `org_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      const existing = await OrganizationTenant.findOne({ tenantId });
+      if (!existing) {
+        return tenantId;
+      }
+      
+      attempts++;
+      // Add small delay to ensure different timestamp on retry
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    
+    throw new Error('Failed to generate unique tenant ID after multiple attempts');
   }
 
   /**

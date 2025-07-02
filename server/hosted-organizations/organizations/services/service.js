@@ -12,188 +12,12 @@ const { AppError } = require('../../../shared/utils/app-error');
 const { EventEmitter } = require('../../../shared/utils/events/event-emitter');
 const logger = require('../../../shared/utils/logger');
 const HostedOrganization = require('../models/model');
+const OrganizationTenant = require('../../../organization-tenants/models/organization-tenant-model')
 const OrganizationTenantService = require('../../../organization-tenants/services/organization-tenant-service');
 const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organization-constants');
 const { TENANT_CONSTANTS } = require('../../../organization-tenants/constants/tenant-constants');
 
 class HostedOrganizationService {
-  /**
-   * Create a new hosted organization with tenant infrastructure
-   * @param {Object} organizationData - Organization data
-   * @param {string} userId - ID of the user creating the organization
-   * @returns {Promise<Object>} - Created organization with tenant
-   */
-  static async createOrganization(organizationData, userId) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      logger.info('Creating hosted organization with tenant', {
-        organizationName: organizationData.name,
-        userId,
-        tier: organizationData.platformConfig?.tier || 'starter'
-      });
-
-      // Validate user
-      const user = await User.findById(userId).session(session);
-      if (!user) {
-        throw new AppError('User not found', 404);
-      }
-
-      // Check user's organization limit
-      const existingOrgs = await HostedOrganization.countDocuments({
-        'team.owner': userId,
-        'status.active': true
-      });
-
-      if (existingOrgs >= (user.limits?.organizations || 3)) {
-        throw new AppError('Organization limit reached for this user', 403);
-      }
-
-      // Step 1: Prepare tenant data with proper structure
-      const tier = organizationData.platformConfig?.tier || 'starter';
-      const tenantData = {
-        name: organizationData.name,
-        contactEmail: organizationData.headquarters?.email || user.email,
-        contactPhone: organizationData.headquarters?.phone,
-        website: organizationData.website,
-        owner: userId,
-        subscription: {
-          plan: this._mapTierToPlan(tier),
-          status: organizationData.subscription?.status || TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL
-        },
-        database: {
-          strategy: this._getDatabaseStrategy(tier)
-        },
-        // Business information
-        businessInfo: organizationData.businessInfo || {},
-        // Location data
-        location: organizationData.headquarters?.address ? {
-          country: organizationData.headquarters.address.country,
-          state: organizationData.headquarters.address.state,
-          city: organizationData.headquarters.address.city,
-          timezone: organizationData.headquarters.timezone
-        } : {}
-      };
-
-      // Create tenant (this handles resource limits, database setup, etc.)
-      const tenant = await OrganizationTenantService.createTenant(tenantData, userId);
-
-      logger.info('Tenant created successfully', { 
-        tenantId: tenant._id, 
-        tenantCode: tenant.tenantCode,
-        generatedTenantId: tenant.tenantId
-      });
-
-      // Step 2: Create the organization linked to the tenant
-      const orgData = {
-        ...organizationData,
-        tenantRef: tenant._id,
-        tenantId: tenant.tenantId,
-        tenantCode: tenant.tenantCode,
-        'team.owner': userId,
-        createdBy: userId,
-        'team.admins': [{
-          user: userId,
-          addedAt: new Date(),
-          addedBy: userId
-        }],
-        'metrics.usage.lastActivity': new Date(),
-        'domains.subdomain': organizationData.domains?.subdomain || tenant.tenantCode.toLowerCase()
-      };
-
-      // Sync subscription info from tenant
-      orgData.subscription = {
-        ...orgData.subscription,
-        status: tenant.subscription.status,
-        plan: {
-          id: tenant.subscription.plan,
-          name: tenant.subscription.plan,
-          interval: organizationData.subscription?.plan?.interval || 'monthly'
-        },
-        trialEnd: tenant.subscription.trialEndsAt
-      };
-
-      // Set default platform configuration based on tier
-      if (!orgData.platformConfig) {
-        orgData.platformConfig = this._getDefaultPlatformConfig(tier);
-      }
-
-      // Create organization
-      const organization = await HostedOrganization.create([orgData], { session });
-
-      // Update user's organization reference
-      user.organizations = user.organizations || [];
-      user.organizations.push({
-        organization: organization[0]._id,
-        role: 'owner',
-        joinedAt: new Date()
-      });
-      await user.save({ session });
-
-      // Step 3: Update tenant with organization reference
-      tenant.organizationRef = organization[0]._id;
-      await tenant.save({ session });
-
-      // Setup default data (lightweight operations only)
-      await this._setupDefaultOrganizationData(organization[0], session);
-
-      await session.commitTransaction();
-
-      // Non-blocking post-creation operations
-      setImmediate(async () => {
-        try {
-          // Emit events
-          EventEmitter.emit('organization:created', {
-            organizationId: organization[0]._id,
-            tenantId: tenant._id,
-            userId,
-            tier: organization[0].platformConfig.tier
-          });
-
-          // Cache organization
-          await CacheService.set(
-            `org:${organization[0]._id}`,
-            organization[0].toObject(),
-            3600 // 1 hour
-          );
-
-        } catch (postCreationError) {
-          logger.warn('Post-creation tasks failed (non-critical)', {
-            error: postCreationError.message,
-            organizationId: organization[0]._id
-          });
-        }
-      });
-
-      logger.info('Hosted organization created successfully', {
-        organizationId: organization[0]._id,
-        platformId: organization[0].platformId,
-        tenantId: tenant.tenantId,
-        subdomain: organization[0].domains?.subdomain
-      });
-
-      // Populate tenant reference before returning
-      await organization[0].populate('tenantRef');
-
-      return organization[0];
-
-    } catch (error) {
-      await session.abortTransaction();
-      
-      logger.error('Failed to create hosted organization', {
-        error: error.message,
-        stack: error.stack,
-        userId,
-        organizationName: organizationData.name
-      });
-      
-      throw error;
-    } finally {
-      session.endSession();
-    }
-  }
-
   // /**
   //  * Create a new hosted organization with tenant infrastructure
   //  * @param {Object} organizationData - Organization data
@@ -211,7 +35,7 @@ class HostedOrganizationService {
   //       tier: organizationData.platformConfig?.tier || 'starter'
   //     });
 
-  //     // Validate user
+  //     // Validate user exists
   //     const user = await User.findById(userId).session(session);
   //     if (!user) {
   //       throw new AppError('User not found', 404);
@@ -227,205 +51,51 @@ class HostedOrganizationService {
   //       throw new AppError('Organization limit reached for this user', 403);
   //     }
 
-  //     // Step 1: Create the tenant infrastructure first
+  //     // Prepare tenant configuration
+  //     const tier = organizationData.platformConfig?.tier || 'starter';
   //     const tenantData = {
   //       name: organizationData.name,
   //       contactEmail: organizationData.headquarters?.email || user.email,
+  //       contactPhone: organizationData.headquarters?.phone,
+  //       website: organizationData.website,
   //       owner: userId,
   //       subscription: {
-  //         plan: this._mapTierToPlan(organizationData.platformConfig?.tier || 'starter'),
+  //         plan: this._mapTierToPlan(tier),
   //         status: organizationData.subscription?.status || TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL
   //       },
   //       database: {
-  //         strategy: this._getDatabaseStrategy(organizationData.platformConfig?.tier)
-  //       }
+  //         strategy: this._getDatabaseStrategy(tier)
+  //       },
+  //       businessInfo: organizationData.businessInfo || {},
+  //       location: organizationData.headquarters?.address ? {
+  //         country: organizationData.headquarters.address.country,
+  //         state: organizationData.headquarters.address.state,
+  //         city: organizationData.headquarters.address.city,
+  //         timezone: organizationData.headquarters.timezone
+  //       } : {}
   //     };
 
-  //     // Create tenant (this handles resource limits, database setup, etc.)
+  //     // Create tenant infrastructure
   //     const tenant = await OrganizationTenantService.createTenant(tenantData, userId);
 
-  //     // Step 2: Create the organization linked to the tenant
-  //     const orgData = {
-  //       ...organizationData,
-  //       tenantRef: tenant._id,
-  //       tenantId: tenant.tenantId,
-  //       tenantCode: tenant.tenantCode,
-  //       'team.owner': userId,
-  //       createdBy: userId,
-  //       'team.admins': [{
-  //         user: userId,
-  //         addedAt: new Date(),
-  //         addedBy: userId
-  //       }],
-  //       'metrics.usage.lastActivity': new Date(),
-  //       'domains.subdomain': organizationData.domains?.subdomain || tenant.tenantCode.toLowerCase()
-  //     };
-
-  //     // Sync subscription info from tenant
-  //     orgData.subscription = {
-  //       ...orgData.subscription,
-  //       status: tenant.subscription.status,
-  //       plan: {
-  //         id: tenant.subscription.plan,
-  //         name: tenant.subscription.plan,
-  //         interval: organizationData.subscription?.plan?.interval || 'monthly'
-  //       },
-  //       trialEnd: tenant.subscription.trialEndsAt
-  //     };
-
-  //     // Set default platform configuration based on tier
-  //     if (!orgData.platformConfig) {
-  //       orgData.platformConfig = this._getDefaultPlatformConfig(orgData.platformConfig?.tier || 'starter');
-  //     }
-
-  //     // Create organization
-  //     const organization = await HostedOrganization.create([orgData], { session });
-
-  //     // Update user's organization reference
-  //     user.organizations = user.organizations || [];
-  //     user.organizations.push({
-  //       organization: organization[0]._id,
-  //       role: 'owner',
-  //       joinedAt: new Date()
-  //     });
-  //     await user.save({ session });
-
-  //     // Step 3: Update tenant with organization reference
-  //     tenant.organizationRef = organization[0]._id;
-  //     await tenant.save({ session });
-
-  //     // Setup default data
-  //     await this._setupDefaultOrganizationData(organization[0], session);
-
-  //     // Send welcome emails
-  //     await this._sendWelcomeEmail(organization[0], user);
-
-  //     await session.commitTransaction();
-
-  //     // Emit events
-  //     EventEmitter.emit('organization:created', {
-  //       organizationId: organization[0]._id,
-  //       tenantId: tenant._id,
-  //       userId,
-  //       tier: organization[0].platformConfig.tier
-  //     });
-
-  //     // Cache organization
-  //     await CacheService.set(
-  //       `org:${organization[0]._id}`,
-  //       organization[0].toObject(),
-  //       3600 // 1 hour
-  //     );
-
-  //     logger.info('Hosted organization created successfully', {
-  //       organizationId: organization[0]._id,
-  //       platformId: organization[0].platformId,
-  //       tenantId: tenant.tenantId,
-  //       subdomain: organization[0].domains.subdomain
-  //     });
-
-  //     // Populate tenant reference before returning
-  //     await organization[0].populate('tenantRef');
-
-  //     return organization[0];
-
-  //   } catch (error) {
-  //     await session.abortTransaction();
-      
-  //     logger.error('Failed to create hosted organization', {
-  //       error: error.message,
-  //       userId,
-  //       organizationName: organizationData.name
-  //     });
-      
-  //     throw error;
-  //   } finally {
-  //     session.endSession();
-  //   }
-  // }
-
-  // /**
-  //  * Create a new hosted organization with improved transaction management
-  //  * @param {Object} organizationData - Organization data
-  //  * @param {string} userId - ID of the user creating the organization
-  //  * @returns {Promise<Object>} - Created organization with tenant
-  //  */
-  // static async createOrganization(organizationData, userId) {
-  //   const session = await mongoose.startSession();
-  //   const startTime = Date.now();
-    
-  //   try {
-  //     // Start transaction with timeout controls
-  //     session.startTransaction({
-  //       readConcern: { level: 'majority' },
-  //       writeConcern: { w: 'majority', j: true },
-  //       maxTimeMS: 30000 // 30 second timeout
-  //     });
-
-  //     logger.info('Creating hosted organization with tenant - Starting transaction', {
-  //       organizationName: organizationData.name,
-  //       userId,
-  //       tier: organizationData.platformConfig?.tier || 'starter',
-  //       timestamp: new Date().toISOString()
-  //     });
-
-  //     // Step 1: Validate user
-  //     const user = await User.findById(userId).session(session);
-  //     if (!user) {
-  //       throw new AppError('User not found', 404);
-  //     }
-
-  //     logger.debug('User validation completed', { userId, userEmail: user.email });
-
-  //     // Step 2: Check user's organization limit
-  //     const existingOrgs = await HostedOrganization.countDocuments({
-  //       'team.owner': userId,
-  //       'status.active': true
-  //     }).session(session);
-
-  //     const organizationLimit = user.limits?.organizations || 3;
-  //     if (existingOrgs >= organizationLimit) {
-  //       throw new AppError(`Organization limit reached. Maximum ${organizationLimit} organizations allowed.`, 403);
-  //     }
-
-  //     logger.debug('Organization limit check passed', { 
-  //       existingCount: existingOrgs, 
-  //       limit: organizationLimit 
-  //     });
-
-  //     // Step 3: Prepare tenant data
-  //     const tenantData = {
-  //       name: organizationData.name,
-  //       contactEmail: organizationData.headquarters?.email || user.email,
-  //       owner: userId,
-  //       subscription: {
-  //         plan: this._mapTierToPlan(organizationData.platformConfig?.tier || 'starter'),
-  //         status: organizationData.subscription?.status || TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL
-  //       },
-  //       database: {
-  //         strategy: this._getDatabaseStrategy(organizationData.platformConfig?.tier || 'starter')
-  //       }
-  //     };
-
-  //     logger.debug('Tenant data prepared', { 
-  //       tenantName: tenantData.name,
-  //       plan: tenantData.subscription.plan 
-  //     });
-
-  //     // Step 4: Create tenant infrastructure
-  //     const tenant = await OrganizationTenantService.createTenant(tenantData, userId);
-      
   //     logger.info('Tenant created successfully', { 
   //       tenantId: tenant._id, 
-  //       tenantCode: tenant.tenantCode 
+  //       tenantCode: tenant.tenantCode,
+  //       generatedTenantId: tenant.tenantId
   //     });
 
-  //     // Step 5: Prepare organization data
+  //     // Retrieve tenant within current session context to enable updates
+  //     const sessionTenant = await OrganizationTenant.findById(tenant._id).session(session);
+  //     if (!sessionTenant) {
+  //       throw new AppError('Failed to retrieve created tenant in session context', 500);
+  //     }
+
+  //     // Prepare organization data structure
   //     const orgData = {
   //       ...organizationData,
-  //       tenantRef: tenant._id,
-  //       tenantId: tenant.tenantId,
-  //       tenantCode: tenant.tenantCode,
+  //       tenantRef: sessionTenant._id,
+  //       tenantId: sessionTenant.tenantId,
+  //       tenantCode: sessionTenant.tenantCode,
   //       'team.owner': userId,
   //       createdBy: userId,
   //       'team.admins': [{
@@ -434,42 +104,35 @@ class HostedOrganizationService {
   //         addedBy: userId
   //       }],
   //       'metrics.usage.lastActivity': new Date(),
-  //       'domains.subdomain': organizationData.domains?.subdomain || tenant.tenantCode.toLowerCase()
+  //       'domains.subdomain': organizationData.domains?.subdomain || sessionTenant.tenantCode.toLowerCase()
   //     };
 
-  //     // Sync subscription info from tenant
+  //     // Synchronize subscription configuration from tenant
   //     orgData.subscription = {
   //       ...orgData.subscription,
-  //       status: tenant.subscription.status,
+  //       status: sessionTenant.subscription.status,
   //       plan: {
-  //         id: tenant.subscription.plan,
-  //         name: tenant.subscription.plan,
+  //         id: sessionTenant.subscription.plan,
+  //         name: sessionTenant.subscription.plan,
   //         interval: organizationData.subscription?.plan?.interval || 'monthly'
   //       },
-  //       trialEnd: tenant.subscription.trialEndsAt
+  //       trialEnd: sessionTenant.subscription.trialEndsAt
   //     };
 
-  //     // Set default platform configuration based on tier
+  //     // Apply default platform configuration based on tier
   //     if (!orgData.platformConfig) {
-  //       orgData.platformConfig = this._getDefaultPlatformConfig(
-  //         organizationData.platformConfig?.tier || 'starter'
-  //       );
+  //       orgData.platformConfig = this._getDefaultPlatformConfig(tier);
   //     }
 
-  //     logger.debug('Organization data prepared', { 
-  //       orgName: orgData.name,
-  //       tenantCode: orgData.tenantCode 
-  //     });
-
-  //     // Step 6: Create organization
+  //     // Create organization document
   //     const organization = await HostedOrganization.create([orgData], { session });
-      
+
   //     logger.info('Organization created successfully', { 
   //       organizationId: organization[0]._id,
   //       platformId: organization[0].platformId 
   //     });
 
-  //     // Step 7: Update user's organization reference
+  //     // Update user organization associations
   //     user.organizations = user.organizations || [];
   //     user.organizations.push({
   //       organization: organization[0]._id,
@@ -478,86 +141,44 @@ class HostedOrganizationService {
   //     });
   //     await user.save({ session });
 
-  //     logger.debug('User organization reference updated', { userId });
+  //     // Establish bidirectional tenant-organization reference
+  //     sessionTenant.organizationRef = organization[0]._id;
+  //     await sessionTenant.save({ session });
 
-  //     // Step 8: Update tenant with organization reference
-  //     tenant.organizationRef = organization[0]._id;
-  //     await tenant.save({ session });
+  //     logger.debug('Tenant organization reference updated', { tenantId: sessionTenant._id });
 
-  //     logger.debug('Tenant organization reference updated', { tenantId: tenant._id });
-
-  //     // Step 9: Setup default organization data (lightweight operations only)
+  //     // Initialize default organization data
   //     await this._setupDefaultOrganizationData(organization[0], session);
 
-  //     logger.debug('Default organization data setup completed');
-
-  //     // Step 10: Commit transaction BEFORE any external operations
+  //     // Commit all changes atomically
   //     await session.commitTransaction();
-      
-  //     const transactionDuration = Date.now() - startTime;
+
   //     logger.info('Database transaction committed successfully', { 
-  //       duration: `${transactionDuration}ms`,
   //       organizationId: organization[0]._id 
   //     });
 
-  //     // Step 11: Populate tenant reference for return value
+  //     // Populate tenant reference for response
   //     await organization[0].populate('tenantRef');
 
-  //     // Step 12: NON-BLOCKING post-creation operations (moved outside transaction)
-  //     // These operations run asynchronously and won't block the response
+  //     // Execute non-blocking post-creation operations
   //     setImmediate(async () => {
   //       try {
-  //         logger.debug('Starting post-creation tasks (non-blocking)');
+  //         // Emit organization creation event
+  //         EventEmitter.emit('organization:created', {
+  //           organizationId: organization[0]._id,
+  //           tenantId: sessionTenant._id,
+  //           userId,
+  //           tier: organization[0].platformConfig.tier
+  //         });
 
-  //         // Send welcome email (commented out - external service call)
-  //         /*
-  //         try {
-  //           await this._sendWelcomeEmail(organization[0], user);
-  //           logger.debug('Welcome email sent successfully');
-  //         } catch (emailError) {
-  //           logger.warn('Welcome email sending failed (non-critical)', {
-  //             error: emailError.message,
-  //             organizationId: organization[0]._id
-  //           });
-  //         }
-  //         */
+  //         // Cache organization data
+  //         await CacheService.set(
+  //           `org:${organization[0]._id}`,
+  //           organization[0].toObject(),
+  //           3600
+  //         );
 
-  //         // Emit events (commented out - can cause delays)
-  //         /*
-  //         try {
-  //           EventEmitter.emit('organization:created', {
-  //             organizationId: organization[0]._id,
-  //             tenantId: tenant._id,
-  //             userId,
-  //             tier: organization[0].platformConfig.tier
-  //           });
-  //           logger.debug('Organization created event emitted');
-  //         } catch (eventError) {
-  //           logger.warn('Event emission failed (non-critical)', {
-  //             error: eventError.message,
-  //             organizationId: organization[0]._id
-  //           });
-  //         }
-  //         */
-
-  //         // Cache organization (commented out - external cache service call)
-  //         /*
-  //         try {
-  //           await CacheService.set(
-  //             `org:${organization[0]._id}`,
-  //             organization[0].toObject(),
-  //             3600 // 1 hour
-  //           );
-  //           logger.debug('Organization cached successfully');
-  //         } catch (cacheError) {
-  //           logger.warn('Organization caching failed (non-critical)', {
-  //             error: cacheError.message,
-  //             organizationId: organization[0]._id
-  //           });
-  //         }
-  //         */
-
-  //         logger.debug('Post-creation tasks completed (non-blocking)');
+  //         logger.debug('Post-creation tasks completed successfully');
 
   //       } catch (postCreationError) {
   //         logger.warn('Post-creation tasks failed (non-critical)', {
@@ -567,73 +188,263 @@ class HostedOrganizationService {
   //       }
   //     });
 
-  //     const totalDuration = Date.now() - startTime;
   //     logger.info('Hosted organization created successfully', {
   //       organizationId: organization[0]._id,
   //       platformId: organization[0].platformId,
-  //       tenantId: tenant.tenantId,
+  //       tenantId: sessionTenant.tenantId,
   //       subdomain: organization[0].domains?.subdomain,
-  //       tier: organization[0].platformConfig?.tier,
-  //       totalDuration: `${totalDuration}ms`,
-  //       transactionDuration: `${transactionDuration}ms`
+  //       tier: organization[0].platformConfig?.tier
   //     });
 
   //     return organization[0];
 
   //   } catch (error) {
-  //     // Rollback transaction on any error
-  //     try {
-  //       await session.abortTransaction();
-  //       logger.info('Transaction aborted due to error');
-  //     } catch (abortError) {
-  //       logger.error('Failed to abort transaction', { 
-  //         error: abortError.message,
-  //         originalError: error.message 
-  //       });
-  //     }
-
-  //     const errorDuration = Date.now() - startTime;
+  //     await session.abortTransaction();
       
-  //     // Enhanced error logging with context
   //     logger.error('Failed to create hosted organization', {
   //       error: {
   //         message: error.message,
-  //         stack: error.stack,
   //         name: error.name,
+  //         stack: error.stack,
   //         code: error.statusCode || error.code
   //       },
   //       userId,
   //       organizationName: organizationData.name,
-  //       tier: organizationData.platformConfig?.tier,
-  //       duration: `${errorDuration}ms`,
-  //       timestamp: new Date().toISOString()
+  //       tier: organizationData.platformConfig?.tier
   //     });
 
-  //     // Re-throw with appropriate error handling
+  //     // Provide specific error handling for common failure scenarios
   //     if (error instanceof AppError) {
   //       throw error;
   //     } else if (error.name === 'ValidationError') {
-  //       throw new AppError(`Validation failed: ${error.message}`, 400);
+  //       throw new AppError(`Organization validation failed: ${error.message}`, 400);
   //     } else if (error.name === 'MongoServerError' && error.code === 11000) {
-  //       throw new AppError('Organization with this name or identifier already exists', 409);
-  //     } else if (error.code === 'ETIMEDOUT' || error.message.includes('timeout')) {
+  //       throw new AppError('Organization with this identifier already exists', 409);
+  //     } else if (error.name === 'DocumentNotFoundError') {
+  //       throw new AppError('Required document not found during organization creation', 500);
+  //     } else if (error.message.includes('timeout')) {
   //       throw new AppError('Organization creation timed out. Please try again.', 408);
   //     } else {
   //       throw new AppError(`Failed to create organization: ${error.message}`, 500);
   //     }
 
   //   } finally {
-  //     // Always end session to prevent connection leaks
-  //     try {
-  //       await session.endSession();
-  //       logger.debug('Database session ended successfully');
-  //     } catch (sessionError) {
-  //       logger.error('Failed to end database session', { 
-  //         error: sessionError.message 
-  //       });
-  //     }
+  //     session.endSession();
   //   }
   // }
+
+  /**
+   * Create a new hosted organization with tenant infrastructure
+   * @param {Object} organizationData - Organization data
+   * @param {string} userId - ID of the user creating the organization
+   * @returns {Promise<Object>} - Created organization with tenant
+   */
+  static async createOrganization(organizationData, userId) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      logger.info('Creating hosted organization with tenant', {
+        organizationName: organizationData.name,
+        userId,
+        tier: organizationData.platformConfig?.tier || 'starter'
+      });
+
+      // Validate user exists
+      const user = await User.findById(userId).session(session);
+      if (!user) {
+        throw new AppError('User not found', 404);
+      }
+
+      // Check user's organization limit
+      const existingOrgs = await HostedOrganization.countDocuments({
+        'team.owner': userId,
+        'status.active': true
+      });
+
+      if (existingOrgs >= (user.limits?.organizations || 3)) {
+        throw new AppError('Organization limit reached for this user', 403);
+      }
+
+      // Prepare tenant configuration
+      const tier = organizationData.platformConfig?.tier || 'starter';
+      const tenantData = {
+        name: organizationData.name,
+        contactEmail: organizationData.headquarters?.email || user.email,
+        contactPhone: organizationData.headquarters?.phone,
+        website: organizationData.website,
+        owner: userId,
+        subscription: {
+          plan: this._mapTierToPlan(tier),
+          status: organizationData.subscription?.status || TENANT_CONSTANTS.SUBSCRIPTION_STATUS.TRIAL
+        },
+        database: {
+          strategy: this._getDatabaseStrategy(tier)
+        },
+        businessInfo: organizationData.businessInfo || {},
+        location: organizationData.headquarters?.address ? {
+          country: organizationData.headquarters.address.country,
+          state: organizationData.headquarters.address.state,
+          city: organizationData.headquarters.address.city,
+          timezone: organizationData.headquarters.timezone
+        } : {}
+      };
+
+      // Create tenant infrastructure within the same transaction session
+      const tenant = await OrganizationTenantService.createTenant(tenantData, userId, session);
+
+      logger.info('Tenant created successfully within transaction', { 
+        tenantId: tenant._id, 
+        tenantCode: tenant.tenantCode,
+        generatedTenantId: tenant.tenantId
+      });
+
+      // Prepare organization data structure using the tenant document directly
+      const orgData = {
+        ...organizationData,
+        tenantRef: tenant._id,
+        tenantId: tenant.tenantId,
+        tenantCode: tenant.tenantCode,
+        'team.owner': userId,
+        createdBy: userId,
+        'team.admins': [{
+          user: userId,
+          addedAt: new Date(),
+          addedBy: userId
+        }],
+        'metrics.usage.lastActivity': new Date(),
+        'domains.subdomain': organizationData.domains?.subdomain || tenant.tenantCode.toLowerCase()
+      };
+
+      // Synchronize subscription configuration from tenant
+      orgData.subscription = {
+        ...orgData.subscription,
+        status: tenant.subscription.status,
+        plan: {
+          id: tenant.subscription.plan,
+          name: tenant.subscription.plan,
+          interval: organizationData.subscription?.plan?.interval || 'monthly'
+        },
+        trialEnd: tenant.subscription.trialEndsAt
+      };
+
+      // Apply default platform configuration based on tier
+      if (!orgData.platformConfig) {
+        orgData.platformConfig = this._getDefaultPlatformConfig(tier);
+      }
+
+      // Create organization document
+      const organization = await HostedOrganization.create([orgData], { session });
+
+      logger.info('Organization created successfully', { 
+        organizationId: organization[0]._id,
+        platformId: organization[0].platformId 
+      });
+
+      // Update user organization associations
+      user.organizations = user.organizations || [];
+      user.organizations.push({
+        organization: organization[0]._id,
+        role: 'owner',
+        joinedAt: new Date()
+      });
+      await user.save({ session });
+
+      // Establish bidirectional tenant-organization reference
+      tenant.organizationRef = organization[0]._id;
+      await tenant.save({ session });
+
+      logger.debug('Tenant organization reference updated', { tenantId: tenant._id });
+
+      // Initialize default organization data
+      await this._setupDefaultOrganizationData(organization[0], session);
+
+      // Commit all changes atomically
+      await session.commitTransaction();
+
+      logger.info('Database transaction committed successfully', { 
+        organizationId: organization[0]._id,
+        tenantId: tenant._id
+      });
+
+      // Populate tenant reference for response
+      await organization[0].populate('tenantRef');
+
+      // Execute non-blocking post-creation operations
+      setImmediate(async () => {
+        try {
+          // Emit organization creation event
+          EventEmitter.emit('organization:created', {
+            organizationId: organization[0]._id,
+            tenantId: tenant._id,
+            userId,
+            tier: organization[0].platformConfig.tier
+          });
+
+          // Cache organization data
+          await CacheService.set(
+            `org:${organization[0]._id}`,
+            organization[0].toObject(),
+            3600
+          );
+
+          // Send welcome emails for the complete organization setup
+          await this._sendOrganizationWelcomeEmail(organization[0], user);
+
+          logger.debug('Post-creation tasks completed successfully');
+
+        } catch (postCreationError) {
+          logger.warn('Post-creation tasks failed (non-critical)', {
+            error: postCreationError.message,
+            organizationId: organization[0]._id
+          });
+        }
+      });
+
+      logger.info('Hosted organization created successfully', {
+        organizationId: organization[0]._id,
+        platformId: organization[0].platformId,
+        tenantId: tenant.tenantId,
+        subdomain: organization[0].domains?.subdomain,
+        tier: organization[0].platformConfig?.tier
+      });
+
+      return organization[0];
+
+    } catch (error) {
+      await session.abortTransaction();
+      
+      logger.error('Failed to create hosted organization', {
+        error: {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+          code: error.statusCode || error.code
+        },
+        userId,
+        organizationName: organizationData.name,
+        tier: organizationData.platformConfig?.tier
+      });
+
+      // Provide specific error handling for common failure scenarios
+      if (error instanceof AppError) {
+        throw error;
+      } else if (error.name === 'ValidationError') {
+        throw new AppError(`Organization validation failed: ${error.message}`, 400);
+      } else if (error.name === 'MongoServerError' && error.code === 11000) {
+        throw new AppError('Organization with this identifier already exists', 409);
+      } else if (error.name === 'DocumentNotFoundError') {
+        throw new AppError('Required document not found during organization creation', 500);
+      } else if (error.message.includes('timeout')) {
+        throw new AppError('Organization creation timed out. Please try again.', 408);
+      } else {
+        throw new AppError(`Failed to create organization: ${error.message}`, 500);
+      }
+
+    } finally {
+      session.endSession();
+    }
+  }
 
   /**
    * Get organization by ID with tenant context
@@ -2290,6 +2101,30 @@ class HostedOrganizationService {
         userEmail: user.email
       });
       // Don't throw - this is non-critical
+    }
+  }
+
+  /**
+   * Send organization-specific welcome email
+   * @private
+   */
+  static async _sendOrganizationWelcomeEmail(organization, user) {
+    try {
+      if (EmailService && typeof EmailService.sendWelcomeOrganization === 'function') {
+        await EmailService.sendWelcomeOrganization(user.email, {
+          organizationName: organization.name,
+          organizationUrl: organization.url || `https://${organization.domains?.subdomain}.yourdomain.com`,
+          userName: user.name || user.email,
+          tier: organization.platformConfig?.tier,
+          trialDays: organization.daysLeftInTrial
+        });
+      }
+    } catch (error) {
+      logger.warn('Organization welcome email sending failed', {
+        error: error.message,
+        organizationId: organization._id,
+        userEmail: user.email
+      });
     }
   }
 
