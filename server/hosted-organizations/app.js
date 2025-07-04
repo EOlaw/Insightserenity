@@ -67,7 +67,7 @@ app.use(express.json({ limit: config.multiTenant?.requestLimit || '50mb' })); //
 app.use(express.urlencoded({ extended: true, limit: config.multiTenant?.requestLimit || '50mb' }));
 
 // Import route modules
-const organizationRoutes = require('./organizations/routes/routes');
+const organizationRoutes = require('./organizations/routes/organization-routes');
 // const subscriptionRoutes = require('./subscriptions/routes/subscription-routes');
 // const billingRoutes = require('./billing/routes/billing-routes');
 // const tenantRoutes = require('./tenants/routes/tenant-routes');

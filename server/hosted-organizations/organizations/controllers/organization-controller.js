@@ -1,768 +1,1623 @@
 /**
- * @file Hosted Organization Controller
- * @description HTTP request handling for hosted organization management
- * @version 2.0.0
+ * @file Hosted Organization Controller - Complete Implementation
+ * @description HTTP request handlers for hosted organization management with tenant integration
+ * @version 3.1.0
  */
 
-// const { catchAsync } = require('../../../shared/utils/errors/catchAsync');
-const { sanitizeInput } = require('../../../shared/security/sanitizer');
+const HostedOrganizationService = require('../services/organization-service');
 const { AppError } = require('../../../shared/utils/app-error');
 const logger = require('../../../shared/utils/logger');
-const { validateRequest } = require('../../../shared/utils/validation/validator');
-const HostedOrganizationService = require('../services/organization-service');
+const { ORGANIZATION_CONSTANTS } = require('../../../shared/utils/constants/organization-constants');
+const { TENANT_CONSTANTS } = require('../../../organization-tenants/constants/tenant-constants');
 
+/**
+ * Hosted Organization Controller Class
+ * @class HostedOrganizationController
+ */
 class HostedOrganizationController {
   /**
    * Create a new hosted organization
    * @route POST /api/v1/hosted-organizations
+   * @access Private
    */
-  static createOrganization = (async (req, res, next) => {
-    logger.debug('Create hosted organization request', {
-      userId: req.user._id,
-      organizationName: req.body.name,
-      tier: req.body.platformConfig?.tier
-    });
+  static createOrganization = async (req, res, next) => {
+    try {
+      logger.info('Create organization request received', {
+        userId: req.user._id,
+        organizationName: req.body.name,
+        tier: req.body.platformConfig?.tier
+      });
 
-    // Sanitize input
-    const sanitizedData = sanitizeInput(req.body, [
-      'name', 'displayName', 'businessInfo', 'headquarters', 
-      'platformConfig', 'settings'
-    ]);
-
-    // Validate required fields
-    const validationErrors = validateRequest(sanitizedData, {
-      name: { required: true, minLength: 2, maxLength: 100 },
-      'headquarters.timezone': { required: true },
-      'platformConfig.tier': { 
-        required: true, 
-        enum: ['starter', 'growth', 'professional', 'enterprise'] 
+      // Validate required fields
+      const requiredFields = ['name'];
+      const missingFields = requiredFields.filter(field => !req.body[field]);
+      
+      if (missingFields.length > 0) {
+        throw new AppError(`Missing required fields: ${missingFields.join(', ')}`, 400);
       }
-    });
 
-    if (validationErrors.length > 0) {
-      return next(new AppError(`Validation failed: ${validationErrors.join(', ')}`, 400));
-    }
+      // Create organization with tenant
+      const organization = await HostedOrganizationService.createOrganization(
+        req.body,
+        req.user._id
+      );
 
-    // Create organization
-    const organization = await HostedOrganizationService.createOrganization(
-      sanitizedData,
-      req.user._id
-    );
-
-    res.status(201).json({
-      status: 'success',
-      data: {
-        organization: {
-          id: organization._id,
-          platformId: organization.platformId,
-          name: organization.name,
-          slug: organization.slug,
-          subdomain: organization.domains.subdomain,
-          url: organization.url,
-          tier: organization.platformConfig.tier,
-          subscription: organization.subscription,
-          owner: organization.owner,
-          createdAt: organization.createdAt
+      res.status(201).json({
+        status: 'success',
+        message: 'Organization created successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            platformId: organization.platformId,
+            tenantId: organization.tenantId,
+            tenantCode: organization.tenantCode,
+            name: organization.name,
+            slug: organization.slug,
+            url: organization.url,
+            tier: organization.platformConfig.tier,
+            subscription: organization.subscription,
+            owner: organization.team.owner,
+            createdAt: organization.createdAt
+          }
+        },
+        meta: {
+          trialEndsAt: organization.subscription.trialEnd,
+          platformUrl: organization.url,
+          tenantStatus: organization.tenantRef?.status
         }
-      },
-      meta: {
-        trialEndsAt: organization.subscription.trialEnd,
-        platformUrl: organization.url
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Create organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationName: req.body.name
+      });
+      next(error);
+    }
+  };
 
   /**
    * Get organization by ID
    * @route GET /api/v1/hosted-organizations/:id
+   * @access Private - Organization member or admin
    */
-  static getOrganizationById = (async (req, res, next) => {
-    logger.debug('Get organization by ID request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static getOrganizationById = async (req, res, next) => {
+    try {
+      logger.debug('Get organization by ID request', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        tenantContext: req.tenant?.tenantId
+      });
 
-    const options = {
-      populate: req.query.populate,
-      includeInactive: req.user.role === 'super_admin'
-    };
+      const options = {
+        populate: req.query.populate,
+        includeInactive: req.user.role === 'super_admin',
+        skipCache: req.query.skipCache === 'true'
+      };
 
-    const organization = await HostedOrganizationService.getOrganizationById(
-      req.params.id,
-      options
-    );
+      const organization = await HostedOrganizationService.getOrganizationById(
+        req.params.id,
+        options
+      );
 
-    // Check access permissions
-    if (!req.organization || req.organization._id.toString() !== organization._id.toString()) {
-      if (!['admin', 'super_admin'].includes(req.user.role)) {
-        return next(new AppError('Access denied', 403));
+      // Check access permissions
+      if (!organization.isMember(req.user._id) && req.user.role !== 'super_admin') {
+        throw new AppError('Access denied to this organization', 403);
       }
+
+      // Check if tenant context matches (for multi-tenant isolation)
+      if (req.tenant && organization.tenantId !== req.tenant.tenantId) {
+        throw new AppError('Organization not found in current tenant context', 404);
+      }
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          organization
+        },
+        meta: {
+          tenantStatus: organization.tenantRef?.status,
+          userRole: organization.getUserRole(req.user._id)
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get organization by ID request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
     }
+  };
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization
+  /**
+   * Get current organization (from tenant context)
+   * @route GET /api/v1/hosted-organizations/current
+   * @access Private - Must have tenant context
+   */
+  static getCurrentOrganization = async (req, res, next) => {
+    try {
+      logger.debug('Get current organization request', {
+        userId: req.user._id,
+        tenantId: req.tenant?.tenantId
+      });
+
+      if (!req.tenant) {
+        throw new AppError('No organization context found', 400);
       }
-    });
-  });
+
+      // Get organization by tenant ID
+      const organization = await HostedOrganizationService.getOrganizationByTenantId(
+        req.tenant.tenantId
+      );
+
+      if (!organization.isMember(req.user._id)) {
+        throw new AppError('You are not a member of this organization', 403);
+      }
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          organization
+        },
+        meta: {
+          tenantStatus: req.tenant.status,
+          userRole: organization.getUserRole(req.user._id),
+          resourceUsage: await HostedOrganizationService.getResourceUsage(organization._id)
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get current organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        tenantId: req.tenant?.tenantId
+      });
+      next(error);
+    }
+  };
 
   /**
    * Update organization
    * @route PATCH /api/v1/hosted-organizations/:id
+   * @access Private - Organization admin
    */
-  static updateOrganization = (async (req, res, next) => {
-    logger.debug('Update organization request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      fields: Object.keys(req.body)
-    });
+  static updateOrganization = async (req, res, next) => {
+    try {
+      logger.info('Update organization request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        fields: Object.keys(req.body)
+      });
 
-    // Prevent updating system fields
-    const restrictedFields = ['_id', 'platformId', 'owner', 'createdAt', 'slug'];
-    restrictedFields.forEach(field => delete req.body[field]);
-
-    // Sanitize input
-    const sanitizedData = sanitizeInput(req.body, [
-      'name', 'displayName', 'businessInfo', 'headquarters',
-      'branding', 'settings', 'security'
-    ]);
-
-    const organization = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      sanitizedData,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization
+      // Prevent updating sensitive fields directly
+      const restrictedFields = ['tenantRef', 'tenantId', 'tenantCode', 'platformId', 'owner'];
+      const attemptedRestricted = restrictedFields.filter(field => req.body[field]);
+      
+      if (attemptedRestricted.length > 0) {
+        throw new AppError(`Cannot update restricted fields: ${attemptedRestricted.join(', ')}`, 400);
       }
-    });
-  });
 
-  /**
-   * Search organizations
-   * @route GET /api/v1/hosted-organizations/search
-   */
-  static searchOrganizations = (async (req, res, next) => {
-    logger.debug('Search organizations request', {
-      userId: req.user._id,
-      filters: req.query
-    });
+      const organization = await HostedOrganizationService.updateOrganization(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
 
-    const filters = {};
-    const options = {
-      page: parseInt(req.query.page) || 1,
-      limit: Math.min(parseInt(req.query.limit) || 20, 100),
-      sort: req.query.sort || '-createdAt',
-      search: req.query.q || ''
-    };
+      res.status(200).json({
+        status: 'success',
+        message: 'Organization updated successfully',
+        data: {
+          organization
+        }
+      });
 
-    // Apply filters
-    if (req.query.tier) filters.tier = req.query.tier;
-    if (req.query.status) filters.subscriptionStatus = req.query.status;
-    if (req.query.industry) filters.industry = req.query.industry;
-    if (req.query.minHealth) filters.minHealthScore = parseInt(req.query.minHealth);
-
-    const result = await HostedOrganizationService.searchOrganizations(
-      filters,
-      options
-    );
-
-    res.status(200).json({
-      status: 'success',
-      results: result.organizations.length,
-      data: {
-        organizations: result.organizations
-      },
-      pagination: result.pagination
-    });
-  });
-
-  /**
-   * Get current organization (from subdomain/domain)
-   * @route GET /api/v1/hosted-organizations/current
-   */
-  static getCurrentOrganization = (async (req, res, next) => {
-    logger.debug('Get current organization request', {
-      userId: req.user._id,
-      organizationId: req.organization?._id
-    });
-
-    if (!req.organization) {
-      return next(new AppError('No organization context found', 404));
+    } catch (error) {
+      logger.error('Update organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
     }
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization: req.organization
-      }
-    });
-  });
+  };
 
   /**
-   * Update organization subscription
-   * @route POST /api/v1/hosted-organizations/:id/subscription
+   * Delete organization (soft delete)
+   * @route DELETE /api/v1/hosted-organizations/:id
+   * @access Private - Organization owner
    */
-  static updateSubscription = (async (req, res, next) => {
-    logger.info('Update subscription request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      newPlan: req.body.plan?.name
-    });
+  static deleteOrganization = async (req, res, next) => {
+    try {
+      logger.info('Delete organization request received', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const subscriptionData = {
-      status: req.body.status,
-      plan: req.body.plan,
-      currentPeriod: req.body.currentPeriod,
-      billingCycle: req.body.billingCycle
-    };
+      const organization = await HostedOrganizationService.deleteOrganization(
+        req.params.id,
+        req.user._id
+      );
 
-    const organization = await HostedOrganizationService.updateSubscription(
-      req.params.id,
-      subscriptionData,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization: {
-          id: organization._id,
-          subscription: organization.subscription,
-          platformConfig: organization.platformConfig
+      res.status(200).json({
+        status: 'success',
+        message: 'Organization scheduled for deletion',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            status: organization.status,
+            deletionScheduledFor: organization.status.deletionScheduledFor
+          }
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Delete organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Cancel subscription
-   * @route DELETE /api/v1/hosted-organizations/:id/subscription
+   * List user's organizations
+   * @route GET /api/v1/hosted-organizations
+   * @access Private
    */
-  static cancelSubscription = (async (req, res, next) => {
-    logger.warn('Cancel subscription request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      reason: req.body.reason
-    });
+  static listUserOrganizations = async (req, res, next) => {
+    try {
+      logger.debug('List user organizations request', {
+        userId: req.user._id,
+        includeInactive: req.query.includeInactive
+      });
 
-    const subscriptionData = {
-      status: 'canceled',
-      canceledAt: new Date()
-    };
+      const options = {
+        includeInactive: req.query.includeInactive === 'true',
+        populate: req.query.populate,
+        sort: req.query.sort || '-createdAt',
+        limit: req.query.limit,
+        skip: req.query.skip
+      };
 
-    const organization = await HostedOrganizationService.updateSubscription(
-      req.params.id,
-      subscriptionData,
-      req.user._id
-    );
+      const organizations = await HostedOrganizationService.getUserOrganizations(
+        req.user._id,
+        options
+      );
 
-    res.status(200).json({
-      status: 'success',
-      message: 'Subscription cancelled successfully',
-      data: {
-        organization: {
-          id: organization._id,
-          subscription: organization.subscription
+      res.status(200).json({
+        status: 'success',
+        data: {
+          organizations
+        },
+        meta: {
+          count: organizations.length
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('List user organizations request failed', {
+        error: error.message,
+        userId: req.user._id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get team members
+   * @route GET /api/v1/hosted-organizations/:id/team
+   * @access Private - Organization member
+   */
+  static getTeamMembers = async (req, res, next) => {
+    try {
+      logger.debug('Get team members request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const options = {
+        role: req.query.role,
+        status: req.query.status,
+        sortBy: req.query.sortBy,
+        sortOrder: req.query.sortOrder,
+        skip: req.query.skip,
+        limit: req.query.limit
+      };
+
+      const result = await HostedOrganizationService.getTeamMembers(
+        req.params.id,
+        options
+      );
+
+      res.status(200).json({
+        status: 'success',
+        data: result,
+        meta: {
+          pagination: {
+            total: result.total,
+            skip: result.skip,
+            limit: result.limit,
+            hasMore: result.hasMore
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get team members request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
    * Add team member
    * @route POST /api/v1/hosted-organizations/:id/team/members
+   * @access Private - Organization admin
    */
-  static addTeamMember = (async (req, res, next) => {
-    logger.debug('Add team member request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      newMemberId: req.body.userId
-    });
+  static addTeamMember = async (req, res, next) => {
+    try {
+      logger.info('Add team member request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        memberEmail: req.body.email
+      });
 
-    if (!req.body.userId) {
-      return next(new AppError('User ID is required', 400));
-    }
-
-    const organization = await HostedOrganizationService.addTeamMember(
-      req.params.id,
-      req.body.userId,
-      req.body.role || 'member',
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Team member added successfully',
-      data: {
-        organization: {
-          id: organization._id,
-          team: organization.team
-        }
+      // Validate required fields
+      if (!req.body.email) {
+        throw new AppError('Email is required', 400);
       }
-    });
-  });
+
+      // Validate email format
+      const emailRegex = /^\S+@\S+\.\S+$/;
+      if (!emailRegex.test(req.body.email)) {
+        throw new AppError('Invalid email format', 400);
+      }
+
+      const organization = await HostedOrganizationService.addTeamMember(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Team member added successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            team: organization.team
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Add team member request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Update team member
+   * @route PATCH /api/v1/hosted-organizations/:id/team/members/:memberId
+   * @access Private - Organization admin
+   */
+  static updateTeamMember = async (req, res, next) => {
+    try {
+      logger.info('Update team member request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        memberId: req.params.memberId
+      });
+
+      const organization = await HostedOrganizationService.updateTeamMember(
+        req.params.id,
+        req.params.memberId,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Team member updated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            team: organization.team
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Update team member request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        memberId: req.params.memberId
+      });
+      next(error);
+    }
+  };
 
   /**
    * Remove team member
-   * @route DELETE /api/v1/hosted-organizations/:id/team/members/:userId
+   * @route DELETE /api/v1/hosted-organizations/:id/team/members/:memberId
+   * @access Private - Organization admin
    */
-  static removeTeamMember = (async (req, res, next) => {
-    logger.debug('Remove team member request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      memberToRemove: req.params.userId
-    });
+  static removeTeamMember = async (req, res, next) => {
+    try {
+      logger.info('Remove team member request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        memberId: req.params.memberId
+      });
 
-    const organization = await HostedOrganizationService.removeTeamMember(
-      req.params.id,
-      req.params.userId,
-      req.user._id
-    );
+      const organization = await HostedOrganizationService.removeTeamMember(
+        req.params.id,
+        req.params.memberId,
+        req.user._id
+      );
 
-    res.status(200).json({
-      status: 'success',
-      message: 'Team member removed successfully',
-      data: {
-        organization: {
-          id: organization._id,
-          team: organization.team
+      res.status(200).json({
+        status: 'success',
+        message: 'Team member removed successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            team: organization.team
+          }
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Remove team member request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        memberId: req.params.memberId
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Get team members
-   * @route GET /api/v1/hosted-organizations/:id/team/members
+   * Resend invitation
+   * @route POST /api/v1/hosted-organizations/:id/team/invitations/:invitationId/resend
+   * @access Private - Organization admin
    */
-  static getTeamMembers = (async (req, res, next) => {
-    logger.debug('Get team members request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static resendInvitation = async (req, res, next) => {
+    try {
+      logger.info('Resend invitation request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        invitationId: req.params.invitationId
+      });
 
-    const organization = await HostedOrganizationService.getOrganizationById(
-      req.params.id,
-      { populate: 'team.admins.user owner' }
-    );
+      const organization = await HostedOrganizationService.resendInvitation(
+        req.params.id,
+        req.params.invitationId,
+        req.user._id
+      );
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        team: {
-          owner: organization.owner,
-          admins: organization.team.admins,
-          totalMembers: organization.team.totalMembers,
-          activeMembers: organization.team.activeMembers
+      res.status(200).json({
+        status: 'success',
+        message: 'Invitation resent successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name
+          }
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Resend invitation request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        invitationId: req.params.invitationId
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Update branding
-   * @route PATCH /api/v1/hosted-organizations/:id/branding
+   * Revoke invitation
+   * @route DELETE /api/v1/hosted-organizations/:id/team/invitations/:invitationId
+   * @access Private - Organization admin
    */
-  static updateBranding = (async (req, res, next) => {
-    logger.debug('Update branding request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static revokeInvitation = async (req, res, next) => {
+    try {
+      logger.info('Revoke invitation request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        invitationId: req.params.invitationId
+      });
 
-    const brandingData = sanitizeInput(req.body, [
-      'logo', 'favicon', 'colors', 'customCSS'
-    ]);
+      const organization = await HostedOrganizationService.revokeInvitation(
+        req.params.id,
+        req.params.invitationId,
+        req.user._id
+      );
 
-    const organization = await HostedOrganizationService.updateBranding(
-      req.params.id,
-      brandingData,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization: {
-          id: organization._id,
-          branding: organization.branding
+      res.status(200).json({
+        status: 'success',
+        message: 'Invitation revoked successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name
+          }
         }
+      });
+
+    } catch (error) {
+      logger.error('Revoke invitation request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        invitationId: req.params.invitationId
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Accept invitation
+   * @route POST /api/v1/hosted-organizations/invitations/accept
+   * @access Public (with valid token)
+   */
+  static acceptInvitation = async (req, res, next) => {
+    try {
+      logger.info('Accept invitation request received', {
+        token: req.body.token?.substring(0, 10) + '...',
+        userId: req.user?._id
+      });
+
+      if (!req.body.token) {
+        throw new AppError('Invitation token is required', 400);
       }
-    });
-  });
+
+      const result = await HostedOrganizationService.acceptInvitation(
+        req.body.token,
+        req.user?._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Invitation accepted successfully',
+        data: {
+          organization: {
+            _id: result.organization._id,
+            name: result.organization.name,
+            url: result.organization.url
+          },
+          role: result.role
+        }
+      });
+
+    } catch (error) {
+      logger.error('Accept invitation request failed', {
+        error: error.message,
+        token: req.body.token?.substring(0, 10) + '...'
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get subscription details
+   * @route GET /api/v1/hosted-organizations/:id/subscription
+   * @access Private - Organization member
+   */
+  static getSubscription = async (req, res, next) => {
+    try {
+      logger.debug('Get subscription request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const subscription = await HostedOrganizationService.getSubscription(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          subscription
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get subscription request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Update subscription
+   * @route PUT /api/v1/hosted-organizations/:id/subscription
+   * @access Private - Organization owner
+   */
+  static updateSubscription = async (req, res, next) => {
+    try {
+      logger.info('Update subscription request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        newPlan: req.body.plan?.id
+      });
+
+      // Validate subscription data
+      if (!req.body.plan?.id) {
+        throw new AppError('Plan ID is required', 400);
+      }
+
+      const validPlans = ['starter', 'growth', 'professional', 'enterprise'];
+      if (!validPlans.includes(req.body.plan.id)) {
+        throw new AppError('Invalid plan ID', 400);
+      }
+
+      const organization = await HostedOrganizationService.updateSubscription(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Subscription updated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            subscription: organization.subscription,
+            platformConfig: organization.platformConfig
+          }
+        },
+        meta: {
+          resourceLimits: organization.tenantRef?.resourceLimits
+        }
+      });
+
+    } catch (error) {
+      logger.error('Update subscription request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Cancel subscription
+   * @route POST /api/v1/hosted-organizations/:id/subscription/cancel
+   * @access Private - Organization owner
+   */
+  static cancelSubscription = async (req, res, next) => {
+    try {
+      logger.info('Cancel subscription request received', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const organization = await HostedOrganizationService.cancelSubscription(
+        req.params.id,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Subscription canceled successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            subscription: organization.subscription
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Cancel subscription request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get billing history
+   * @route GET /api/v1/hosted-organizations/:id/billing/history
+   * @access Private - Organization admin
+   */
+  static getBillingHistory = async (req, res, next) => {
+    try {
+      logger.debug('Get billing history request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const options = {
+        skip: req.query.skip,
+        limit: req.query.limit,
+        sortBy: req.query.sortBy,
+        sortOrder: req.query.sortOrder
+      };
+
+      const billingHistory = await HostedOrganizationService.getBillingHistory(
+        req.params.id,
+        options
+      );
+
+      res.status(200).json({
+        status: 'success',
+        data: billingHistory
+      });
+
+    } catch (error) {
+      logger.error('Get billing history request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get domains
+   * @route GET /api/v1/hosted-organizations/:id/domains
+   * @access Private - Organization member
+   */
+  static getDomains = async (req, res, next) => {
+    try {
+      logger.debug('Get domains request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const domains = await HostedOrganizationService.getDomains(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          domains
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get domains request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
    * Add custom domain
    * @route POST /api/v1/hosted-organizations/:id/domains
+   * @access Private - Organization admin
    */
-  static addCustomDomain = (async (req, res, next) => {
-    logger.debug('Add custom domain request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      domain: req.body.domain
-    });
+  static addDomain = async (req, res, next) => {
+    try {
+      logger.info('Add domain request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        domain: req.body.domain
+      });
 
-    if (!req.body.domain) {
-      return next(new AppError('Domain is required', 400));
-    }
+      if (!req.body.domain) {
+        throw new AppError('Domain is required', 400);
+      }
 
-    // Validate domain format
-    const domainRegex = /^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$/i;
-    if (!domainRegex.test(req.body.domain)) {
-      return next(new AppError('Invalid domain format', 400));
-    }
+      const organization = await HostedOrganizationService.addDomain(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
 
-    const result = await HostedOrganizationService.addCustomDomain(
-      req.params.id,
-      req.body.domain,
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Custom domain added. Please verify ownership.',
-      data: {
-        domain: req.body.domain,
-        verification: {
-          method: result.verificationMethod,
-          record: result.verificationRecord,
-          value: result.verificationCode
+      res.status(200).json({
+        status: 'success',
+        message: 'Domain added successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            domains: organization.domains
+          }
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Add domain request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Verify custom domain
-   * @route POST /api/v1/hosted-organizations/:id/domains/:domain/verify
+   * Verify domain
+   * @route POST /api/v1/hosted-organizations/:id/domains/verify
+   * @access Private - Organization admin
    */
-  static verifyCustomDomain = (async (req, res, next) => {
-    logger.debug('Verify custom domain request', {
-      userId: req.user._id,
-      organizationId: req.params.id,
-      domain: req.params.domain
-    });
+  static verifyDomain = async (req, res, next) => {
+    try {
+      logger.info('Verify domain request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        domain: req.body.domain
+      });
 
-    const isVerified = await HostedOrganizationService.verifyCustomDomain(
-      req.params.id,
-      req.params.domain
-    );
-
-    res.status(200).json({
-      status: isVerified ? 'success' : 'pending',
-      message: isVerified ? 'Domain verified successfully' : 'Domain verification pending',
-      data: {
-        domain: req.params.domain,
-        verified: isVerified
+      if (!req.body.domain) {
+        throw new AppError('Domain is required', 400);
       }
-    });
-  });
+
+      const result = await HostedOrganizationService.verifyDomain(
+        req.params.id,
+        req.body.domain,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: result.verified ? 'Domain verified successfully' : 'Domain verification pending',
+        data: {
+          domain: req.body.domain,
+          verified: result.verified,
+          verificationRecords: result.verificationRecords
+        }
+      });
+
+    } catch (error) {
+      logger.error('Verify domain request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Get organization analytics
-   * @route GET /api/v1/hosted-organizations/:id/analytics
+   * Remove domain
+   * @route DELETE /api/v1/hosted-organizations/:id/domains/:domainId
+   * @access Private - Organization admin
    */
-  static getOrganizationAnalytics = (async (req, res, next) => {
-    logger.debug('Get organization analytics request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static removeDomain = async (req, res, next) => {
+    try {
+      logger.info('Remove domain request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        domainId: req.params.domainId
+      });
 
-    const options = {
-      period: req.query.period || 'last30days',
-      includeHistory: req.query.includeHistory === 'true',
-      includeProjections: req.query.includeProjections === 'true'
-    };
+      const organization = await HostedOrganizationService.removeDomain(
+        req.params.id,
+        req.params.domainId,
+        req.user._id
+      );
 
-    const analytics = await HostedOrganizationService.getOrganizationAnalytics(
-      req.params.id,
-      options
-    );
+      res.status(200).json({
+        status: 'success',
+        message: 'Domain removed successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            domains: organization.domains
+          }
+        }
+      });
 
-    res.status(200).json({
-      status: 'success',
-      data: {
-        analytics
-      }
-    });
-  });
+    } catch (error) {
+      logger.error('Remove domain request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        domainId: req.params.domainId
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Get organization usage
+   * Get resource usage
    * @route GET /api/v1/hosted-organizations/:id/usage
+   * @access Private - Organization member
    */
-  static getOrganizationUsage = (async (req, res, next) => {
-    logger.debug('Get organization usage request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static getResourceUsage = async (req, res, next) => {
+    try {
+      logger.debug('Get resource usage request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const organization = await HostedOrganizationService.getOrganizationById(
-      req.params.id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        usage: {
-          current: organization.usage.currentMonth,
-          limits: organization.platformConfig.limits,
-          percentage: organization.usagePercentage,
-          historical: organization.usage.historical
-        }
+      // Get organization to verify access
+      const organization = await HostedOrganizationService.getOrganizationById(req.params.id);
+      
+      if (!organization.isMember(req.user._id)) {
+        throw new AppError('Access denied', 403);
       }
-    });
-  });
+
+      // Get usage from tenant service
+      const usage = await HostedOrganizationService.getResourceUsage(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          usage
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get resource usage request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Update organization settings
-   * @route PATCH /api/v1/hosted-organizations/:id/settings
+   * Get organization statistics
+   * @route GET /api/v1/hosted-organizations/:id/stats
+   * @access Private - Organization member
    */
-  static updateSettings = (async (req, res, next) => {
-    logger.debug('Update organization settings request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static getOrganizationStats = async (req, res, next) => {
+    try {
+      logger.debug('Get organization stats request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const settingsData = sanitizeInput(req.body, [
-      'locale', 'currency', 'dateFormat', 'timeFormat',
-      'weekStart', 'fiscalYearStart', 'notifications'
-    ]);
+      const stats = await HostedOrganizationService.getOrganizationStats(req.params.id);
 
-    const organization = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      { settings: settingsData },
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization: {
-          id: organization._id,
-          settings: organization.settings
+      res.status(200).json({
+        status: 'success',
+        data: {
+          stats
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Get organization stats request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get analytics
+   * @route GET /api/v1/hosted-organizations/:id/analytics
+   * @access Private - Organization member
+   */
+  static getAnalytics = async (req, res, next) => {
+    try {
+      logger.debug('Get analytics request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const options = {
+        metric: req.query.metric,
+        period: req.query.period,
+        granularity: req.query.granularity,
+        skip: req.query.skip,
+        limit: req.query.limit
+      };
+
+      const analytics = await HostedOrganizationService.getAnalytics(
+        req.params.id,
+        options
+      );
+
+      res.status(200).json({
+        status: 'success',
+        data: analytics
+      });
+
+    } catch (error) {
+      logger.error('Get analytics request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get security settings
+   * @route GET /api/v1/hosted-organizations/:id/security
+   * @access Private - Organization admin
+   */
+  static getSecuritySettings = async (req, res, next) => {
+    try {
+      logger.debug('Get security settings request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const securitySettings = await HostedOrganizationService.getSecuritySettings(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          security: securitySettings
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get security settings request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
    * Update security settings
-   * @route PATCH /api/v1/hosted-organizations/:id/security
+   * @route PUT /api/v1/hosted-organizations/:id/security
+   * @access Private - Organization owner
    */
-  static updateSecuritySettings = (async (req, res, next) => {
-    logger.warn('Update security settings request', {
-      userId: req.user._id,
-      organizationId: req.params.id
-    });
+  static updateSecuritySettings = async (req, res, next) => {
+    try {
+      logger.info('Update security settings request received', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const securityData = sanitizeInput(req.body, [
-      'twoFactorRequired', 'ipWhitelist', 'passwordPolicy',
-      'dataRetention'
-    ]);
+      const organization = await HostedOrganizationService.updateSecuritySettings(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
 
-    const organization = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      { security: securityData },
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        organization: {
-          id: organization._id,
-          security: organization.security
+      res.status(200).json({
+        status: 'success',
+        message: 'Security settings updated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            security: organization.security
+          }
         }
-      }
-    });
-  });
+      });
 
-  // Admin Routes
+    } catch (error) {
+      logger.error('Update security settings request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Admin: Get all organizations
+   * Get audit logs
+   * @route GET /api/v1/hosted-organizations/:id/audit-logs
+   * @access Private - Organization admin
+   */
+  static getAuditLogs = async (req, res, next) => {
+    try {
+      logger.debug('Get audit logs request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const options = {
+        action: req.query.action,
+        actor: req.query.actor,
+        severity: req.query.severity,
+        skip: req.query.skip,
+        limit: req.query.limit,
+        sortBy: req.query.sortBy,
+        sortOrder: req.query.sortOrder
+      };
+
+      const auditLogs = await HostedOrganizationService.getAuditLogs(
+        req.params.id,
+        options
+      );
+
+      res.status(200).json({
+        status: 'success',
+        data: auditLogs
+      });
+
+    } catch (error) {
+      logger.error('Get audit logs request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get integrations
+   * @route GET /api/v1/hosted-organizations/:id/integrations
+   * @access Private - Organization member
+   */
+  static getIntegrations = async (req, res, next) => {
+    try {
+      logger.debug('Get integrations request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const integrations = await HostedOrganizationService.getIntegrations(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          integrations
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get integrations request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Configure integration
+   * @route PUT /api/v1/hosted-organizations/:id/integrations/:integration
+   * @access Private - Organization admin
+   */
+  static configureIntegration = async (req, res, next) => {
+    try {
+      logger.info('Configure integration request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        integration: req.params.integration
+      });
+
+      const organization = await HostedOrganizationService.configureIntegration(
+        req.params.id,
+        req.params.integration,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Integration configured successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            integrations: organization.integrations
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Configure integration request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        integration: req.params.integration
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Remove integration
+   * @route DELETE /api/v1/hosted-organizations/:id/integrations/:integration
+   * @access Private - Organization admin
+   */
+  static removeIntegration = async (req, res, next) => {
+    try {
+      logger.info('Remove integration request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        integration: req.params.integration
+      });
+
+      const organization = await HostedOrganizationService.removeIntegration(
+        req.params.id,
+        req.params.integration,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Integration removed successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            integrations: organization.integrations
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Remove integration request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id,
+        integration: req.params.integration
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get preferences
+   * @route GET /api/v1/hosted-organizations/:id/preferences
+   * @access Private - Organization member
+   */
+  static getPreferences = async (req, res, next) => {
+    try {
+      logger.debug('Get preferences request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const preferences = await HostedOrganizationService.getPreferences(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          preferences
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get preferences request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Update preferences
+   * @route PUT /api/v1/hosted-organizations/:id/preferences
+   * @access Private - Organization admin
+   */
+  static updatePreferences = async (req, res, next) => {
+    try {
+      logger.info('Update preferences request received', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const organization = await HostedOrganizationService.updatePreferences(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Preferences updated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            preferences: organization.preferences
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Update preferences request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Get branding
+   * @route GET /api/v1/hosted-organizations/:id/branding
+   * @access Private - Organization member
+   */
+  static getBranding = async (req, res, next) => {
+    try {
+      logger.debug('Get branding request', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const branding = await HostedOrganizationService.getBranding(req.params.id);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          branding
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get branding request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Update branding
+   * @route PUT /api/v1/hosted-organizations/:id/branding
+   * @access Private - Organization admin
+   */
+  static updateBranding = async (req, res, next) => {
+    try {
+      logger.info('Update branding request received', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+
+      const organization = await HostedOrganizationService.updateBranding(
+        req.params.id,
+        req.body,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Branding updated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            branding: organization.branding
+          }
+        }
+      });
+
+    } catch (error) {
+      logger.error('Update branding request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Export organization data
+   * @route POST /api/v1/hosted-organizations/:id/export
+   * @access Private - Organization owner
+   */
+  static exportOrganizationData = async (req, res, next) => {
+    try {
+      logger.info('Export organization data request received', {
+        userId: req.user._id,
+        organizationId: req.params.id,
+        format: req.body.format
+      });
+
+      const validFormats = ['json', 'csv', 'pdf'];
+      if (!req.body.format || !validFormats.includes(req.body.format)) {
+        throw new AppError('Valid format is required (json, csv, pdf)', 400);
+      }
+
+      const exportData = await HostedOrganizationService.exportOrganizationData(
+        req.params.id,
+        req.body.format,
+        req.user._id
+      );
+
+      res.status(200).json({
+        status: 'success',
+        message: 'Export initiated successfully',
+        data: {
+          exportId: exportData.exportId,
+          downloadUrl: exportData.downloadUrl,
+          expiresAt: exportData.expiresAt
+        }
+      });
+
+    } catch (error) {
+      logger.error('Export organization data request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
+
+  /**
+   * Super Admin Methods
+   */
+
+  /**
+   * Get all organizations (platform admin only)
    * @route GET /api/v1/hosted-organizations/admin/all
+   * @access Private - Super admin
    */
-  static adminGetAllOrganizations = (async (req, res, next) => {
-    logger.debug('Admin get all organizations request', {
-      adminId: req.user._id
-    });
+  static getAllOrganizations = async (req, res, next) => {
+    try {
+      logger.debug('Get all organizations request (admin)', {
+        userId: req.user._id
+      });
 
-    const filters = {};
-    const options = {
-      page: parseInt(req.query.page) || 1,
-      limit: Math.min(parseInt(req.query.limit) || 50, 200),
-      sort: req.query.sort || '-createdAt'
-    };
+      const options = {
+        filters: req.query.filters ? JSON.parse(req.query.filters) : {},
+        sort: req.query.sort,
+        skip: req.query.skip,
+        limit: req.query.limit
+      };
 
-    // Admin can see inactive organizations
-    if (req.query.includeInactive === 'true') {
-      delete filters['status.active'];
+      const organizations = await HostedOrganizationService.getAllOrganizations(options);
+
+      res.status(200).json({
+        status: 'success',
+        data: {
+          organizations
+        },
+        meta: {
+          count: organizations.length
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get all organizations request failed', {
+        error: error.message,
+        userId: req.user._id
+      });
+      next(error);
     }
-
-    const result = await HostedOrganizationService.searchOrganizations(
-      filters,
-      options
-    );
-
-    res.status(200).json({
-      status: 'success',
-      results: result.organizations.length,
-      data: {
-        organizations: result.organizations
-      },
-      pagination: result.pagination
-    });
-  });
+  };
 
   /**
-   * Admin: Get organizations at risk
-   * @route GET /api/v1/hosted-organizations/admin/at-risk
+   * Get platform metrics (platform admin only)
+   * @route GET /api/v1/hosted-organizations/admin/metrics
+   * @access Private - Super admin
    */
-  static adminGetOrganizationsAtRisk = (async (req, res, next) => {
-    logger.debug('Admin get organizations at risk request', {
-      adminId: req.user._id
-    });
+  static getPlatformMetrics = async (req, res, next) => {
+    try {
+      logger.debug('Get platform metrics request (admin)', {
+        userId: req.user._id
+      });
 
-    const organizations = await HostedOrganizationService.getOrganizationsAtRisk();
+      const metrics = await HostedOrganizationService.getPlatformMetrics();
 
-    res.status(200).json({
-      status: 'success',
-      results: organizations.length,
-      data: {
-        organizations
-      }
-    });
-  });
+      res.status(200).json({
+        status: 'success',
+        data: {
+          metrics
+        }
+      });
 
-  /**
-   * Admin: Lock organization
-   * @route POST /api/v1/hosted-organizations/:id/admin/lock
-   */
-  static adminLockOrganization = (async (req, res, next) => {
-    logger.warn('Admin lock organization request', {
-      adminId: req.user._id,
-      organizationId: req.params.id,
-      reason: req.body.reason
-    });
-
-    if (!req.body.reason) {
-      return next(new AppError('Lock reason is required', 400));
+    } catch (error) {
+      logger.error('Get platform metrics request failed', {
+        error: error.message,
+        userId: req.user._id
+      });
+      next(error);
     }
-
-    const organization = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      {
-        'status.locked': true,
-        'status.lockedReason': req.body.reason
-      },
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Organization locked successfully',
-      data: {
-        organization: {
-          id: organization._id,
-          name: organization.name,
-          locked: organization.status.locked,
-          lockedReason: organization.status.lockedReason
-        }
-      }
-    });
-  });
+  };
 
   /**
-   * Admin: Unlock organization
-   * @route POST /api/v1/hosted-organizations/:id/admin/unlock
+   * Suspend organization (platform admin only)
+   * @route POST /api/v1/hosted-organizations/:id/suspend
+   * @access Private - Super admin
    */
-  static adminUnlockOrganization = (async (req, res, next) => {
-    logger.info('Admin unlock organization request', {
-      adminId: req.user._id,
-      organizationId: req.params.id
-    });
+  static suspendOrganization = async (req, res, next) => {
+    try {
+      logger.info('Suspend organization request received (admin)', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const organization = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      {
-        'status.locked': false,
-        'status.lockedReason': null
-      },
-      req.user._id
-    );
+      const organization = await HostedOrganizationService.suspendOrganization(
+        req.params.id,
+        req.user._id
+      );
 
-    res.status(200).json({
-      status: 'success',
-      message: 'Organization unlocked successfully',
-      data: {
-        organization: {
-          id: organization._id,
-          name: organization.name,
-          locked: organization.status.locked
+      res.status(200).json({
+        status: 'success',
+        message: 'Organization suspended successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            status: organization.status
+          }
         }
-      }
-    });
-  });
+      });
+
+    } catch (error) {
+      logger.error('Suspend organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 
   /**
-   * Admin: Feature organization
-   * @route POST /api/v1/hosted-organizations/:id/admin/feature
+   * Reactivate organization (platform admin only)
+   * @route POST /api/v1/hosted-organizations/:id/reactivate
+   * @access Private - Super admin
    */
-  static adminFeatureOrganization = (async (req, res, next) => {
-    logger.info('Admin feature organization request', {
-      adminId: req.user._id,
-      organizationId: req.params.id
-    });
+  static reactivateOrganization = async (req, res, next) => {
+    try {
+      logger.info('Reactivate organization request received (admin)', {
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
 
-    const organization = await HostedOrganizationService.getOrganizationById(
-      req.params.id
-    );
+      const organization = await HostedOrganizationService.reactivateOrganization(
+        req.params.id,
+        req.user._id
+      );
 
-    const newFeaturedStatus = !organization.status.featured;
-
-    const updatedOrg = await HostedOrganizationService.updateOrganization(
-      req.params.id,
-      {
-        'status.featured': newFeaturedStatus
-      },
-      req.user._id
-    );
-
-    res.status(200).json({
-      status: 'success',
-      message: `Organization ${newFeaturedStatus ? 'featured' : 'unfeatured'} successfully`,
-      data: {
-        organization: {
-          id: updatedOrg._id,
-          name: updatedOrg.name,
-          featured: updatedOrg.status.featured
+      res.status(200).json({
+        status: 'success',
+        message: 'Organization reactivated successfully',
+        data: {
+          organization: {
+            _id: organization._id,
+            name: organization.name,
+            status: organization.status
+          }
         }
-      }
-    });
-  });
+      });
 
-  /**
-   * System: Process monthly usage reset
-   * @route POST /api/v1/hosted-organizations/system/reset-usage
-   */
-  static systemResetMonthlyUsage = (async (req, res, next) => {
-    logger.info('System reset monthly usage request', {
-      adminId: req.user._id
-    });
-
-    await HostedOrganizationService.processMonthlyUsageReset();
-
-    res.status(200).json({
-      status: 'success',
-      message: 'Monthly usage reset completed successfully'
-    });
-  });
+    } catch (error) {
+      logger.error('Reactivate organization request failed', {
+        error: error.message,
+        userId: req.user._id,
+        organizationId: req.params.id
+      });
+      next(error);
+    }
+  };
 }
 
 module.exports = HostedOrganizationController;
