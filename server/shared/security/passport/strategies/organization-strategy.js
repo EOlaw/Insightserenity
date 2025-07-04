@@ -9,7 +9,7 @@ const Strategy = require('passport-strategy').Strategy;
 const saml = require('@node-saml/passport-saml');
 const jwt = require('jsonwebtoken');
 
-const OrganizationService = require('../../../../hosted-organizations/organizations/services/organization-service');
+const OrganizationService = require('../../../../hosted-organizations/organizations/services/service');
 const AuthService = require('../../../auth/services/auth-service');
 const config = require('../../../config/config');
 const UserService = require('../../../users/services/user-service');

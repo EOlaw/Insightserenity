@@ -398,17 +398,17 @@ const userSchema = new Schema({
     }
   },
   
-  // Organization Associations
+  // HostedOrganization Associations
   organization: {
     current: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Organization'
+      ref: 'HostedOrganization'
     },
     
     organizations: [{
       organizationId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Organization'
+        ref: 'HostedOrganization'
       },
       role: String,
       department: String,
@@ -420,7 +420,7 @@ const userSchema = new Schema({
     invitations: [{
       organizationId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Organization'
+        ref: 'HostedOrganization'
       },
       invitedBy: {
         type: mongoose.Schema.Types.ObjectId,

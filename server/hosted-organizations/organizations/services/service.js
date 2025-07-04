@@ -75,27 +75,21 @@ class HostedOrganizationService {
   //       } : {}
   //     };
 
-  //     // Create tenant infrastructure
-  //     const tenant = await OrganizationTenantService.createTenant(tenantData, userId);
+  //     // Create tenant infrastructure within the same transaction session
+  //     const tenant = await OrganizationTenantService.createTenant(tenantData, userId, session);
 
-  //     logger.info('Tenant created successfully', { 
+  //     logger.info('Tenant created successfully within transaction', { 
   //       tenantId: tenant._id, 
   //       tenantCode: tenant.tenantCode,
   //       generatedTenantId: tenant.tenantId
   //     });
 
-  //     // Retrieve tenant within current session context to enable updates
-  //     const sessionTenant = await OrganizationTenant.findById(tenant._id).session(session);
-  //     if (!sessionTenant) {
-  //       throw new AppError('Failed to retrieve created tenant in session context', 500);
-  //     }
-
-  //     // Prepare organization data structure
+  //     // Prepare organization data structure using the tenant document directly
   //     const orgData = {
   //       ...organizationData,
-  //       tenantRef: sessionTenant._id,
-  //       tenantId: sessionTenant.tenantId,
-  //       tenantCode: sessionTenant.tenantCode,
+  //       tenantRef: tenant._id,
+  //       tenantId: tenant.tenantId,
+  //       tenantCode: tenant.tenantCode,
   //       'team.owner': userId,
   //       createdBy: userId,
   //       'team.admins': [{
@@ -104,19 +98,19 @@ class HostedOrganizationService {
   //         addedBy: userId
   //       }],
   //       'metrics.usage.lastActivity': new Date(),
-  //       'domains.subdomain': organizationData.domains?.subdomain || sessionTenant.tenantCode.toLowerCase()
+  //       'domains.subdomain': organizationData.domains?.subdomain || tenant.tenantCode.toLowerCase()
   //     };
 
   //     // Synchronize subscription configuration from tenant
   //     orgData.subscription = {
   //       ...orgData.subscription,
-  //       status: sessionTenant.subscription.status,
+  //       status: tenant.subscription.status,
   //       plan: {
-  //         id: sessionTenant.subscription.plan,
-  //         name: sessionTenant.subscription.plan,
+  //         id: tenant.subscription.plan,
+  //         name: tenant.subscription.plan,
   //         interval: organizationData.subscription?.plan?.interval || 'monthly'
   //       },
-  //       trialEnd: sessionTenant.subscription.trialEndsAt
+  //       trialEnd: tenant.subscription.trialEndsAt
   //     };
 
   //     // Apply default platform configuration based on tier
@@ -134,18 +128,20 @@ class HostedOrganizationService {
 
   //     // Update user organization associations
   //     user.organizations = user.organizations || [];
-  //     user.organizations.push({
-  //       organization: organization[0]._id,
+  //     user.organization.organizations.push({
+  //       organizationId: organization[0]._id,
   //       role: 'owner',
-  //       joinedAt: new Date()
+  //       department: null,
+  //       joinedAt: new Date(),
+  //       active: true
   //     });
   //     await user.save({ session });
 
   //     // Establish bidirectional tenant-organization reference
-  //     sessionTenant.organizationRef = organization[0]._id;
-  //     await sessionTenant.save({ session });
+  //     tenant.organizationRef = organization[0]._id;
+  //     await tenant.save({ session });
 
-  //     logger.debug('Tenant organization reference updated', { tenantId: sessionTenant._id });
+  //     logger.debug('Tenant organization reference updated', { tenantId: tenant._id });
 
   //     // Initialize default organization data
   //     await this._setupDefaultOrganizationData(organization[0], session);
@@ -154,7 +150,8 @@ class HostedOrganizationService {
   //     await session.commitTransaction();
 
   //     logger.info('Database transaction committed successfully', { 
-  //       organizationId: organization[0]._id 
+  //       organizationId: organization[0]._id,
+  //       tenantId: tenant._id
   //     });
 
   //     // Populate tenant reference for response
@@ -166,7 +163,7 @@ class HostedOrganizationService {
   //         // Emit organization creation event
   //         EventEmitter.emit('organization:created', {
   //           organizationId: organization[0]._id,
-  //           tenantId: sessionTenant._id,
+  //           tenantId: tenant._id,
   //           userId,
   //           tier: organization[0].platformConfig.tier
   //         });
@@ -177,6 +174,9 @@ class HostedOrganizationService {
   //           organization[0].toObject(),
   //           3600
   //         );
+
+  //         // Send welcome emails for the complete organization setup
+  //         await this._sendOrganizationWelcomeEmail(organization[0], user);
 
   //         logger.debug('Post-creation tasks completed successfully');
 
@@ -191,7 +191,7 @@ class HostedOrganizationService {
   //     logger.info('Hosted organization created successfully', {
   //       organizationId: organization[0]._id,
   //       platformId: organization[0].platformId,
-  //       tenantId: sessionTenant.tenantId,
+  //       tenantId: tenant.tenantId,
   //       subdomain: organization[0].domains?.subdomain,
   //       tier: organization[0].platformConfig?.tier
   //     });
@@ -341,20 +341,45 @@ class HostedOrganizationService {
         platformId: organization[0].platformId 
       });
 
-      // Update user organization associations
-      user.organizations = user.organizations || [];
-      user.organizations.push({
-        organization: organization[0]._id,
+      // CORRECTED: Update user organization associations with proper schema structure
+      user.organization = user.organization || { organizations: [], current: null };
+      user.organization.organizations = user.organization.organizations || [];
+
+      user.organization.organizations.push({
+        organizationId: organization[0]._id,  // Correct field name matching schema
         role: 'owner',
-        joinedAt: new Date()
+        department: null,
+        joinedAt: new Date(),
+        active: true
       });
+
+      // Set as current organization if this is the user's first organization
+      if (user.organization.organizations.filter(org => org.active).length === 1) {
+        user.organization.current = organization[0]._id;
+      }
+
       await user.save({ session });
 
-      // Establish bidirectional tenant-organization reference
+      logger.info('User organization membership updated', {
+        userId: user._id,
+        organizationId: organization[0]._id,
+        role: 'owner',
+        isCurrentOrganization: user.organization.current?.toString() === organization[0]._id.toString()
+      });
+
+      // CORRECTED: Update tenant with organization reference and member count
       tenant.organizationRef = organization[0]._id;
+      tenant.memberCount = 1; // Owner counts as first member
+      tenant.flags.isActive = true; // Activate tenant since it now has members
+
       await tenant.save({ session });
 
-      logger.debug('Tenant organization reference updated', { tenantId: tenant._id });
+      logger.info('Tenant updated with organization reference and member count', {
+        tenantId: tenant._id,
+        organizationId: organization[0]._id,
+        memberCount: tenant.memberCount,
+        isActive: tenant.flags.isActive
+      });
 
       // Initialize default organization data
       await this._setupDefaultOrganizationData(organization[0], session);
@@ -364,7 +389,8 @@ class HostedOrganizationService {
 
       logger.info('Database transaction committed successfully', { 
         organizationId: organization[0]._id,
-        tenantId: tenant._id
+        tenantId: tenant._id,
+        memberCount: tenant.memberCount
       });
 
       // Populate tenant reference for response
@@ -406,7 +432,8 @@ class HostedOrganizationService {
         platformId: organization[0].platformId,
         tenantId: tenant.tenantId,
         subdomain: organization[0].domains?.subdomain,
-        tier: organization[0].platformConfig?.tier
+        tier: organization[0].platformConfig?.tier,
+        memberCount: tenant.memberCount
       });
 
       return organization[0];
