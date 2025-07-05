@@ -4,6 +4,7 @@
  * @version 1.0.0
  */
 
+const HostedOrganization = require('../../hosted-organizations/organizations/models/organization-model');
 const OrganizationTenantService = require('../services/organization-tenant-service');
 const { AppError } = require('../../shared/utils/app-error');
 const logger = require('../../shared/utils/logger');
@@ -115,12 +116,12 @@ const detectTenantContext = async (req, res, next) => {
 };
 
 /**
- * Require tenant context
+ * Require tenant context and establish organization context
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next function
  */
-const requireTenantContext = (req, res, next) => {
+const requireTenantContext = async (req, res, next) => {
   if (!req.tenant || !req.tenantId) {
     logger.warn('Tenant context required but not found', {
       userId: req.user?._id,
@@ -145,6 +146,38 @@ const requireTenantContext = (req, res, next) => {
     } else {
       return next(new AppError('Tenant is not active', 403));
     }
+  }
+
+  // NEW: Establish organization context from tenant
+  try {
+    // Look for organization that references this tenant
+    // Ensure we get a full Mongoose document with methods, not a lean object
+    const organization = await HostedOrganization.findOne({ tenantRef: req.tenant._id })
+      .populate('team.owner team.admins.user team.members.user'); // Add population if needed
+  
+    
+    if (organization) {
+      req.organization = organization;
+      req.organizationId = organization._id;
+      
+      logger.debug('Organization context established from tenant', {
+        tenantId: req.tenantId,
+        organizationId: organization._id,
+        organizationName: organization.name,
+        hasIsMemberMethod: typeof organization.isMember === 'function' // Verify method exists
+      });
+    } else {
+      logger.warn('Organization not found for tenant', {
+        tenantId: req.tenantId,
+        tenantObjectId: req.tenant._id
+      });
+    }
+  } catch (error) {
+    logger.error('Error establishing organization context from tenant', {
+      tenantId: req.tenantId,
+      error: error.message
+    });
+    // Continue without organization context rather than failing the request
   }
 
   next();

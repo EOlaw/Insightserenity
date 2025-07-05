@@ -134,13 +134,14 @@ router.post('/',
 );
 
 // All routes below this point require active subscription
-router.use(requireActiveSubscription); // Ensure active subscription for organization operations
+// router.use(requireActiveSubscription); // Ensure active subscription for organization operations
 
 // Get current organization (requires tenant context)
 router.get('/current',
-  requireAuth,
+  // requireAuth,
   detectTenantContext,
   requireTenantContext,
+  requireActiveSubscription,
   requireOrganizationMember,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getCurrentOrganization

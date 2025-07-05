@@ -50,7 +50,7 @@ const checkOrganizationContext = (req, res, next) => {
   
   // Ensure user belongs to the organization
   const belongsToOrg = req.user.organizations?.some(
-    org => org.organization.toString() === req.organization._id.toString()
+    org => org.organizationId.toString() === req.organization._id.toString()
   );
   
   if (!belongsToOrg && !['admin', 'super_admin'].includes(req.user.role?.primary)) {
@@ -146,7 +146,7 @@ const requireOrganizationMember = (req, res, next) => {
   
   // Alternative: Check through user's organizations array
   const belongsToOrg = req.user.organizations?.some(
-    org => org.organization.toString() === req.organization._id.toString()
+    org => org.organizationId.toString() === req.organization._id.toString()
   );
   
   if (!isOwner && !isAdmin && !isMember && !belongsToOrg) {
@@ -197,7 +197,7 @@ const requireOrganizationPermission = (permission) => {
     
     // Find user's membership in organization
     const membership = req.user.organizations?.find(
-      org => org.organization.toString() === req.organization._id.toString()
+      org => org.organizationId.toString() === req.organization._id.toString()
     );
     
     if (!membership) {
