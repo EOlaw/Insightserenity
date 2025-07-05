@@ -656,6 +656,143 @@ hostedOrganizationSchema.statics.findByMember = function(userId, options = {}) {
 };
 
 /**
+ * Static helper methods for handling organizations with potential method issues
+ */
+
+/**
+ * Check organization membership with fallback logic
+ * @param {Object} organization - Organization document or plain object
+ * @param {string} userId - User ID to check
+ * @returns {boolean} - Whether user is a member
+ */
+hostedOrganizationSchema.statics.checkMembership = function(organization, userId) {
+  if (!organization || !userId) {
+    return false;
+  }
+
+  // Try to use the instance method first if available
+  if (typeof organization.isMember === 'function') {
+    try {
+      return organization.isMember(userId);
+    } catch (methodError) {
+      // Log the error if logger is available, otherwise continue silently
+      if (typeof logger !== 'undefined') {
+        logger.warn('isMember method failed, using fallback', {
+          organizationId: organization._id,
+          userId,
+          error: methodError.message
+        });
+      }
+    }
+  }
+  
+  // Fallback implementation for populated and unpopulated references
+  const userIdStr = userId.toString();
+  
+  // Check if user is owner
+  const ownerId = organization.team?.owner?._id || organization.team?.owner;
+  if (ownerId?.toString() === userIdStr) {
+    return true;
+  }
+  
+  // Check if user is admin
+  const isAdmin = organization.team?.admins?.some(admin => {
+    const adminUserId = admin.user?._id || admin.user;
+    return adminUserId?.toString() === userIdStr;
+  });
+  if (isAdmin) {
+    return true;
+  }
+  
+  // Check if user is member
+  const isMember = organization.team?.members?.some(member => {
+    const memberUserId = member.user?._id || member.user;
+    return memberUserId?.toString() === userIdStr;
+  });
+  
+  return isMember;
+};
+
+/**
+ * Get user role in organization with fallback logic
+ * @param {Object} organization - Organization document or plain object
+ * @param {string} userId - User ID
+ * @returns {string|null} - User role or null if not a member
+ */
+hostedOrganizationSchema.statics.getUserRole = function(organization, userId) {
+  if (!organization || !userId) {
+    return null;
+  }
+
+  // Try to use the instance method first if available
+  if (typeof organization.getUserRole === 'function') {
+    try {
+      return organization.getUserRole(userId);
+    } catch (methodError) {
+      // Log the error if logger is available, otherwise continue silently
+      if (typeof logger !== 'undefined') {
+        logger.warn('getUserRole method failed, using fallback', {
+          organizationId: organization._id,
+          userId,
+          error: methodError.message
+        });
+      }
+    }
+  }
+  
+  // Fallback implementation for populated and unpopulated references
+  const userIdStr = userId.toString();
+  
+  // Check if user is owner
+  const ownerId = organization.team?.owner?._id || organization.team?.owner;
+  if (ownerId?.toString() === userIdStr) {
+    return 'owner';
+  }
+  
+  // Check if user is admin
+  const isAdmin = organization.team?.admins?.some(admin => {
+    const adminUserId = admin.user?._id || admin.user;
+    return adminUserId?.toString() === userIdStr;
+  });
+  if (isAdmin) {
+    return 'admin';
+  }
+  
+  // Check if user is member and get their specific role
+  const memberRecord = organization.team?.members?.find(member => {
+    const memberUserId = member.user?._id || member.user;
+    return memberUserId?.toString() === userIdStr;
+  });
+  
+  return memberRecord?.role || (memberRecord ? 'member' : null);
+};
+
+/**
+ * Enhanced membership check that also validates user organizations array
+ * @param {Object} organization - Organization document or plain object
+ * @param {Object} user - User document with organizations array
+ * @returns {boolean} - Whether user is a member through any method
+ */
+hostedOrganizationSchema.statics.checkMembershipExtended = function(organization, user) {
+  if (!organization || !user) {
+    return false;
+  }
+
+  // First check team-based membership
+  const isTeamMember = this.checkMembership(organization, user._id);
+  if (isTeamMember) {
+    return true;
+  }
+
+  // Also check user's organizations array as fallback
+  const belongsToOrg = user.organizations?.some(org => 
+    org.organizationId?.toString() === organization._id?.toString() && org.active
+  );
+
+  return belongsToOrg;
+};
+
+/**
  * Plugins
  */
 hostedOrganizationSchema.plugin(require('mongoose-lean-virtuals'));

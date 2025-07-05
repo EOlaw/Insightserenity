@@ -148,15 +148,42 @@ const requireTenantContext = async (req, res, next) => {
     }
   }
 
-  // NEW: Establish organization context from tenant
+  // Establish organization context from tenant
   try {
-    // Look for organization that references this tenant
-    // Ensure we get a full Mongoose document with methods, not a lean object
-    const organization = await HostedOrganization.findOne({ tenantRef: req.tenant._id })
-      .populate('team.owner team.admins.user team.members.user'); // Add population if needed
-  
+    // First attempt: Get organization with population
+    let organization = await HostedOrganization.findOne({ tenantRef: req.tenant._id })
+      .populate([
+        { path: 'team.owner', select: '_id email name' },
+        { path: 'team.admins.user', select: '_id email name' },
+        { path: 'team.members.user', select: '_id email name' }
+      ])
+      .exec();
     
     if (organization) {
+      // Verify that instance methods are available
+      if (typeof organization.isMember !== 'function' || typeof organization.getUserRole !== 'function') {
+        logger.warn('Organization document missing instance methods after population, re-fetching', {
+          tenantId: req.tenantId,
+          organizationId: organization._id,
+          hasIsMember: typeof organization.isMember === 'function',
+          hasGetUserRole: typeof organization.getUserRole === 'function'
+        });
+        
+        // Re-fetch without population to ensure methods are preserved
+        organization = await HostedOrganization.findById(organization._id).exec();
+        
+        if (!organization || typeof organization.isMember !== 'function') {
+          logger.error('Unable to retrieve organization with proper methods', {
+            tenantId: req.tenantId,
+            organizationFound: !!organization,
+            hasIsMember: organization ? typeof organization.isMember === 'function' : false
+          });
+          
+          // Continue without organization context rather than failing
+          return next();
+        }
+      }
+      
       req.organization = organization;
       req.organizationId = organization._id;
       
@@ -164,7 +191,9 @@ const requireTenantContext = async (req, res, next) => {
         tenantId: req.tenantId,
         organizationId: organization._id,
         organizationName: organization.name,
-        hasIsMemberMethod: typeof organization.isMember === 'function' // Verify method exists
+        hasIsMemberMethod: typeof organization.isMember === 'function',
+        hasGetUserRoleMethod: typeof organization.getUserRole === 'function',
+        methodsVerified: true
       });
     } else {
       logger.warn('Organization not found for tenant', {
@@ -175,7 +204,8 @@ const requireTenantContext = async (req, res, next) => {
   } catch (error) {
     logger.error('Error establishing organization context from tenant', {
       tenantId: req.tenantId,
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
     // Continue without organization context rather than failing the request
   }

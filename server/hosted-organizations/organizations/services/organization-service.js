@@ -331,25 +331,103 @@ class HostedOrganizationService {
   /**
    * Get organization by tenant ID
    * @param {string} tenantId - Tenant ID
-   * @returns {Promise<Object>} - Organization
+   * @returns {Promise<Object>} - Organization with instance methods
    */
   static async getOrganizationByTenantId(tenantId) {
     try {
+      logger.debug('Fetching organization by tenant ID', { tenantId });
+      
+      // Remove .lean() to preserve Mongoose instance methods
       const organization = await HostedOrganization.findOne({ tenantId })
         .populate('tenantRef')
-        .lean({ virtuals: true });
+        .exec();
 
       if (!organization) {
         throw new AppError('Organization not found for tenant', 404);
       }
 
+      // Verify that instance methods are available
+      if (typeof organization.isMember !== 'function') {
+        logger.error('Organization document missing instance methods', {
+          tenantId,
+          organizationId: organization._id,
+          hasIsMember: typeof organization.isMember === 'function',
+          isMongooseDocument: organization instanceof mongoose.Document
+        });
+        throw new AppError('Organization data integrity issue', 500);
+      }
+
+      logger.debug('Organization retrieved successfully', {
+        tenantId,
+        organizationId: organization._id,
+        hasInstanceMethods: typeof organization.isMember === 'function'
+      });
+
       return organization;
     } catch (error) {
       logger.error('Failed to get organization by tenant ID', {
         error: error.message,
+        stack: error.stack,
         tenantId
       });
       throw error;
+    }
+  }
+
+  /**
+   * Check if user is a member of the organization using static helper methods
+   * @param {Object} organization - Organization document or plain object
+   * @param {Object} user - User document with organizations array
+   * @returns {boolean} - Whether user is a member
+   */
+  static checkOrganizationMembership(organization, user) {
+    try {
+      return HostedOrganization.checkMembershipExtended(organization, user);
+    } catch (error) {
+      logger.error('Failed to check organization membership', {
+        error: error.message,
+        organizationId: organization?._id,
+        userId: user?._id
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Get user role in organization using static helper methods
+   * @param {Object} organization - Organization document or plain object
+   * @param {string} userId - User ID
+   * @returns {string|null} - User role or null if not a member
+   */
+  static getOrganizationUserRole(organization, userId) {
+    try {
+      return HostedOrganization.getUserRole(organization, userId);
+    } catch (error) {
+      logger.error('Failed to get organization user role', {
+        error: error.message,
+        organizationId: organization?._id,
+        userId
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Check basic organization membership (without extended user array checking)
+   * @param {Object} organization - Organization document or plain object
+   * @param {string} userId - User ID to check
+   * @returns {boolean} - Whether user is a member
+   */
+  static checkBasicMembership(organization, userId) {
+    try {
+      return HostedOrganization.checkMembership(organization, userId);
+    } catch (error) {
+      logger.error('Failed to check basic organization membership', {
+        error: error.message,
+        organizationId: organization?._id,
+        userId
+      });
+      return false;
     }
   }
 

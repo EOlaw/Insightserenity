@@ -113,6 +113,7 @@ const requireOrganizationAdmin = (req, res, next) => {
 /**
  * Require organization member role
  * Checks if user is a member of the organization (includes owner, admin, and regular members)
+ * Handles both populated and unpopulated object references
  * @param {Object} req - Express request object
  * @param {Object} res - Express response object
  * @param {Function} next - Express next function
@@ -128,53 +129,119 @@ const requireOrganizationMember = (req, res, next) => {
   
   // System admins always have access
   if (['admin', 'super_admin'].includes(req.user.role?.primary)) {
+    logger.debug('System admin access granted', {
+      userId: req.user._id,
+      userRole: req.user.role?.primary,
+      organizationId: req.organization._id
+    });
     return next();
   }
   
-  // Check if user is owner
-  const isOwner = req.organization.team?.owner?.toString() === req.user._id.toString();
+  // Extract owner ID - handle both populated and unpopulated owner references
+  const ownerId = req.organization.team?.owner?._id || req.organization.team?.owner;
+  const isOwner = ownerId?.toString() === req.user._id.toString();
   
-  // Check if user is admin
-  const isAdmin = req.organization.team?.admins?.some(
-    admin => admin.user.toString() === req.user._id.toString()
-  );
+  // Extract admin IDs - handle both populated and unpopulated admin references
+  const isAdmin = req.organization.team?.admins?.some(admin => {
+    const adminUserId = admin.user?._id || admin.user;
+    return adminUserId?.toString() === req.user._id.toString();
+  });
   
-  // Check if user is a regular member
-  const isMember = req.organization.team?.members?.some(
-    member => member.user.toString() === req.user._id.toString()
-  );
+  // Extract member IDs - handle both populated and unpopulated member references
+  const isMember = req.organization.team?.members?.some(member => {
+    const memberUserId = member.user?._id || member.user;
+    return memberUserId?.toString() === req.user._id.toString();
+  });
   
-  // Alternative: Check through user's organizations array
+  // Alternative check through user's organizations array
   const belongsToOrg = req.user.organizations?.some(
-    org => org.organizationId.toString() === req.organization._id.toString()
+    org => org.organizationId?.toString() === req.organization._id.toString()
   );
   
+  // Debug logging to help troubleshoot authorization issues
+  logger.debug('Organization member check details', {
+    userId: req.user._id.toString(),
+    userRole: req.user.role,
+    organizationId: req.organization._id.toString(),
+    checks: {
+      isOwner,
+      isAdmin,
+      isMember,
+      belongsToOrg
+    },
+    organizationData: {
+      ownerId: ownerId?.toString(),
+      isOwnerPopulated: typeof req.organization.team?.owner === 'object' && !!req.organization.team?.owner?._id,
+      adminCount: req.organization.team?.admins?.length || 0,
+      memberCount: req.organization.team?.members?.length || 0,
+      adminIds: req.organization.team?.admins?.map(admin => {
+        const adminUserId = admin.user?._id || admin.user;
+        return adminUserId?.toString();
+      }).filter(Boolean) || [],
+      memberIds: req.organization.team?.members?.map(member => {
+        const memberUserId = member.user?._id || member.user;
+        return memberUserId?.toString();
+      }).filter(Boolean) || []
+    },
+    userData: {
+      userOrgCount: req.user.organizations?.length || 0,
+      userOrganizations: req.user.organizations?.map(org => ({
+        orgId: org.organizationId?.toString(),
+        role: org.role,
+        active: org.active
+      })) || []
+    }
+  });
+  
+  // Check if user has any form of access to the organization
   if (!isOwner && !isAdmin && !isMember && !belongsToOrg) {
     logger.warn('Access denied - not a member of organization', {
       userId: req.user._id,
       organizationId: req.organization._id,
-      path: req.originalUrl
+      path: req.originalUrl,
+      attemptedAccess: {
+        ownerCheck: `${ownerId?.toString()} === ${req.user._id.toString()} = ${isOwner}`,
+        adminCheck: `Found ${req.organization.team?.admins?.length || 0} admins`,
+        memberCheck: `Found ${req.organization.team?.members?.length || 0} members`,
+        userOrgCheck: `User has ${req.user.organizations?.length || 0} organization memberships`
+      }
     });
     
     return next(new AuthorizationError('You must be a member of this organization to access this resource'));
   }
   
-  // Set user's role in the organization for downstream use
+  // Set user's role in the organization for downstream middleware and handlers
   if (isOwner) {
     req.organizationRole = 'owner';
     req.userOrganizationPermissions = ['*']; // All permissions
   } else if (isAdmin) {
     req.organizationRole = 'admin';
     req.userOrganizationPermissions = ['read', 'write', 'delete', 'manage_team', 'manage_settings'];
-  } else {
-    // Find the specific member to get their role and permissions
-    const memberRecord = req.organization.team?.members?.find(
-      member => member.user.toString() === req.user._id.toString()
-    );
+  } else if (isMember) {
+    // Find the specific member record to get their role and permissions
+    const memberRecord = req.organization.team?.members?.find(member => {
+      const memberUserId = member.user?._id || member.user;
+      return memberUserId?.toString() === req.user._id.toString();
+    });
     
     req.organizationRole = memberRecord?.role || 'member';
     req.userOrganizationPermissions = memberRecord?.permissions || ['read', 'write'];
+  } else {
+    // User belongs through organizations array but not in team structure
+    const orgMembership = req.user.organizations?.find(
+      org => org.organizationId?.toString() === req.organization._id.toString()
+    );
+    
+    req.organizationRole = orgMembership?.role || 'member';
+    req.userOrganizationPermissions = ['read', 'write']; // Default permissions
   }
+  
+  logger.debug('Organization access granted', {
+    userId: req.user._id,
+    organizationId: req.organization._id,
+    assignedRole: req.organizationRole,
+    permissions: req.userOrganizationPermissions
+  });
   
   next();
 };

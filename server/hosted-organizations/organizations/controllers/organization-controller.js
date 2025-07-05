@@ -101,8 +101,9 @@ class HostedOrganizationController {
         options
       );
 
-      // Check access permissions
-      if (!organization.isMember(req.user._id) && req.user.role !== 'super_admin') {
+      // Check access permissions using service method
+      const isMember = HostedOrganizationService.checkBasicMembership(organization, req.user._id);
+      if (!isMember && req.user.role !== 'super_admin') {
         throw new AppError('Access denied to this organization', 403);
       }
 
@@ -111,6 +112,9 @@ class HostedOrganizationController {
         throw new AppError('Organization not found in current tenant context', 404);
       }
 
+      // Get user role using service method
+      const userRole = HostedOrganizationService.getOrganizationUserRole(organization, req.user._id);
+
       res.status(200).json({
         status: 'success',
         data: {
@@ -118,7 +122,7 @@ class HostedOrganizationController {
         },
         meta: {
           tenantStatus: organization.tenantRef?.status,
-          userRole: organization.getUserRole(req.user._id)
+          userRole
         }
       });
 
@@ -132,6 +136,96 @@ class HostedOrganizationController {
     }
   };
 
+  // /**
+  //  * Get current organization (from tenant context)
+  //  * @route GET /api/v1/hosted-organizations/current
+  //  * @access Private - Must have tenant context
+  //  */
+  // static getCurrentOrganization = async (req, res, next) => {
+  //   try {
+  //     logger.debug('Get current organization request', {
+  //       userId: req.user._id,
+  //       tenantId: req.tenant?.tenantId,
+  //       organizationId: req.organization?._id,
+  //       hasOrganizationContext: !!req.organization
+  //     });
+
+  //     if (!req.tenant) {
+  //       throw new AppError('No tenant context found', 400);
+  //     }
+
+  //     // Use organization from context if available, otherwise fetch fresh
+  //     let organization = req.organization;
+      
+  //     if (!organization) {
+  //       logger.debug('Organization context missing, fetching fresh', {
+  //         tenantId: req.tenant.tenantId
+  //       });
+        
+  //       // Get organization by tenant ID with proper methods
+  //       organization = await HostedOrganizationService.getOrganizationByTenantId(
+  //         req.tenant.tenantId
+  //       );
+  //     }
+
+  //     // Verify organization was found
+  //     if (!organization) {
+  //       throw new AppError('Organization not found for current tenant', 404);
+  //     }
+
+  //     // Use service method for robust membership checking
+  //     const isMember = HostedOrganizationService.checkOrganizationMembership(organization, req.user);
+      
+  //     if (!isMember) {
+  //       logger.warn('User attempted to access organization without membership', {
+  //         userId: req.user._id,
+  //         organizationId: organization._id,
+  //         tenantId: req.tenant.tenantId
+  //       });
+  //       throw new AppError('You are not a member of this organization', 403);
+  //     }
+
+  //     // Get user role using service method
+  //     const userRole = HostedOrganizationService.getOrganizationUserRole(organization, req.user._id);
+      
+  //     // Get resource usage
+  //     let resourceUsage = null;
+  //     try {
+  //       resourceUsage = await HostedOrganizationService.getResourceUsage(organization._id);
+  //     } catch (resourceError) {
+  //       logger.warn('Failed to fetch resource usage', {
+  //         organizationId: organization._id,
+  //         error: resourceError.message
+  //       });
+  //       // Continue without resource usage rather than failing the request
+  //     }
+
+  //     res.status(200).json({
+  //       status: 'success',
+  //       data: {
+  //         organization
+  //       },
+  //       meta: {
+  //         tenantStatus: req.tenant.status,
+  //         userRole,
+  //         resourceUsage,
+  //         membershipVerified: true,
+  //         timestamp: new Date().toISOString()
+  //       }
+  //     });
+
+  //   } catch (error) {
+  //     logger.error('Get current organization request failed', {
+  //       error: error.message,
+  //       stack: error.stack,
+  //       userId: req.user._id,
+  //       tenantId: req.tenant?.tenantId,
+  //       organizationId: req.organization?._id
+  //     });
+  //     next(error);
+  //   }
+  // };
+
   /**
    * Get current organization (from tenant context)
    * @route GET /api/v1/hosted-organizations/current
@@ -141,21 +235,110 @@ class HostedOrganizationController {
     try {
       logger.debug('Get current organization request', {
         userId: req.user._id,
-        tenantId: req.tenant?.tenantId
+        tenantId: req.tenant?.tenantId,
+        organizationId: req.organization?._id,
+        hasOrganizationContext: !!req.organization
       });
 
       if (!req.tenant) {
-        throw new AppError('No organization context found', 400);
+        throw new AppError('No tenant context found', 400);
       }
 
-      // Get organization by tenant ID
+      // Always fetch fresh organization with proper methods to avoid population issues
+      logger.debug('Fetching fresh organization to ensure proper methods', {
+        tenantId: req.tenant.tenantId
+      });
+      
       const organization = await HostedOrganizationService.getOrganizationByTenantId(
         req.tenant.tenantId
       );
 
-      if (!organization.isMember(req.user._id)) {
+      // Verify organization was found
+      if (!organization) {
+        throw new AppError('Organization not found for current tenant', 404);
+      }
+
+      // Ensure we have a fresh user document with populated organizations
+      let userWithOrgs = req.user;
+      if (!userWithOrgs.organizations || userWithOrgs.organizations.length === 0) {
+        logger.debug('User organizations not populated, fetching fresh user', {
+          userId: req.user._id
+        });
+        
+        const User = require('../../../shared/users/models/user-model');
+        userWithOrgs = await User.findById(req.user._id).lean();
+        
+        if (!userWithOrgs) {
+          throw new AppError('User not found', 404);
+        }
+      }
+
+      // Use service method for robust membership checking with detailed logging
+      const isMember = HostedOrganizationService.checkOrganizationMembership(organization, userWithOrgs);
+      
+      // Additional debugging for membership check
+      logger.debug('Membership check details', {
+        userId: req.user._id,
+        organizationId: organization._id,
+        tenantId: req.tenant.tenantId,
+        isMember,
+        organizationOwner: organization.team?.owner?.toString(),
+        userIsOwner: organization.team?.owner?.toString() === req.user._id.toString(),
+        userOrganizations: userWithOrgs.organizations?.map(org => ({
+          id: org.organizationId?.toString(),
+          active: org.active,
+          role: org.role
+        })) || [],
+        teamStructure: {
+          hasOwner: !!organization.team?.owner,
+          adminCount: organization.team?.admins?.length || 0,
+          memberCount: organization.team?.members?.length || 0
+        }
+      });
+      
+      if (!isMember) {
+        // Try fallback check using basic membership
+        const isBasicMember = HostedOrganizationService.checkBasicMembership(organization, req.user._id);
+        
+        logger.warn('User attempted to access organization without membership', {
+          userId: req.user._id,
+          organizationId: organization._id,
+          tenantId: req.tenant.tenantId,
+          extendedCheck: isMember,
+          basicCheck: isBasicMember,
+          troubleshooting: {
+            organizationTeamOwner: organization.team?.owner?.toString(),
+            userIdString: req.user._id.toString(),
+            areEqual: organization.team?.owner?.toString() === req.user._id.toString(),
+            hasUserOrganizations: !!userWithOrgs.organizations,
+            userOrgCount: userWithOrgs.organizations?.length || 0
+          }
+        });
+        
         throw new AppError('You are not a member of this organization', 403);
       }
+
+      // Get user role using service method
+      const userRole = HostedOrganizationService.getOrganizationUserRole(organization, req.user._id);
+      
+      // Get resource usage (optional, continue without it if it fails)
+      let resourceUsage = null;
+      try {
+        resourceUsage = await HostedOrganizationService.getResourceUsage(organization._id);
+      } catch (resourceError) {
+        logger.warn('Failed to fetch resource usage', {
+          organizationId: organization._id,
+          error: resourceError.message
+        });
+        // Continue without resource usage rather than failing the request
+      }
+
+      logger.info('Current organization access granted', {
+        userId: req.user._id,
+        organizationId: organization._id,
+        userRole,
+        membershipVerified: true
+      });
 
       res.status(200).json({
         status: 'success',
@@ -164,16 +347,20 @@ class HostedOrganizationController {
         },
         meta: {
           tenantStatus: req.tenant.status,
-          userRole: organization.getUserRole(req.user._id),
-          resourceUsage: await HostedOrganizationService.getResourceUsage(organization._id)
+          userRole,
+          resourceUsage,
+          membershipVerified: true,
+          timestamp: new Date().toISOString()
         }
       });
 
     } catch (error) {
       logger.error('Get current organization request failed', {
         error: error.message,
+        stack: error.stack,
         userId: req.user._id,
-        tenantId: req.tenant?.tenantId
+        tenantId: req.tenant?.tenantId,
+        organizationId: req.organization?._id
       });
       next(error);
     }
@@ -269,45 +456,6 @@ class HostedOrganizationController {
    * @route GET /api/v1/hosted-organizations
    * @access Private
    */
-  // static listUserOrganizations = async (req, res, next) => {
-  //   try {
-  //     logger.debug('List user organizations request', {
-  //       userId: req.user._id,
-  //       includeInactive: req.query.includeInactive,
-  //       pagination: req.pagination
-  //     });
-
-  //     const options = {
-  //       includeInactive: req.query.includeInactive === 'true',
-  //       populate: req.query.populate,
-  //       sort: req.query.sort || '-createdAt',
-  //       limit: req.query.limit,
-  //       skip: req.query.skip
-  //     };
-
-  //     const organizations = await HostedOrganizationService.getUserOrganizations(
-  //       req.user._id,
-  //       options
-  //     );
-
-  //     res.status(200).json({
-  //       status: 'success',
-  //       data: {
-  //         organizations
-  //       },
-  //       meta: {
-  //         count: organizations.length
-  //       }
-  //     });
-
-  //   } catch (error) {
-  //     logger.error('List user organizations request failed', {
-  //       error: error.message,
-  //       userId: req.user._id
-  //     });
-  //     next(error);
-  //   }
-  // };
   static listUserOrganizations = async (req, res, next) => {
     try {
       logger.debug('List user organizations request', {
@@ -1659,5 +1807,7 @@ class HostedOrganizationController {
     }
   };
 }
+
+
 
 module.exports = HostedOrganizationController;
