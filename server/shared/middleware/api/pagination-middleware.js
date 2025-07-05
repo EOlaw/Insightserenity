@@ -4,7 +4,7 @@
  * @version 1.0.0
  */
 
-const { PaginationHelper } = require('../../utils/helpers/pagination-helper');
+const PaginationHelper = require('../../utils/helpers/pagination-helper');
 const logger = require('../../utils/logger');
 const { ValidationError } = require('../../utils/app-error');
 

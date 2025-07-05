@@ -269,33 +269,73 @@ class HostedOrganizationController {
    * @route GET /api/v1/hosted-organizations
    * @access Private
    */
+  // static listUserOrganizations = async (req, res, next) => {
+  //   try {
+  //     logger.debug('List user organizations request', {
+  //       userId: req.user._id,
+  //       includeInactive: req.query.includeInactive,
+  //       pagination: req.pagination
+  //     });
+
+  //     const options = {
+  //       includeInactive: req.query.includeInactive === 'true',
+  //       populate: req.query.populate,
+  //       sort: req.query.sort || '-createdAt',
+  //       limit: req.query.limit,
+  //       skip: req.query.skip
+  //     };
+
+  //     const organizations = await HostedOrganizationService.getUserOrganizations(
+  //       req.user._id,
+  //       options
+  //     );
+
+  //     res.status(200).json({
+  //       status: 'success',
+  //       data: {
+  //         organizations
+  //       },
+  //       meta: {
+  //         count: organizations.length
+  //       }
+  //     });
+
+  //   } catch (error) {
+  //     logger.error('List user organizations request failed', {
+  //       error: error.message,
+  //       userId: req.user._id
+  //     });
+  //     next(error);
+  //   }
+  // };
   static listUserOrganizations = async (req, res, next) => {
     try {
       logger.debug('List user organizations request', {
         userId: req.user._id,
-        includeInactive: req.query.includeInactive
+        includeInactive: req.query.includeInactive,
+        pagination: req.pagination
       });
 
       const options = {
         includeInactive: req.query.includeInactive === 'true',
         populate: req.query.populate,
-        sort: req.query.sort || '-createdAt',
-        limit: req.query.limit,
-        skip: req.query.skip
+        // Use pagination middleware values instead of manual handling
+        page: req.pagination.page,
+        limit: req.pagination.limit,
+        sortBy: req.pagination.sortBy,
+        sortOrder: req.pagination.sortOrder
       };
 
-      const organizations = await HostedOrganizationService.getUserOrganizations(
+      // Get both data and total count for pagination
+      const result = await HostedOrganizationService.getUserOrganizationsWithPagination(
         req.user._id,
         options
       );
 
-      res.status(200).json({
-        status: 'success',
-        data: {
-          organizations
-        },
-        meta: {
-          count: organizations.length
+      // Use the pagination helper method provided by middleware
+      res.paginate(result.organizations, result.total, {
+        filters: {
+          includeInactive: options.includeInactive
         }
       });
 

@@ -398,6 +398,62 @@ class HostedOrganizationService {
   }
 
   /**
+   * Get user organizations with pagination support
+   * @param {string} userId - User ID
+   * @param {Object} options - Query options with pagination
+   * @returns {Promise<Object>} - Organizations with total count
+   */
+  static async getUserOrganizationsWithPagination(userId, options = {}) {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        sortBy = 'createdAt',
+        sortOrder = 'desc',
+        includeInactive = false
+      } = options;
+
+      const skip = (page - 1) * limit;
+      const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+
+      // Build filter criteria
+      const filter = {
+        $or: [
+          { 'team.owner': userId },
+          { 'team.admins.user': userId },
+          { 'team.members.user': userId }
+        ]
+      };
+
+      if (!includeInactive) {
+        filter['status.active'] = true;
+      }
+
+      // Execute parallel queries for data and count
+      const [organizations, total] = await Promise.all([
+        HostedOrganization.find(filter)
+          .sort(sort)
+          .skip(skip)
+          .limit(limit)
+          .populate('tenantRef')
+          .lean({ virtuals: true }),
+        HostedOrganization.countDocuments(filter)
+      ]);
+
+      return {
+        organizations,
+        total,
+        page,
+        limit
+      };
+
+    } catch (error) {
+      logger.error('Get user organizations with pagination error', { error, userId });
+      throw error;
+    }
+  }
+
+  /**
    * Update organization with tenant synchronization
    * @param {string} organizationId - Organization ID
    * @param {Object} updateData - Update data

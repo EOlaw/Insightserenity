@@ -673,7 +673,26 @@ const Constants = {
       TOO_MANY_REQUESTS: 429,
       SERVER_ERROR: 500,
       SERVICE_UNAVAILABLE: 503
-    }
+    },
+
+    /**
+     * Pagination configuration
+     */
+    PAGINATION: {
+      DEFAULT_PAGE: 1,
+      DEFAULT_LIMIT: 20,
+      MIN_LIMIT: 1,
+      MAX_LIMIT: 100,
+      
+      // Role-based pagination limits for multi-tenant platform
+      ROLE_LIMITS: {
+        GUEST: 10,
+        USER: 50,
+        ADMIN: 200,
+        SUPER_ADMIN: 1000
+      }
+    },
+
   },
   
   /**
