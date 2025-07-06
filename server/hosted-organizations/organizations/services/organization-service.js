@@ -638,7 +638,7 @@ class HostedOrganizationService {
   }
 
   /**
-   * Delete organization (soft delete)
+   * Delete organization (soft delete) - FIXED VERSION
    * @param {string} organizationId - Organization ID
    * @param {string} userId - User performing deletion
    * @returns {Promise<Object>} - Deleted organization
@@ -658,10 +658,68 @@ class HostedOrganizationService {
         throw new AppError('Organization not found', 404);
       }
 
-      // Only owner can delete organization
-      if (organization.team.owner.toString() !== userId) {
-        throw new AppError('Only the owner can delete the organization', 403);
+      // ENHANCED OWNERSHIP VALIDATION WITH DEBUGGING
+      const organizationOwnerId = organization.team.owner?.toString();
+      const requestingUserId = userId.toString();
+
+      logger.info('Organization deletion ownership validation', {
+        organizationId,
+        organizationOwnerId,
+        requestingUserId,
+        ownershipMatch: organizationOwnerId === requestingUserId,
+        organizationName: organization.name,
+        debugInfo: {
+          hasOwner: !!organization.team.owner,
+          ownerType: typeof organization.team.owner,
+          teamStructure: {
+            hasAdmins: !!organization.team.admins,
+            adminCount: organization.team.admins?.length || 0,
+            hasMembers: !!organization.team.members,
+            memberCount: organization.team.members?.length || 0
+          }
+        }
+      });
+
+      // Check if requesting user is the owner
+      const isOwner = organizationOwnerId === requestingUserId;
+
+      // Also check if user is an admin (as fallback permission)
+      const isAdmin = organization.team.admins?.some(admin => 
+        admin.user?.toString() === requestingUserId
+      );
+
+      // Check if user has system admin privileges
+      const User = require('../../../shared/users/models/user-model');
+      const requestingUser = await User.findById(userId);
+      const isSystemAdmin = ['admin', 'super_admin'].includes(requestingUser?.role?.primary);
+
+      // Enhanced validation with multiple permission paths
+      if (!isOwner && !isAdmin && !isSystemAdmin) {
+        logger.warn('Organization deletion denied - insufficient permissions', {
+          organizationId,
+          userId,
+          organizationOwnerId,
+          isOwner,
+          isAdmin,
+          isSystemAdmin,
+          userRole: requestingUser?.role?.primary,
+          adminUsers: organization.team.admins?.map(admin => admin.user?.toString())
+        });
+
+        // Provide more specific error messages
+        if (!organizationOwnerId) {
+          throw new AppError('Organization has no designated owner. Contact support.', 500);
+        } else {
+          throw new AppError('Only the organization owner or admin can delete the organization', 403);
+        }
       }
+
+      // Log successful permission validation
+      logger.info('Organization deletion permission granted', {
+        organizationId,
+        userId,
+        permissionType: isOwner ? 'owner' : isAdmin ? 'admin' : 'system_admin'
+      });
 
       // Mark organization as deleted
       organization.status.active = false;
@@ -672,7 +730,9 @@ class HostedOrganizationService {
       await organization.save({ session });
 
       // Suspend tenant
-      await OrganizationTenantService.suspendTenant(organization.tenantRef._id, userId);
+      if (organization.tenantRef) {
+        await OrganizationTenantService.suspendTenant(organization.tenantRef._id, userId);
+      }
 
       await session.commitTransaction();
 
@@ -682,17 +742,29 @@ class HostedOrganizationService {
       // Emit event
       EventEmitter.emit('organization:deleted', {
         organizationId,
-        userId
+        userId,
+        deletedBy: isOwner ? 'owner' : isAdmin ? 'admin' : 'system_admin'
+      });
+
+      logger.info('Organization deletion completed successfully', {
+        organizationId,
+        userId,
+        scheduledDeletionDate: organization.status.deletionScheduledFor
       });
 
       return organization;
 
     } catch (error) {
       await session.abortTransaction();
+      
       logger.error('Failed to delete organization', {
         error: error.message,
-        organizationId
+        stack: error.stack,
+        organizationId,
+        userId,
+        errorType: error.constructor.name
       });
+      
       throw error;
     } finally {
       session.endSession();

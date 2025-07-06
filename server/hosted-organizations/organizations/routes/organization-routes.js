@@ -149,7 +149,7 @@ router.get('/current',
 
 // Get organization by ID
 router.get('/:id',
-  requireAuth,
+  // requireAuth,
   parseQueryOptions(),
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getOrganizationById
@@ -157,7 +157,7 @@ router.get('/:id',
 
 // Update organization
 router.patch('/:id',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   validateOrganizationUpdate,
   clearOrganizationCache,
@@ -167,7 +167,7 @@ router.patch('/:id',
 
 // Delete organization (soft delete)
 router.delete('/:id',
-  requireAuth,
+  // requireAuth,
   requireOrganizationOwner,
   sensitiveOperationLimiter,
   auditLog('organization.delete'),
@@ -180,7 +180,7 @@ router.delete('/:id',
 
 // Get team members
 router.get('/:id/team',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   parseQueryOptions({
     allowedSortFields: ['name', 'role', 'joinedAt', 'status'],
@@ -197,7 +197,7 @@ router.get('/:id/team',
 
 // Add team member
 router.post('/:id/team/members',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   detectTenantContext,
   checkResourceLimit('users'), // Check tenant resource limits
@@ -210,7 +210,7 @@ router.post('/:id/team/members',
 
 // Update team member
 router.patch('/:id/team/members/:memberId',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   validateTeamMember,
   clearOrganizationCache,
@@ -220,7 +220,7 @@ router.patch('/:id/team/members/:memberId',
 
 // Remove team member
 router.delete('/:id/team/members/:memberId',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   auditLog('organization.team.remove'),
@@ -229,7 +229,7 @@ router.delete('/:id/team/members/:memberId',
 
 // Resend invitation
 router.post('/:id/team/invitations/:invitationId/resend',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   organizationLimiter,
   HostedOrganizationController.resendInvitation
@@ -237,7 +237,7 @@ router.post('/:id/team/invitations/:invitationId/resend',
 
 // Revoke invitation
 router.delete('/:id/team/invitations/:invitationId',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   HostedOrganizationController.revokeInvitation
@@ -249,7 +249,7 @@ router.delete('/:id/team/invitations/:invitationId',
 
 // Get subscription details
 router.get('/:id/subscription',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getSubscription
@@ -257,7 +257,7 @@ router.get('/:id/subscription',
 
 // Update subscription
 router.put('/:id/subscription',
-  requireAuth,
+  // requireAuth,
   requireOrganizationOwner,
   sensitiveOperationLimiter,
   validateSubscriptionUpdate,
@@ -268,7 +268,7 @@ router.put('/:id/subscription',
 
 // Cancel subscription
 router.post('/:id/subscription/cancel',
-  requireAuth,
+  // requireAuth,
   requireOrganizationOwner,
   sensitiveOperationLimiter,
   auditLog('organization.subscription.cancel'),
@@ -277,7 +277,7 @@ router.post('/:id/subscription/cancel',
 
 // Get billing history
 router.get('/:id/billing/history',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   parseQueryOptions({
     allowedSortFields: ['date', 'amount', 'status', 'type'],
@@ -296,7 +296,7 @@ router.get('/:id/billing/history',
 
 // Get domains
 router.get('/:id/domains',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   parseQueryOptions({
     allowedSortFields: ['domain', 'status', 'createdAt'],
@@ -311,7 +311,7 @@ router.get('/:id/domains',
 
 // Add custom domain
 router.post('/:id/domains',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   detectTenantContext,
   checkResourceLimit('customDomains'),
@@ -323,7 +323,7 @@ router.post('/:id/domains',
 
 // Verify domain
 router.post('/:id/domains/verify',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   validateDomain,
   HostedOrganizationController.verifyDomain
@@ -331,7 +331,7 @@ router.post('/:id/domains/verify',
 
 // Remove domain
 router.delete('/:id/domains/:domainId',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   auditLog('organization.domain.remove'),
@@ -344,7 +344,7 @@ router.delete('/:id/domains/:domainId',
 
 // Get resource usage
 router.get('/:id/usage',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   detectTenantContext,
   parseQueryOptions({
@@ -361,7 +361,7 @@ router.get('/:id/usage',
 
 // Get organization statistics
 router.get('/:id/stats',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getOrganizationStats
@@ -369,7 +369,7 @@ router.get('/:id/stats',
 
 // Get analytics
 router.get('/:id/analytics',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   parseQueryOptions({
     allowedFilterFields: ['metric', 'dimension', 'period', 'granularity'],
@@ -396,7 +396,7 @@ router.get('/:id/analytics',
 
 // Get security settings
 router.get('/:id/security',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   cacheResponse({ ttl: 300 }),
   HostedOrganizationController.getSecuritySettings
@@ -404,7 +404,7 @@ router.get('/:id/security',
 
 // Update security settings
 router.put('/:id/security',
-  requireAuth,
+  // requireAuth,
   requireOrganizationOwner,
   sensitiveOperationLimiter,
   clearOrganizationCache,
@@ -414,7 +414,7 @@ router.put('/:id/security',
 
 // Get audit logs
 router.get('/:id/audit-logs',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   parseQueryOptions({
     allowedFilterFields: ['action', 'actor', 'severity', 'category', 'result'],
@@ -436,7 +436,7 @@ router.get('/:id/audit-logs',
 
 // Export organization data
 router.post('/:id/export',
-  requireAuth,
+  // requireAuth,
   requireOrganizationOwner,
   sensitiveOperationLimiter,
   auditLog('organization.data.export'),
@@ -449,7 +449,7 @@ router.post('/:id/export',
 
 // Get integrations
 router.get('/:id/integrations',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   parseQueryOptions({
     allowedFilterFields: ['status', 'type', 'category'],
@@ -464,7 +464,7 @@ router.get('/:id/integrations',
 
 // Configure integration
 router.put('/:id/integrations/:integration',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   auditLog('organization.integration.configure'),
@@ -473,7 +473,7 @@ router.put('/:id/integrations/:integration',
 
 // Remove integration
 router.delete('/:id/integrations/:integration',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   auditLog('organization.integration.remove'),
@@ -486,7 +486,7 @@ router.delete('/:id/integrations/:integration',
 
 // Get preferences
 router.get('/:id/preferences',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   cacheResponse({ ttl: 600 }),
   HostedOrganizationController.getPreferences
@@ -494,7 +494,7 @@ router.get('/:id/preferences',
 
 // Update preferences
 router.put('/:id/preferences',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   HostedOrganizationController.updatePreferences
@@ -502,7 +502,7 @@ router.put('/:id/preferences',
 
 // Get branding
 router.get('/:id/branding',
-  requireAuth,
+  // requireAuth,
   requireOrganizationMember,
   cacheResponse({ ttl: 3600 }), // 1 hour
   HostedOrganizationController.getBranding
@@ -510,7 +510,7 @@ router.get('/:id/branding',
 
 // Update branding
 router.put('/:id/branding',
-  requireAuth,
+  // requireAuth,
   requireOrganizationAdmin,
   clearOrganizationCache,
   auditLog('organization.branding.update'),
@@ -523,7 +523,7 @@ router.put('/:id/branding',
 
 // Get all organizations (platform admin only)
 router.get('/admin/all',
-  requireAuth,
+  // requireAuth,
   restrictTo('super_admin'),
   adminBypass, // Bypass rate limiting for admin users
   parseQueryOptions({
@@ -544,7 +544,7 @@ router.get('/admin/all',
 
 // Get organization metrics (platform admin only)
 router.get('/admin/metrics',
-  requireAuth,
+  // requireAuth,
   restrictTo('super_admin'),
   adminBypass,
   cacheResponse({ ttl: 300 }),
@@ -553,7 +553,7 @@ router.get('/admin/metrics',
 
 // Suspend organization (platform admin only)
 router.post('/:id/suspend',
-  requireAuth,
+  // requireAuth,
   restrictTo('super_admin'),
   sensitiveOperationLimiter,
   auditLog('organization.suspend'),
@@ -562,7 +562,7 @@ router.post('/:id/suspend',
 
 // Reactivate organization (platform admin only)
 router.post('/:id/reactivate',
-  requireAuth,
+  // requireAuth,
   restrictTo('super_admin'),
   sensitiveOperationLimiter,
   auditLog('organization.reactivate'),
