@@ -571,7 +571,6 @@ hostedOrganizationSchema.methods.getUserRole = function(userId) {
  * Check resource limit
  */
 hostedOrganizationSchema.methods.checkResourceLimit = async function(resource, increment = 1) {
-  // This method will coordinate with the tenant to check limits
   const OrganizationTenant = mongoose.model('OrganizationTenant');
   const tenant = await OrganizationTenant.findById(this.tenantRef);
   
@@ -579,33 +578,56 @@ hostedOrganizationSchema.methods.checkResourceLimit = async function(resource, i
     throw new Error('Tenant reference not found');
   }
   
-  return tenant.checkResourceLimit(resource, increment);
+  // Use the method that actually exists
+  if (tenant.hasReachedLimit(resource)) {
+    return false; // Already at limit
+  }
+  
+  // Check if adding increment would exceed limit
+  const currentLimit = tenant.resourceLimits[resource];
+  if (currentLimit && currentLimit.max !== -1) {
+    const newUsage = currentLimit.current + increment;
+    if (newUsage > currentLimit.max) {
+      return false; // Would exceed limit
+    }
+  }
+  
+  return true; // Can add the resource
 };
 
 /**
  * Update resource usage
  */
 hostedOrganizationSchema.methods.updateResourceUsage = async function(resource, value, operation = 'set') {
-  // Update local cache
-  const usageField = `resourceUsage.${resource}`;
-  
-  switch(operation) {
-    case 'increment':
-      this[usageField].current += value;
-      break;
-    case 'decrement':
-      this[usageField].current = Math.max(0, this[usageField].current - value);
-      break;
-    default:
-      this[usageField].current = value;
+  // Initialize resourceUsage if it doesn't exist
+  if (!this.resourceUsage) {
+    this.resourceUsage = {};
   }
   
-  this[usageField].lastUpdated = new Date();
+  // Initialize the specific resource if it doesn't exist
+  if (!this.resourceUsage[resource]) {
+    this.resourceUsage[resource] = { current: 0 };
+  }
+  
+  // Update the resource usage based on operation
+  switch(operation) {
+    case 'increment':
+      this.resourceUsage[resource].current += value;
+      break;
+    case 'decrement':
+      this.resourceUsage[resource].current = Math.max(0, this.resourceUsage[resource].current - value);
+      break;
+    default:
+      this.resourceUsage[resource].current = value;
+  }
+  
+  // Update timestamp
+  this.resourceUsage[resource].lastUpdated = new Date();
   
   // Also update in tenant
   const OrganizationTenant = mongoose.model('OrganizationTenant');
   await OrganizationTenant.findByIdAndUpdate(this.tenantRef, {
-    [`resourceLimits.${resource}.current`]: this[usageField].current
+    [`resourceLimits.${resource}.current`]: this.resourceUsage[resource].current
   });
   
   return this.save();
