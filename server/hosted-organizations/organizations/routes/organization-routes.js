@@ -27,6 +27,8 @@ const {
   checkResourceLimit
 } = require('../../../organization-tenants/middleware/tenant-context-middleware');
 
+const PermissionMiddleware = require('../../../shared/middleware/auth/permission-middleware');
+
 // Validation Middleware
 const {
   validateOrganizationCreate,
@@ -127,6 +129,8 @@ router.get('/',
 // Create new organization (creates tenant infrastructure too)
 router.post('/',
   // authenticate(),
+  // restrictTo('client', 'org_owner', 'platform_admin', 'super_admin'),
+  PermissionMiddleware.requireOrganizationCreation(),
   sensitiveOperationLimiter,
   validateOrganizationCreate,
   auditLog('organization.create'),

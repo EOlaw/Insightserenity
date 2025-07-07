@@ -28,14 +28,192 @@ const {
 } = require('../../utils/app-error');
 const logger = require('../../utils/logger');
 const Auth = require('../models/auth-model');
+const PermissionMiddleware = require('../../middleware/auth/permission-middleware');
 
 /**
  * Authentication Service Class
  * @class AuthService
  */
 class AuthService {
+  // /**
+  //  * Register new user with email/password - CORRECTED ROLE HANDLING
+  //  * @param {Object} userData - User registration data
+  //  * @param {Object} context - Request context
+  //  * @returns {Promise<Object>} Registration result
+  //  */
+  // static async register(userData, context) {
+  //   try {
+  //     const { email, password, firstName, lastName, organizationId, role } = userData;
+      
+  //     // Validate email format
+  //     if (!constants.REGEX.EMAIL.test(email)) {
+  //       throw new ValidationError('Invalid email format');
+  //     }
+      
+  //     // Validate password strength
+  //     const passwordValidation = this.validatePasswordStrength(password);
+  //     if (!passwordValidation.valid) {
+  //       throw new ValidationError(passwordValidation.message);
+  //     }
+      
+  //     // Check if user already exists
+  //     const existingUser = await User.findOne({ email: email.toLowerCase() });
+  //     if (existingUser) {
+  //       throw new ConflictError('User with this email already exists');
+  //     }
+      
+  //     // Extract role value correctly - FIXED
+  //     let primaryRole = 'prospect'; // Default role
+  //     if (role) {
+  //       if (typeof role === 'string') {
+  //         primaryRole = role;
+  //       } else if (role.primary) {
+  //         primaryRole = role.primary;
+  //       }
+  //     }
+      
+  //     // Validate role against allowed values
+  //     if (!constants.USER.ROLES_ENUM.includes(primaryRole)) {
+  //       throw new ValidationError(`Invalid role: ${primaryRole}. Must be one of: ${constants.USER.ROLES_ENUM.join(', ')}`);
+  //     }
+      
+  //     // Create user data with corrected role assignment
+  //     const newUserData = {
+  //       email: email.toLowerCase(),
+  //       firstName,
+  //       lastName,
+  //       profile: {
+  //         displayName: `${firstName} ${lastName}`.trim()
+  //       },
+  //       userType: organizationId ? 'hosted_org_user' : 'core_consultant',
+  //       role: {
+  //         primary: primaryRole  // Correctly assign string value to primary field
+  //       },
+  //       organization: organizationId ? {
+  //         current: organizationId,
+  //         organizations: [organizationId]
+  //       } : undefined,
+  //       status: 'pending', // Pending email verification
+  //       preferences: {
+  //         language: context.language || 'en',
+  //         timezone: context.timezone || 'UTC'
+  //       }
+  //     };
+      
+  //     // Create user
+  //     const user = await User.create(newUserData);
+      
+  //     // Create auth record
+  //     const auth = new Auth({
+  //       userId: user._id,
+  //       authMethods: {
+  //         local: {
+  //           email: email.toLowerCase(),
+  //           isVerified: false
+  //         }
+  //       },
+  //       metadata: {
+  //         createdBy: {
+  //           userId: user._id,
+  //           method: 'registration'
+  //         },
+  //         source: context.source || 'web'
+  //       }
+  //     });
+      
+  //     // Set password
+  //     await auth.setPassword(password);
+      
+  //     // Generate verification token
+  //     const verificationToken = auth.generateVerificationToken();
+      
+  //     await auth.save();
+      
+  //     // Send verification email
+  //     await this.sendVerificationEmail(user, verificationToken, context);
+      
+  //     // Create initial session if auto-login is enabled
+  //     let sessionData = null;
+  //     if (config.features.autoLoginAfterRegistration) {
+  //       const session = auth.addSession({
+  //         deviceInfo: {
+  //           userAgent: context.userAgent,
+  //           platform: this.extractPlatform(context.userAgent),
+  //           browser: this.extractBrowser(context.userAgent)
+  //         },
+  //         location: {
+  //           ip: context.ip
+  //         },
+  //         expiresAt: new Date(Date.now() + config.auth.sessionDuration)
+  //       });
+        
+  //       await auth.save();
+        
+  //       const tokens = await this.generateTokens(user, session.sessionId);
+  //       sessionData = {
+  //         ...tokens,
+  //         sessionId: session.sessionId
+  //       };
+  //     }
+      
+  //     // Audit log
+  //     await AuditService.log({
+  //       type: 'user_registration',
+  //       action: 'register',
+  //       category: 'authentication',
+  //       result: 'success',
+  //       userId: user._id,
+  //       target: {
+  //         type: 'user',
+  //         id: user._id.toString()
+  //       },
+  //       metadata: {
+  //         ...context,
+  //         email: user.email,
+  //         role: user.role.primary,
+  //         organizationId
+  //       }
+  //     });
+      
+  //     return {
+  //       success: true,
+  //       message: 'Registration successful. Please check your email to verify your account.',
+  //       user: {
+  //         id: user._id,
+  //         email: user.email,
+  //         firstName: user.firstName,
+  //         lastName: user.lastName,
+  //         role: user.role
+  //       },
+  //       session: sessionData
+  //     };
+      
+  //   } catch (error) {
+  //     logger.error('Registration error', { error, email: userData.email });
+      
+  //     // Audit failed registration
+  //     await AuditService.log({
+  //       type: 'registration_failed',
+  //       action: 'register',
+  //       category: 'authentication',
+  //       result: 'failure',
+  //       severity: 'medium',
+  //       target: {
+  //         type: 'registration',
+  //         id: userData.email
+  //       },
+  //       metadata: {
+  //         ...context,
+  //         error: error.message
+  //       }
+  //     });
+      
+  //     throw error;
+  //   }
+  // }
+
   /**
-   * Register new user with email/password - CORRECTED ROLE HANDLING
+   * Register new user with email/password - WITH BUSINESS LOGIC ENFORCEMENT
    * @param {Object} userData - User registration data
    * @param {Object} context - Request context
    * @returns {Promise<Object>} Registration result
@@ -61,22 +239,125 @@ class AuthService {
         throw new ConflictError('User with this email already exists');
       }
       
-      // Extract role value correctly - FIXED
-      let primaryRole = 'prospect'; // Default role
+      // Extract role value correctly
+      let requestedRole = 'prospect'; // Default role
       if (role) {
         if (typeof role === 'string') {
-          primaryRole = role;
+          requestedRole = role;
         } else if (role.primary) {
-          primaryRole = role.primary;
+          requestedRole = role.primary;
         }
       }
       
       // Validate role against allowed values
-      if (!constants.USER.ROLES_ENUM.includes(primaryRole)) {
-        throw new ValidationError(`Invalid role: ${primaryRole}. Must be one of: ${constants.USER.ROLES_ENUM.join(', ')}`);
+      if (!constants.USER.ROLES_ENUM.includes(requestedRole)) {
+        throw new ValidationError(`Invalid role: ${requestedRole}. Must be one of: ${constants.USER.ROLES_ENUM.join(', ')}`);
       }
       
-      // Create user data with corrected role assignment
+      // BUSINESS LOGIC: Role assignment restrictions using permission middleware
+      let finalRole = 'prospect'; // Default to prospect for security
+      
+      // Check context flags for authorization
+      const isPublicRegistration = !context.isAdmin && !context.salesApproved && !context.paymentVerified && !context.internalOnboarding;
+      const hasVerification = context.salesApproved || context.paymentVerified;
+      const isInternalProcess = context.internalOnboarding || context.isAdmin;
+      
+      // Get role categories from permission middleware
+      const { roleCategories } = PermissionMiddleware;
+      
+      // Apply business logic for role assignment
+      if (isPublicRegistration) {
+        // Public registration: Only allow publicly assignable roles
+        if (!PermissionMiddleware.isPubliclyAssignableRole(requestedRole)) {
+          logger.warn('Attempt to assign elevated role through public registration', {
+            requestedRole,
+            email: email.toLowerCase(),
+            ip: context.ip,
+            userAgent: context.userAgent
+          });
+          
+          // Force to prospect and log the attempt
+          finalRole = 'prospect';
+          
+          // Audit the elevation attempt
+          await AuditService.log({
+            type: 'role_elevation_blocked',
+            action: 'register',
+            category: 'security',
+            result: 'blocked',
+            severity: 'medium',
+            target: {
+              type: 'registration',
+              id: email.toLowerCase()
+            },
+            metadata: {
+              ...context,
+              requestedRole,
+              assignedRole: finalRole,
+              reason: 'public_registration_restriction'
+            }
+          });
+        } else {
+          finalRole = requestedRole;
+        }
+      } else if (hasVerification && roleCategories.external.includes(requestedRole) && requestedRole === 'client') {
+        // Verified client registration: Allow client role
+        finalRole = requestedRole;
+        
+        logger.info('Verified client registration', {
+          email: email.toLowerCase(),
+          role: finalRole,
+          salesApproved: context.salesApproved,
+          paymentVerified: context.paymentVerified
+        });
+      } else if (isInternalProcess && roleCategories.internal.includes(requestedRole)) {
+        // Internal process: Allow internal roles
+        finalRole = requestedRole;
+        
+        logger.info('Internal role assignment', {
+          email: email.toLowerCase(),
+          role: finalRole,
+          isAdmin: context.isAdmin,
+          internalOnboarding: context.internalOnboarding
+        });
+      } else if (context.isAdmin && (roleCategories.platform.includes(requestedRole) || 
+                                  roleCategories.organization.includes(requestedRole) || 
+                                  roleCategories.recruitment.includes(requestedRole))) {
+        // Admin process: Allow platform/organization/recruitment roles
+        finalRole = requestedRole;
+        
+        logger.info('Admin role assignment', {
+          email: email.toLowerCase(),
+          role: finalRole,
+          adminUserId: context.userId
+        });
+      } else {
+        // Unauthorized role assignment attempt
+        throw new ValidationError(`Role '${requestedRole}' requires special authorization. Contact your administrator.`);
+      }
+      
+      // Additional validation using permission middleware methods
+      if (requestedRole === 'client' && !hasVerification && !context.isAdmin) {
+        throw new ValidationError('Client role requires business verification. Please contact sales to upgrade your account.');
+      }
+      
+      if (roleCategories.internal.includes(requestedRole) && !isInternalProcess) {
+        throw new ValidationError('Internal roles require administrator approval through HR onboarding process.');
+      }
+      
+      // Determine user type based on final role using permission middleware
+      const roleCategory = PermissionMiddleware.getUserRoleCategory({ role: { primary: finalRole } });
+      let userType = 'hosted_org_user'; // Default
+      
+      if (roleCategory === 'internal' || roleCategory === 'platform') {
+        userType = 'core_consultant';
+      } else if (roleCategory === 'recruitment') {
+        userType = 'recruitment_partner';
+      } else if (organizationId) {
+        userType = 'hosted_org_user';
+      }
+      
+      // Create user data with enforced role assignment
       const newUserData = {
         email: email.toLowerCase(),
         firstName,
@@ -84,9 +365,9 @@ class AuthService {
         profile: {
           displayName: `${firstName} ${lastName}`.trim()
         },
-        userType: organizationId ? 'hosted_org_user' : 'core_consultant',
+        userType,
         role: {
-          primary: primaryRole  // Correctly assign string value to primary field
+          primary: finalRole  // Use enforced role, not requested role
         },
         organization: organizationId ? {
           current: organizationId,
@@ -116,7 +397,14 @@ class AuthService {
             userId: user._id,
             method: 'registration'
           },
-          source: context.source || 'web'
+          source: context.source || 'web',
+          registrationContext: {
+            isPublicRegistration,
+            hasVerification,
+            isInternalProcess,
+            requestedRole,
+            assignedRole: finalRole
+          }
         }
       });
       
@@ -155,7 +443,7 @@ class AuthService {
         };
       }
       
-      // Audit log
+      // Audit log with role enforcement details
       await AuditService.log({
         type: 'user_registration',
         action: 'register',
@@ -169,14 +457,23 @@ class AuthService {
         metadata: {
           ...context,
           email: user.email,
-          role: user.role.primary,
-          organizationId
+          requestedRole,
+          assignedRole: finalRole,
+          roleEnforced: requestedRole !== finalRole,
+          userType,
+          organizationId,
+          registrationMethod: isPublicRegistration ? 'public' : 'verified'
         }
       });
       
+      // Include role enforcement information in response
+      const responseMessage = finalRole !== requestedRole 
+        ? `Registration successful with ${finalRole} role. Please check your email to verify your account.`
+        : 'Registration successful. Please check your email to verify your account.';
+      
       return {
         success: true,
-        message: 'Registration successful. Please check your email to verify your account.',
+        message: responseMessage,
         user: {
           id: user._id,
           email: user.email,
@@ -184,7 +481,13 @@ class AuthService {
           lastName: user.lastName,
           role: user.role
         },
-        session: sessionData
+        session: sessionData,
+        roleAssignment: {
+          requested: requestedRole,
+          assigned: finalRole,
+          enforced: requestedRole !== finalRole,
+          reason: finalRole !== requestedRole ? 'Business policy enforcement' : 'Role assignment approved'
+        }
       };
       
     } catch (error) {
@@ -203,7 +506,8 @@ class AuthService {
         },
         metadata: {
           ...context,
-          error: error.message
+          error: error.message,
+          requestedRole: userData.role
         }
       });
       
@@ -3154,6 +3458,294 @@ class AuthService {
         userId: user._id,
         email: user.email
       });
+    }
+  }
+
+  /**
+   * Upgrade user role with proper validation and business logic
+   * @param {string} userId - User ID to upgrade
+   * @param {string} newRole - Target role
+   * @param {Object} verificationData - Verification context
+   * @param {Object} context - Request context
+   * @returns {Promise<Object>} Upgrade result
+   */
+  static async upgradeUserRole(userId, newRole, verificationData, context) {
+    try {
+      // Get user and auth records
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new NotFoundError('User not found');
+      }
+
+      const auth = await Auth.findOne({ userId });
+      if (!auth) {
+        throw new NotFoundError('Authentication record not found');
+      }
+
+      const currentRole = user.role.primary;
+
+      // Validate upgrade path using permission middleware
+      const canUpgrade = this.validateRoleUpgrade(currentRole, newRole, verificationData);
+      if (!canUpgrade.valid) {
+        throw new ValidationError(canUpgrade.message);
+      }
+
+      // Determine required user type for new role
+      const roleCategory = PermissionMiddleware.getUserRoleCategory({ role: { primary: newRole } });
+      let newUserType = user.userType;
+
+      if (roleCategory === 'external' && newRole === 'client') {
+        newUserType = 'hosted_org_user';
+      } else if (roleCategory === 'internal') {
+        newUserType = 'core_consultant';
+      } else if (roleCategory === 'recruitment') {
+        newUserType = 'recruitment_partner';
+      }
+
+      // Update user role and type
+      user.role.primary = newRole;
+      user.userType = newUserType;
+      user.status = 'active'; // Ensure user is active after upgrade
+      
+      // Add upgrade tracking
+      if (!user.roleHistory) {
+        user.roleHistory = [];
+      }
+      
+      user.roleHistory.push({
+        fromRole: currentRole,
+        toRole: newRole,
+        upgradedAt: new Date(),
+        upgradeReason: verificationData.salesApproved ? 'sales_approval' : 'payment_verification',
+        upgradedBy: context.userId || userId,
+        verificationData: {
+          salesApproved: !!verificationData.salesApproved,
+          paymentVerified: !!verificationData.paymentVerified
+        }
+      });
+
+      await user.save();
+
+      // Update auth metadata to track the upgrade
+      auth.metadata.roleUpgrades = auth.metadata.roleUpgrades || [];
+      auth.metadata.roleUpgrades.push({
+        fromRole: currentRole,
+        toRole: newRole,
+        upgradedAt: new Date(),
+        verificationMethod: verificationData.salesApproved ? 'sales_approval' : 'payment_verification'
+      });
+
+      await auth.save();
+
+      // Audit log the role upgrade
+      await AuditService.log({
+        type: 'user_role_upgraded',
+        action: 'upgrade_role',
+        category: 'authentication',
+        result: 'success',
+        userId: user._id,
+        severity: 'high',
+        target: {
+          type: 'user',
+          id: user._id.toString()
+        },
+        metadata: {
+          ...context,
+          fromRole: currentRole,
+          toRole: newRole,
+          userType: newUserType,
+          verificationData: {
+            salesApproved: !!verificationData.salesApproved,
+            paymentVerified: !!verificationData.paymentVerified
+          },
+          upgradeReason: verificationData.salesApproved ? 'sales_approval' : 'payment_verification'
+        }
+      });
+
+      logger.info('User role upgraded successfully', {
+        userId: user._id,
+        email: user.email,
+        fromRole: currentRole,
+        toRole: newRole,
+        userType: newUserType,
+        verificationMethod: verificationData.salesApproved ? 'sales_approval' : 'payment_verification'
+      });
+
+      return {
+        success: true,
+        message: `Role successfully upgraded from ${currentRole} to ${newRole}`,
+        user: {
+          id: user._id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          userType: user.userType,
+          status: user.status
+        },
+        upgrade: {
+          fromRole: currentRole,
+          toRole: newRole,
+          upgradedAt: new Date(),
+          verificationMethod: verificationData.salesApproved ? 'sales_approval' : 'payment_verification'
+        }
+      };
+
+    } catch (error) {
+      logger.error('Role upgrade error', {
+        error: error.message,
+        userId,
+        newRole,
+        verificationData
+      });
+
+      // Audit failed upgrade attempt
+      await AuditService.log({
+        type: 'role_upgrade_failed',
+        action: 'upgrade_role',
+        category: 'authentication',
+        result: 'failure',
+        userId,
+        severity: 'medium',
+        metadata: {
+          ...context,
+          targetRole: newRole,
+          error: error.message,
+          verificationData
+        }
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Validate role upgrade path and requirements
+   * @param {string} currentRole - Current user role
+   * @param {string} newRole - Target role
+   * @param {Object} verificationData - Verification context
+   * @returns {Object} Validation result
+   */
+  static validateRoleUpgrade(currentRole, newRole, verificationData) {
+    // Define valid upgrade paths
+    const validUpgradePaths = {
+      prospect: ['client'],
+      client: ['org_owner'], // Clients can become organization owners
+      // Add other valid upgrade paths as needed
+    };
+
+    // Check if upgrade path is valid
+    const allowedTargets = validUpgradePaths[currentRole] || [];
+    if (!allowedTargets.includes(newRole)) {
+      return {
+        valid: false,
+        message: `Invalid upgrade path from ${currentRole} to ${newRole}. Allowed upgrades: ${allowedTargets.join(', ')}`
+      };
+    }
+
+    // Validate requirements for specific role upgrades
+    if (newRole === 'client') {
+      if (!verificationData.salesApproved && !verificationData.paymentVerified) {
+        return {
+          valid: false,
+          message: 'Client role requires either sales approval or payment verification'
+        };
+      }
+    }
+
+    // Add more role-specific validation as needed
+    if (newRole === 'org_owner') {
+      if (!verificationData.organizationCreated) {
+        return {
+          valid: false,
+          message: 'Organization owner role requires an active organization'
+        };
+      }
+    }
+
+    return {
+      valid: true,
+      message: 'Role upgrade validation passed'
+    };
+  }
+
+  /**
+   * Downgrade user role (administrative function)
+   * @param {string} userId - User ID to downgrade
+   * @param {string} newRole - Target role
+   * @param {Object} adminContext - Admin context
+   * @returns {Promise<Object>} Downgrade result
+   */
+  static async downgradeUserRole(userId, newRole, adminContext) {
+    try {
+      if (!adminContext.isAdmin) {
+        throw new ValidationError('Role downgrades require administrative privileges');
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new NotFoundError('User not found');
+      }
+
+      const currentRole = user.role.primary;
+
+      // Validate downgrade is necessary
+      if (currentRole === newRole) {
+        throw new ValidationError('User already has the specified role');
+      }
+
+      // Update user role
+      user.role.primary = newRole;
+      
+      // Add downgrade tracking
+      if (!user.roleHistory) {
+        user.roleHistory = [];
+      }
+      
+      user.roleHistory.push({
+        fromRole: currentRole,
+        toRole: newRole,
+        downgradedAt: new Date(),
+        downgradeReason: adminContext.reason || 'administrative_action',
+        downgradedBy: adminContext.adminUserId
+      });
+
+      await user.save();
+
+      // Audit log
+      await AuditService.log({
+        type: 'user_role_downgraded',
+        action: 'downgrade_role',
+        category: 'administration',
+        result: 'success',
+        userId: user._id,
+        severity: 'high',
+        target: {
+          type: 'user',
+          id: user._id.toString()
+        },
+        metadata: {
+          fromRole: currentRole,
+          toRole: newRole,
+          adminUserId: adminContext.adminUserId,
+          reason: adminContext.reason
+        }
+      });
+
+      return {
+        success: true,
+        message: `Role downgraded from ${currentRole} to ${newRole}`,
+        user: {
+          id: user._id,
+          email: user.email,
+          role: user.role,
+          userType: user.userType
+        }
+      };
+
+    } catch (error) {
+      logger.error('Role downgrade error', { error, userId, newRole });
+      throw error;
     }
   }
   

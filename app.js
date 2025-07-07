@@ -28,10 +28,12 @@ const { AppError } = require('./server/shared/utils/app-error');
 // Import the production-grade authentication strategy manager
 const AuthStrategiesManager = require('./server/shared/security/passport/strategies/auth-strategy-index');
 
+
 // Import routes
 const authRoutes = require('./server/shared/auth/routes/auth-routes');
 const userRoutes = require('./server/shared/users/routes/user-routes');
 const organizationRoutes = require('./server/organization-tenants/routes/organization-tenant-routes');
+const roleConversionRoutes = require('./server/shared/auth/routes/role-conversion-routes');
 
 // const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
 
@@ -305,8 +307,8 @@ class Application {
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
-        const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
-        // const baseApiPath = `${apiPrefix}/${apiVersion}`;
+        // const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
+        const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
         // Health & Status Routes (Always first for monitoring)
         this.app.get('/health', (req, res) => {
@@ -333,6 +335,8 @@ class Application {
         this.app.use(`${baseApiPath}/users`, userRoutes);
         // 4. Organization Management Routes (Tenant Management)
         this.app.use(`${baseApiPath}/organizations`, organizationRoutes);
+        // 4.5 Role Conversion Routes (Prospect to Client, Admin Role Management)
+        this.app.use(`${baseApiPath}/role-conversion`, roleConversionRoutes);
         // 5. Core Business Domain Routes
         // this.app.use(`${baseApiPath}/core-business`, coreBusiness);
         // 6. Hosted Organizations Domain Routes
