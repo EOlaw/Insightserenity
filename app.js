@@ -305,8 +305,8 @@ class Application {
     setupRoutes() {
         const apiPrefix = config.app.apiPrefix || '/api';
         const apiVersion = config.app.apiVersion || 'v1';
-        // const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
-        const baseApiPath = `${apiPrefix}/${apiVersion}`;
+        const baseApiPath = `${apiPrefix}`; // Uncomment if you want to use the base path without versioning
+        // const baseApiPath = `${apiPrefix}/${apiVersion}`;
 
         // Health & Status Routes (Always first for monitoring)
         this.app.get('/health', (req, res) => {
