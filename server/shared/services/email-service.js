@@ -3,11 +3,11 @@
 /**
  * @file Email Service
  * @description Comprehensive email sending service with multiple providers and enhanced security
- * @version 1.1.0
+ * @version 1.2.0
+ * @updated Fixed configuration issues and Gmail SMTP integration
  */
 
 const nodemailer = require('nodemailer');
-
 const { AppError } = require('../utils/app-error');
 const logger = require('../utils/logger');
 
@@ -44,7 +44,7 @@ try {
   config = {
     email: {
       provider: 'smtp',
-      defaultFrom: 'noreply@localhost',
+      from: 'noreply@localhost',
       smtp: {
         host: 'localhost',
         port: 587,
@@ -54,7 +54,8 @@ try {
       }
     },
     app: {
-      url: 'http://localhost:3000'
+      url: 'http://localhost:3000',
+      env: 'development'
     }
   };
 }
@@ -79,7 +80,8 @@ try {
 class EmailService {
   constructor() {
     this.provider = this.determineAvailableProvider();
-    this.from = config.email?.defaultFrom || 'noreply@localhost';
+    // Fixed: Use correct config path for email from address
+    this.from = config.email?.from || config.email?.defaultFrom || 'noreply@insightserenity.com';
     this.replyTo = config.email?.replyTo;
     this.templates = new Map();
     
@@ -200,7 +202,6 @@ class EmailService {
       throw new Error('Mailgun configuration incomplete - API key and domain required');
     }
     
-    // Initialize the new mailgun.js client
     const mailgun = new Mailgun({});
     
     this.mailgunClient = mailgun.client({
@@ -218,7 +219,7 @@ class EmailService {
   }
   
   /**
-   * Initialize SMTP
+   * Initialize SMTP with enhanced Gmail compatibility
    */
   initializeSMTP() {
     const smtpConfig = config.email?.smtp || {
@@ -229,46 +230,97 @@ class EmailService {
       pass: ''
     };
     
-    this.transporter = nodemailer.createTransport({
+    // Validate SMTP credentials
+    if (!smtpConfig.user || !smtpConfig.pass) {
+      logger.warn('SMTP credentials not configured - email sending will fail', {
+        hasUser: !!smtpConfig.user,
+        hasPass: !!smtpConfig.pass,
+        host: smtpConfig.host
+      });
+    }
+    
+    // Enhanced configuration for Gmail compatibility
+    const transporterConfig = {
       host: smtpConfig.host,
       port: smtpConfig.port,
-      secure: smtpConfig.secure,
+      secure: smtpConfig.secure, // true for 465, false for other ports
       auth: smtpConfig.user && smtpConfig.pass ? {
         user: smtpConfig.user,
         pass: smtpConfig.pass
       } : undefined,
       pool: true,
       maxConnections: smtpConfig.maxConnections || 5,
-      maxMessages: smtpConfig.maxMessages || 100
-    });
+      maxMessages: smtpConfig.maxMessages || 100,
+      // Enhanced TLS configuration for Gmail
+      tls: {
+        rejectUnauthorized: smtpConfig.tls?.rejectUnauthorized !== false,
+        ciphers: 'SSLv3'
+      },
+      // Additional options for better compatibility
+      connectionTimeout: 60000, // 60 seconds
+      greetingTimeout: 30000,    // 30 seconds
+      socketTimeout: 60000,      // 60 seconds
+      // Debug options for development
+      debug: config.app?.env === 'development',
+      logger: config.app?.env === 'development'
+    };
+
+    this.transporter = nodemailer.createTransport(transporterConfig);
     
-    // Verify connection in development only
-    if (config.env === 'development' && smtpConfig.host !== 'localhost') {
-      this.transporter.verify((error) => {
-        if (error) {
-          logger.warn('SMTP connection verification failed', { error: error.message });
-        } else {
-          logger.info('SMTP server ready to send emails');
-        }
-      });
-    }
+    // Always verify connection for better debugging
+    this.transporter.verify((error) => {
+      if (error) {
+        logger.error('SMTP connection verification failed', { 
+          error: error.message,
+          code: error.code,
+          command: error.command,
+          host: smtpConfig.host,
+          port: smtpConfig.port,
+          user: smtpConfig.user ? `${smtpConfig.user.substring(0, 3)}***` : 'not configured',
+          secure: smtpConfig.secure
+        });
+      } else {
+        logger.info('SMTP server ready to send emails', {
+          host: smtpConfig.host,
+          port: smtpConfig.port,
+          secure: smtpConfig.secure,
+          from: this.from
+        });
+      }
+    });
     
     logger.info('SMTP initialized successfully', { 
       host: smtpConfig.host, 
-      port: smtpConfig.port 
+      port: smtpConfig.port,
+      secure: smtpConfig.secure,
+      from: this.from
     });
   }
   
   /**
-   * Send email using configured provider
+   * Send email using configured provider with enhanced error handling
    * @param {Object} options - Email options
    * @returns {Promise<Object>} Send result
    */
   async send(options) {
     try {
+      // Validate transporter exists
+      if (this.provider === 'smtp' && !this.transporter) {
+        throw new Error('SMTP transporter not initialized');
+      }
+
       const emailData = this.prepareEmailData(options);
       this.validateEmailData(emailData);
       
+      logger.info('Attempting to send email', {
+        to: emailData.to,
+        subject: emailData.subject,
+        from: emailData.from,
+        provider: this.provider,
+        hasHTML: !!emailData.html,
+        hasText: !!emailData.text
+      });
+
       let result;
       switch (this.provider) {
         case 'sendgrid':
@@ -289,12 +341,15 @@ class EmailService {
       return result;
     } catch (error) {
       logger.error('Email send failed', { 
-        error: error.message, 
+        error: error.message,
+        code: error.code,
+        command: error.command,
+        stack: config.app?.env === 'development' ? error.stack : undefined,
         provider: this.provider,
         to: options.to,
         subject: options.subject
       });
-      throw new AppError('Failed to send email', 500);
+      throw new AppError(`Failed to send email: ${error.message}`, 500);
     }
   }
   
@@ -406,7 +461,6 @@ class EmailService {
       ...(config.email?.tracking?.clicks && { 'o:tracking-clicks': 'yes' })
     };
     
-    // Handle attachments if present
     if (emailData.attachments && emailData.attachments.length > 0) {
       messageData.attachment = emailData.attachments.map(att => ({
         filename: att.filename,
@@ -414,7 +468,6 @@ class EmailService {
       }));
     }
     
-    // Send using the new mailgun.js API
     const response = await this.mailgunClient.messages.create(this.mailgunDomain, messageData);
     
     return {
@@ -426,7 +479,7 @@ class EmailService {
   }
   
   /**
-   * Send via SMTP
+   * Send via SMTP with enhanced error handling and logging
    */
   async sendViaSMTP(emailData) {
     const mailOptions = {
@@ -440,22 +493,48 @@ class EmailService {
       ...(emailData.replyTo && { replyTo: emailData.replyTo }),
       ...(emailData.attachments && { attachments: emailData.attachments }),
       headers: {
-        'X-Mailer': 'Insightserenity Platform',
+        'X-Mailer': 'InsightSerenity Platform',
         'X-Priority': emailData.priority || '3',
         ...(emailData.headers || {})
       }
     };
     
-    const result = await this.transporter.sendMail(mailOptions);
-    
-    return {
-      messageId: result.messageId,
-      status: 250,
-      provider: 'smtp',
-      accepted: result.accepted,
-      rejected: result.rejected,
-      preview: nodemailer.getTestMessageUrl(result)
-    };
+    logger.info('Sending via SMTP', {
+      to: mailOptions.to,
+      from: mailOptions.from,
+      subject: mailOptions.subject,
+      hasAttachments: !!(emailData.attachments && emailData.attachments.length > 0)
+    });
+
+    try {
+      const result = await this.transporter.sendMail(mailOptions);
+      
+      logger.info('SMTP send successful', {
+        messageId: result.messageId,
+        accepted: result.accepted,
+        rejected: result.rejected,
+        response: result.response
+      });
+
+      return {
+        messageId: result.messageId,
+        status: 250,
+        provider: 'smtp',
+        accepted: result.accepted,
+        rejected: result.rejected,
+        response: result.response,
+        preview: nodemailer.getTestMessageUrl(result)
+      };
+    } catch (error) {
+      logger.error('SMTP send error details', {
+        error: error.message,
+        code: error.code,
+        command: error.command,
+        response: error.response,
+        responseCode: error.responseCode
+      });
+      throw error;
+    }
   }
   
   /**
@@ -551,7 +630,7 @@ class EmailService {
   }
   
   /**
-   * Prepare email data
+   * Prepare email data with proper validation
    */
   prepareEmailData(options) {
     return {
@@ -578,7 +657,7 @@ class EmailService {
   }
   
   /**
-   * Validate email data
+   * Validate email data with comprehensive checks
    */
   validateEmailData(emailData) {
     if (!emailData.to) {
@@ -590,7 +669,7 @@ class EmailService {
     }
     
     if (!emailData.text && !emailData.html && !emailData.templateId) {
-      throw new AppError('Email content is required', 400);
+      throw new AppError('Email content is required (text, html, or templateId)', 400);
     }
     
     const validateEmail = (email) => {
@@ -611,28 +690,43 @@ class EmailService {
   }
   
   /**
-   * Log email sent
+   * Log email sent with enhanced information
    */
   logEmailSent(emailData, result) {
     logger.info('Email sent successfully', {
       messageId: result.messageId,
       provider: result.provider,
+      status: result.status,
       to: emailData.to,
       subject: emailData.subject,
       category: emailData.metadata?.category,
       userId: emailData.metadata?.userId,
-      organizationId: emailData.metadata?.organizationId
+      organizationId: emailData.metadata?.organizationId,
+      timestamp: new Date().toISOString()
     });
   }
   
   /**
-   * Test email configuration
+   * Test email configuration with comprehensive diagnostics
    */
   async testConnection() {
     try {
+      logger.info('Testing email service connection', { provider: this.provider });
+      
       if (this.provider === 'smtp' && this.transporter) {
+        logger.info('Testing SMTP connection...');
         await this.transporter.verify();
-        return { success: true, provider: this.provider };
+        logger.info('SMTP connection test successful');
+        return { 
+          success: true, 
+          provider: this.provider,
+          details: {
+            host: config.email?.smtp?.host,
+            port: config.email?.smtp?.port,
+            secure: config.email?.smtp?.secure,
+            from: this.from
+          }
+        };
       }
       
       if (this.provider === 'mailgun' && this.mailgunClient) {
@@ -646,37 +740,97 @@ class EmailService {
       
       return { success: true, provider: this.provider };
     } catch (error) {
-      logger.error('Email service test failed', { error: error.message });
-      return { success: false, error: error.message, provider: this.provider };
+      logger.error('Email service test failed', { 
+        error: error.message,
+        code: error.code,
+        provider: this.provider,
+        details: error.command || 'Unknown error'
+      });
+      return { 
+        success: false, 
+        error: error.message, 
+        provider: this.provider,
+        code: error.code
+      };
     }
   }
   
   /**
-   * Email templates
+   * Pre-built email templates for common use cases
    */
   async sendWelcomeEmail(user) {
-    return this.sendTemplate('welcome', {
+    const welcomeHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Welcome to InsightSerenity</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">Welcome to InsightSerenity!</h1>
+        </div>
+        <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #ddd;">
+          <h2 style="color: #333;">Hello ${user.firstName},</h2>
+          <p>Welcome to InsightSerenity! We're excited to have you on board.</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${config.app?.url || 'http://localhost:3000'}/activate/${user.activationToken}" 
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+              Activate Your Account
+            </a>
+          </div>
+          <p style="font-size: 14px; color: #666;">
+            If you have any questions, feel free to contact our support team.
+          </p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    return this.send({
       to: user.email,
-      subject: 'Welcome to Insightserenity',
-      data: {
-        name: user.firstName,
-        email: user.email,
-        activationUrl: `${config.app?.url || 'http://localhost:3000'}/activate/${user.activationToken}`
-      },
+      subject: 'Welcome to InsightSerenity',
+      html: welcomeHTML,
+      text: `Hello ${user.firstName},\n\nWelcome to InsightSerenity! Please activate your account by visiting: ${config.app?.url || 'http://localhost:3000'}/activate/${user.activationToken}`,
       userId: user.id,
       category: 'account'
     });
   }
   
   async sendPasswordResetEmail(user, resetToken) {
-    return this.sendTemplate('password-reset', {
+    const resetHTML = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Reset Your Password</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: #f44336; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">Password Reset Request</h1>
+        </div>
+        <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #ddd;">
+          <h2 style="color: #333;">Hello ${user.firstName},</h2>
+          <p>You requested a password reset. Click the button below to reset your password:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${config.app?.url || 'http://localhost:3000'}/reset-password/${resetToken}" 
+               style="background: #f44336; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+              Reset Password
+            </a>
+          </div>
+          <p style="font-size: 14px; color: #666;">
+            This link will expire in 2 hours. If you didn't request this reset, please ignore this email.
+          </p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    return this.send({
       to: user.email,
       subject: 'Reset Your Password',
-      data: {
-        name: user.firstName,
-        resetUrl: `${config.app?.url || 'http://localhost:3000'}/reset-password/${resetToken}`,
-        expiresIn: '2 hours'
-      },
+      html: resetHTML,
+      text: `Hello ${user.firstName},\n\nYou requested a password reset. Visit this link to reset your password: ${config.app?.url || 'http://localhost:3000'}/reset-password/${resetToken}\n\nThis link expires in 2 hours.`,
       userId: user.id,
       category: 'security',
       priority: 1

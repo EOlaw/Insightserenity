@@ -35,183 +35,6 @@ const PermissionMiddleware = require('../../middleware/auth/permission-middlewar
  * @class AuthService
  */
 class AuthService {
-  // /**
-  //  * Register new user with email/password - CORRECTED ROLE HANDLING
-  //  * @param {Object} userData - User registration data
-  //  * @param {Object} context - Request context
-  //  * @returns {Promise<Object>} Registration result
-  //  */
-  // static async register(userData, context) {
-  //   try {
-  //     const { email, password, firstName, lastName, organizationId, role } = userData;
-      
-  //     // Validate email format
-  //     if (!constants.REGEX.EMAIL.test(email)) {
-  //       throw new ValidationError('Invalid email format');
-  //     }
-      
-  //     // Validate password strength
-  //     const passwordValidation = this.validatePasswordStrength(password);
-  //     if (!passwordValidation.valid) {
-  //       throw new ValidationError(passwordValidation.message);
-  //     }
-      
-  //     // Check if user already exists
-  //     const existingUser = await User.findOne({ email: email.toLowerCase() });
-  //     if (existingUser) {
-  //       throw new ConflictError('User with this email already exists');
-  //     }
-      
-  //     // Extract role value correctly - FIXED
-  //     let primaryRole = 'prospect'; // Default role
-  //     if (role) {
-  //       if (typeof role === 'string') {
-  //         primaryRole = role;
-  //       } else if (role.primary) {
-  //         primaryRole = role.primary;
-  //       }
-  //     }
-      
-  //     // Validate role against allowed values
-  //     if (!constants.USER.ROLES_ENUM.includes(primaryRole)) {
-  //       throw new ValidationError(`Invalid role: ${primaryRole}. Must be one of: ${constants.USER.ROLES_ENUM.join(', ')}`);
-  //     }
-      
-  //     // Create user data with corrected role assignment
-  //     const newUserData = {
-  //       email: email.toLowerCase(),
-  //       firstName,
-  //       lastName,
-  //       profile: {
-  //         displayName: `${firstName} ${lastName}`.trim()
-  //       },
-  //       userType: organizationId ? 'hosted_org_user' : 'core_consultant',
-  //       role: {
-  //         primary: primaryRole  // Correctly assign string value to primary field
-  //       },
-  //       organization: organizationId ? {
-  //         current: organizationId,
-  //         organizations: [organizationId]
-  //       } : undefined,
-  //       status: 'pending', // Pending email verification
-  //       preferences: {
-  //         language: context.language || 'en',
-  //         timezone: context.timezone || 'UTC'
-  //       }
-  //     };
-      
-  //     // Create user
-  //     const user = await User.create(newUserData);
-      
-  //     // Create auth record
-  //     const auth = new Auth({
-  //       userId: user._id,
-  //       authMethods: {
-  //         local: {
-  //           email: email.toLowerCase(),
-  //           isVerified: false
-  //         }
-  //       },
-  //       metadata: {
-  //         createdBy: {
-  //           userId: user._id,
-  //           method: 'registration'
-  //         },
-  //         source: context.source || 'web'
-  //       }
-  //     });
-      
-  //     // Set password
-  //     await auth.setPassword(password);
-      
-  //     // Generate verification token
-  //     const verificationToken = auth.generateVerificationToken();
-      
-  //     await auth.save();
-      
-  //     // Send verification email
-  //     await this.sendVerificationEmail(user, verificationToken, context);
-      
-  //     // Create initial session if auto-login is enabled
-  //     let sessionData = null;
-  //     if (config.features.autoLoginAfterRegistration) {
-  //       const session = auth.addSession({
-  //         deviceInfo: {
-  //           userAgent: context.userAgent,
-  //           platform: this.extractPlatform(context.userAgent),
-  //           browser: this.extractBrowser(context.userAgent)
-  //         },
-  //         location: {
-  //           ip: context.ip
-  //         },
-  //         expiresAt: new Date(Date.now() + config.auth.sessionDuration)
-  //       });
-        
-  //       await auth.save();
-        
-  //       const tokens = await this.generateTokens(user, session.sessionId);
-  //       sessionData = {
-  //         ...tokens,
-  //         sessionId: session.sessionId
-  //       };
-  //     }
-      
-  //     // Audit log
-  //     await AuditService.log({
-  //       type: 'user_registration',
-  //       action: 'register',
-  //       category: 'authentication',
-  //       result: 'success',
-  //       userId: user._id,
-  //       target: {
-  //         type: 'user',
-  //         id: user._id.toString()
-  //       },
-  //       metadata: {
-  //         ...context,
-  //         email: user.email,
-  //         role: user.role.primary,
-  //         organizationId
-  //       }
-  //     });
-      
-  //     return {
-  //       success: true,
-  //       message: 'Registration successful. Please check your email to verify your account.',
-  //       user: {
-  //         id: user._id,
-  //         email: user.email,
-  //         firstName: user.firstName,
-  //         lastName: user.lastName,
-  //         role: user.role
-  //       },
-  //       session: sessionData
-  //     };
-      
-  //   } catch (error) {
-  //     logger.error('Registration error', { error, email: userData.email });
-      
-  //     // Audit failed registration
-  //     await AuditService.log({
-  //       type: 'registration_failed',
-  //       action: 'register',
-  //       category: 'authentication',
-  //       result: 'failure',
-  //       severity: 'medium',
-  //       target: {
-  //         type: 'registration',
-  //         id: userData.email
-  //       },
-  //       metadata: {
-  //         ...context,
-  //         error: error.message
-  //       }
-  //     });
-      
-  //     throw error;
-  //   }
-  // }
-
   /**
    * Register new user with email/password - WITH BUSINESS LOGIC ENFORCEMENT
    * @param {Object} userData - User registration data
@@ -416,8 +239,8 @@ class AuthService {
       
       await auth.save();
       
-      // Send verification email
-      await this.sendVerificationEmail(user, verificationToken, context);
+      // Send verification email using corrected email service
+      const emailResult = await this.sendVerificationEmail(user, verificationToken, context);
       
       // Create initial session if auto-login is enabled
       let sessionData = null;
@@ -467,26 +290,35 @@ class AuthService {
       });
       
       // Include role enforcement information in response
-      const responseMessage = finalRole !== requestedRole 
-        ? `Registration successful with ${finalRole} role. Please check your email to verify your account.`
-        : 'Registration successful. Please check your email to verify your account.';
+      const responseMessage = emailResult.success 
+        ? (finalRole !== requestedRole 
+          ? `Registration successful with ${finalRole} role. Please check your email to verify your account.`
+          : 'Registration successful. Please check your email to verify your account.')
+        : 'Registration successful. Verification email could not be sent - please contact support for assistance.';
       
       return {
         success: true,
         message: responseMessage,
-        user: {
-          id: user._id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role
-        },
-        session: sessionData,
-        roleAssignment: {
-          requested: requestedRole,
-          assigned: finalRole,
-          enforced: requestedRole !== finalRole,
-          reason: finalRole !== requestedRole ? 'Business policy enforcement' : 'Role assignment approved'
+        data: {
+          user: {
+            id: user._id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role
+          },
+          tokens: sessionData,
+          message: responseMessage,
+          emailStatus: emailResult.success ? 'sent' : 'failed',
+          roleAssignment: {
+            requested: requestedRole,
+            assigned: finalRole,
+            enforced: requestedRole !== finalRole,
+            reason: finalRole !== requestedRole ? 'Business policy enforcement' : 'Role assignment approved'
+          },
+          ...(config.app.env === 'development' && !emailResult.success && {
+            verificationUrl: emailResult.fallbackUrl
+          })
         }
       };
       
@@ -3038,72 +2870,6 @@ class AuthService {
     return false;
   }
 
-  // /**
-  //  * Generate JWT tokens with rememberMe support
-  //  * @param {Object} user - User object
-  //  * @param {string} sessionId - Session ID
-  //  * @param {boolean} rememberMe - Whether to extend refresh token duration
-  //  * @returns {Promise<Object>} Generated tokens
-  //  */
-  // static async generateTokens(user, sessionId, rememberMe = false) {
-  //   const jwt = require('jsonwebtoken');
-    
-  //   // ROBUST CONFIG ACCESS - Get secrets directly from environment with fallbacks
-  //   const jwtSecret = process.env.ACCESS_TOKEN_SECRET || 
-  //                   process.env.JWT_SECRET || 
-  //                   'fallback-secret-development-only';
-                    
-  //   const jwtRefreshSecret = process.env.REFRESH_TOKEN_SECRET || 
-  //                           process.env.JWT_REFRESH_SECRET || 
-  //                           'fallback-refresh-secret-development-only';
-                            
-  //   const accessTokenExpiry = process.env.ACCESS_TOKEN_EXPIRES_IN || '15m';
-    
-  //   // 🔧 REMEMBER ME LOGIC: Use extended duration if rememberMe is true
-  //   const refreshTokenExpiry = rememberMe 
-  //     ? '14d'  // 14 days for remember me
-  //     : (process.env.REFRESH_TOKEN_EXPIRES_IN || '7d'); // 7 days normal
-    
-  //   // Add debug logging to verify rememberMe logic
-  //   console.log(`🔧 AuthService.generateTokens - RememberMe: ${rememberMe}`);
-  //   console.log(`🔧 Refresh token expiry: ${refreshTokenExpiry}`);
-  //   console.log('jwtSecret:', jwtSecret?.substring(0, 20) + '...');
-  //   console.log('jwtRefreshSecret:', jwtRefreshSecret?.substring(0, 20) + '...');
-    
-  //   const tokenPayload = {
-  //     userId: user._id,
-  //     email: user.email,
-  //     role: user.role.primary,
-  //     organizationId: user.organization?.current,
-  //     sessionId
-  //   };
-    
-  //   const accessToken = jwt.sign(
-  //     { ...tokenPayload, type: 'access' },
-  //     jwtSecret,
-  //     { expiresIn: accessTokenExpiry }
-  //   );
-    
-  //   const refreshToken = jwt.sign(
-  //     { 
-  //       userId: user._id, 
-  //       sessionId,
-  //       type: 'refresh' 
-  //     },
-  //     jwtRefreshSecret,
-  //     { expiresIn: refreshTokenExpiry }  // 🔥 This now uses conditional expiry!
-  //   );
-    
-  //   return {
-  //     accessToken,
-  //     refreshToken,
-  //     tokenType: 'Bearer',
-  //     expiresIn: accessTokenExpiry,
-  //     rememberMe, // Include in response for debugging
-  //     refreshTokenExpiry // Include actual expiry used
-  //   };
-  // }
-
   /**
    * Generate JWT tokens with rememberMe support
    * @param {Object} user - User object
@@ -3180,81 +2946,8 @@ class AuthService {
     };
   }
 
-  // /**
-  //  * Send verification email with fallback logging
-  //  * @param {Object} user - User object
-  //  * @param {string} token - Verification token
-  //  * @param {Object} context - Request context
-  //  */
-  // static async sendVerificationEmail(user, token, context) {
-  //   try {
-  //     // Construct verification URL using correct config path
-  //     const verificationUrl = `${config.frontend.verifyEmailUrl}?token=${token}`;
-      
-  //     const emailData = {
-  //       to: user.email,
-  //       subject: 'Verify your email address',
-  //       template: 'email-verification',
-  //       data: {
-  //         firstName: user.firstName,
-  //         verificationUrl,
-  //         expiresIn: '24 hours'
-  //       }
-  //     };
-
-  //     // Check if EmailService exists and has sendEmail method
-  //     if (EmailService && typeof EmailService.sendEmail === 'function') {
-  //       await EmailService.sendEmail(emailData);
-  //       logger.info('Verification email sent successfully', {
-  //         to: user.email,
-  //         userId: user._id,
-  //         verificationUrl
-  //       });
-  //     } else {
-  //       // Fallback: Log email details instead of sending
-  //       logger.info('Email service not available - logging verification email details', {
-  //         emailType: 'verification',
-  //         to: user.email,
-  //         subject: emailData.subject,
-  //         firstName: user.firstName,
-  //         verificationUrl,
-  //         token: token.substring(0, 8) + '...', // Log partial token for security
-  //         userId: user._id,
-  //         note: 'This email would have been sent if email service was configured'
-  //       });
-        
-  //       // Also log to console for development visibility
-  //       console.log('📧 VERIFICATION EMAIL (would be sent):');
-  //       console.log(`   To: ${user.email}`);
-  //       console.log(`   Subject: ${emailData.subject}`);
-  //       console.log(`   Verification URL: ${verificationUrl}`);
-  //       console.log(`   Token: ${token}`);
-  //     }
-      
-  //   } catch (error) {
-  //     // Log error but don't fail registration
-  //     logger.error('Failed to send verification email', {
-  //       error: error.message,
-  //       userId: user._id,
-  //       email: user.email
-  //     });
-      
-  //     // Log fallback information
-  //     logger.info('Verification email fallback - registration completed without email', {
-  //       userId: user._id,
-  //       email: user.email,
-  //       token: token.substring(0, 8) + '...',
-  //       note: 'User can verify manually using token if needed'
-  //     });
-      
-  //     console.log('📧 VERIFICATION EMAIL FAILED - Token for manual verification:');
-  //     console.log(`   User: ${user.email}`);
-  //     console.log(`   Token: ${token}`);
-  //   }
-  // }
-
   /**
-   * Send verification email with fallback logging
+   * Send verification email with proper service integration
    * @param {Object} user - User object
    * @param {string} token - Verification token
    * @param {Object} context - Request context
@@ -3262,20 +2955,9 @@ class AuthService {
   static async sendVerificationEmail(user, token, context) {
     try {
       // Construct verification URL using correct config path
-      const verificationUrl = `${config.frontend.verifyEmailUrl}?token=${token}`;
+      const verificationUrl = `${config.frontend?.verifyEmailUrl || config.client?.url || 'http://localhost:3000/verify-email'}?token=${token}`;
       
-      const emailData = {
-        to: user.email,
-        subject: 'Verify your email address',
-        template: 'email-verification',
-        data: {
-          firstName: user.firstName,
-          verificationUrl,
-          expiresIn: '24 hours'
-        }
-      };
-
-      // ✅ ENHANCED DEVELOPMENT LOGGING
+      // ENHANCED DEVELOPMENT LOGGING
       if (config.app.env === 'development') {
         console.log('\n🔓 =================== EMAIL VERIFICATION TOKEN (DEVELOPMENT) ===================');
         console.log(`📧 To: ${user.email}`);
@@ -3287,65 +2969,174 @@ class AuthService {
         console.log(`📅 Created: ${new Date().toISOString()}`);
         console.log('================================================================================\n');
         
-        // Additional logger for development
         logger.info('🔓 EMAIL VERIFICATION TOKEN (DEVELOPMENT)', {
           userId: user._id,
           email: user.email,
           firstName: user.firstName,
-          fullToken: token, // Full token for development
+          fullToken: token,
           verificationUrl,
-          environment: 'development',
           note: 'Full token logged for development purposes only'
         });
       }
 
-      // Check if EmailService exists and has sendEmail method
-      if (EmailService && typeof EmailService.sendEmail === 'function') {
-        await EmailService.sendEmail(emailData);
+      // Prepare email content
+      const emailData = {
+        to: user.email,
+        subject: 'Verify your email address',
+        html: this.generateVerificationEmailHTML(user.firstName, verificationUrl),
+        text: this.generateVerificationEmailText(user.firstName, verificationUrl),
+        category: 'verification',
+        userId: user._id
+      };
+
+      // Try to send email using the email service
+      try {
+        logger.info('Attempting to send verification email via email service', {
+          to: user.email,
+          userId: user._id,
+          subject: emailData.subject
+        });
+
+        const result = await EmailService.send(emailData);
+        
         logger.info('Verification email sent successfully', {
           to: user.email,
           userId: user._id,
-          verificationUrl
+          messageId: result.messageId,
+          provider: result.provider
         });
-      } else {
-        // Fallback: Log email details instead of sending
-        logger.info('Email service not available - logging verification email details', {
-          emailType: 'verification',
-          to: user.email,
-          subject: emailData.subject,
-          firstName: user.firstName,
-          verificationUrl,
-          token: config.app.env === 'development' ? token : token.substring(0, 8) + '...', // Full token in dev
+
+        return {
+          success: true,
+          messageId: result.messageId,
+          provider: result.provider
+        };
+
+      } catch (emailError) {
+        // Log email error but don't fail registration
+        logger.error('Failed to send verification email', {
+          error: emailError.message,
           userId: user._id,
-          note: 'This email would have been sent if email service was configured'
+          email: user.email,
+          errorCode: emailError.code
         });
-        
-        // Also log to console for development visibility
-        console.log('📧 VERIFICATION EMAIL (would be sent):');
-        console.log(`   To: ${user.email}`);
-        console.log(`   Subject: ${emailData.subject}`);
-        console.log(`   Verification URL: ${verificationUrl}`);
+
+        // Development fallback logging
         if (config.app.env === 'development') {
+          console.log('📧 VERIFICATION EMAIL FAILED - Fallback Information:');
+          console.log(`   To: ${user.email}`);
+          console.log(`   Subject: ${emailData.subject}`);
+          console.log(`   Verification URL: ${verificationUrl}`);
           console.log(`   Full Token: ${token}`);
+          console.log(`   Error: ${emailError.message}`);
         }
+
+        // Log fallback information for production
+        logger.info('Verification email fallback - registration completed without email', {
+          userId: user._id,
+          email: user.email,
+          verificationUrl,
+          token: config.app.env === 'development' ? token : token.substring(0, 8) + '...',
+          error: emailError.message,
+          note: 'User can verify manually using URL if needed'
+        });
+
+        return {
+          success: false,
+          error: emailError.message,
+          fallbackUrl: verificationUrl
+        };
       }
       
     } catch (error) {
-      // Log error but don't fail registration
-      logger.error('Failed to send verification email', {
+      logger.error('Critical error in sendVerificationEmail', {
         error: error.message,
+        stack: error.stack,
         userId: user._id,
         email: user.email
       });
-      
-      // Log fallback information
-      logger.info('Verification email fallback - registration completed without email', {
-        userId: user._id,
-        email: user.email,
-        verificationUrl: `${config.frontend.verifyEmailUrl}?token=${token}`,
-        token: config.app.env === 'development' ? token : 'hidden_for_security'
-      });
+      throw error;
     }
+  }
+
+  /**
+   * Generate HTML content for verification email
+   * @param {string} firstName - User's first name
+   * @param {string} verificationUrl - Verification URL
+   * @returns {string} HTML content
+   */
+  static generateVerificationEmailHTML(firstName, verificationUrl) {
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Email</title>
+      </head>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">Welcome to InsightSerenity!</h1>
+        </div>
+        <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #ddd;">
+          <h2 style="color: #333; margin-bottom: 20px;">Hi ${firstName},</h2>
+          <p style="font-size: 16px; margin-bottom: 20px;">
+            Thank you for joining InsightSerenity! To complete your registration and secure your account, 
+            please verify your email address by clicking the button below.
+          </p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationUrl}" 
+               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                      color: white; 
+                      padding: 15px 30px; 
+                      text-decoration: none; 
+                      border-radius: 5px; 
+                      font-weight: bold; 
+                      display: inline-block;
+                      font-size: 16px;">
+              Verify Email Address
+            </a>
+          </div>
+          <p style="font-size: 14px; color: #666; margin-top: 30px;">
+            If the button doesn't work, copy and paste this link into your browser:<br>
+            <a href="${verificationUrl}" style="color: #667eea; word-break: break-all;">${verificationUrl}</a>
+          </p>
+          <p style="font-size: 14px; color: #666; margin-top: 20px;">
+            This verification link will expire in 24 hours for security reasons.
+          </p>
+          <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+          <p style="font-size: 12px; color: #888; text-align: center;">
+            If you didn't create an account with InsightSerenity, please ignore this email.
+          </p>
+        </div>
+      </body>
+      </html>
+    `;
+  }
+
+  /**
+   * Generate plain text content for verification email
+   * @param {string} firstName - User's first name
+   * @param {string} verificationUrl - Verification URL
+   * @returns {string} Plain text content
+   */
+  static generateVerificationEmailText(firstName, verificationUrl) {
+    return `
+Hi ${firstName},
+
+Welcome to InsightSerenity!
+
+Thank you for joining us. To complete your registration and secure your account, please verify your email address by visiting this link:
+
+${verificationUrl}
+
+This verification link will expire in 24 hours for security reasons.
+
+If you didn't create an account with InsightSerenity, please ignore this email.
+
+Best regards,
+The InsightSerenity Team
+    `.trim();
   }
 
   /**
