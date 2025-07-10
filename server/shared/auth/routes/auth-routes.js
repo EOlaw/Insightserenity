@@ -446,7 +446,8 @@ router.post('/mfa/verify',
 router.delete('/mfa/:method',
   authenticate(),
   [
-    param('method').isIn(['totp', 'sms', 'email', 'backup_codes']).withMessage('Invalid MFA method')
+    param('method').isIn(['totp', 'sms', 'email', 'backup_codes', 'all']).withMessage('Invalid MFA method'),
+    body('password').notEmpty().withMessage('Password is required for security verification')
   ],
   // validateRequest,
   AuthController.disableMfa
@@ -459,6 +460,10 @@ router.delete('/mfa/:method',
  */
 router.post('/mfa/backup-codes/regenerate',
   authenticate(),
+  [
+    body('password').notEmpty().withMessage('Password is required for security verification')
+  ],
+  // validateRequest,
   AuthController.regenerateBackupCodes
 );
 
