@@ -121,6 +121,58 @@ const config = {
         encryptionKey: getEnv('DB_ENCRYPTION_KEY', 'your-encryption-key-replace-in-production')
     },
 
+    // Audit configuration
+    audit: {
+        enabled: parseBoolean(getEnv('AUDIT_ENABLED', 'true')),
+        batchSize: parseInt(getEnv('AUDIT_BATCH_SIZE', '100'), 10),
+        flushInterval: parseInt(getEnv('AUDIT_FLUSH_INTERVAL', '5000'), 10), // 5 seconds for better real-time monitoring
+        maxQueueSize: parseInt(getEnv('AUDIT_MAX_QUEUE_SIZE', '1000'), 10),
+        defaultRetentionDays: parseInt(getEnv('AUDIT_DEFAULT_RETENTION_DAYS', '90'), 10), // 90 days default
+        
+        // Compliance-specific retention (in days)
+        retentionPolicies: {
+            standard: parseInt(getEnv('AUDIT_RETENTION_STANDARD', '90'), 10),
+            gdpr: parseInt(getEnv('AUDIT_RETENTION_GDPR', '1095'), 10), // 3 years
+            hipaa: parseInt(getEnv('AUDIT_RETENTION_HIPAA', '2190'), 10), // 6 years
+            pci: parseInt(getEnv('AUDIT_RETENTION_PCI', '730'), 10), // 2 years
+            soc2: parseInt(getEnv('AUDIT_RETENTION_SOC2', '1095'), 10), // 3 years
+            legal_hold: parseInt(getEnv('AUDIT_RETENTION_LEGAL_HOLD', '-1'), 10) // Indefinite
+        },
+        
+        // Performance settings
+        compressionEnabled: parseBoolean(getEnv('AUDIT_COMPRESSION_ENABLED', 'true')),
+        archiveAfterDays: parseInt(getEnv('AUDIT_ARCHIVE_AFTER_DAYS', '365'), 10),
+        
+        // Security settings
+        encryptSensitiveData: parseBoolean(getEnv('AUDIT_ENCRYPT_SENSITIVE', 'true')),
+        maskSensitiveFields: parseBoolean(getEnv('AUDIT_MASK_SENSITIVE', 'true')),
+        
+        // Risk thresholds
+        riskThresholds: {
+            low: parseInt(getEnv('AUDIT_RISK_THRESHOLD_LOW', '25'), 10),
+            medium: parseInt(getEnv('AUDIT_RISK_THRESHOLD_MEDIUM', '50'), 10),
+            high: parseInt(getEnv('AUDIT_RISK_THRESHOLD_HIGH', '75'), 10),
+            critical: parseInt(getEnv('AUDIT_RISK_THRESHOLD_CRITICAL', '90'), 10)
+        },
+        
+        // Alert settings
+        alerting: {
+            enabled: parseBoolean(getEnv('AUDIT_ALERTING_ENABLED', 'true')),
+            criticalEventsEmail: getEnv('AUDIT_CRITICAL_EVENTS_EMAIL', 'security@insightserenity.com'),
+            riskScoreThreshold: parseInt(getEnv('AUDIT_ALERT_RISK_THRESHOLD', '80'), 10)
+        },
+        
+        // Compliance mappings
+        complianceEnabled: parseBoolean(getEnv('AUDIT_COMPLIANCE_ENABLED', 'true')),
+        
+        // Storage settings
+        storage: {
+            collection: getEnv('AUDIT_COLLECTION_NAME', 'audit_logs'),
+            database: getEnv('AUDIT_DATABASE_NAME', 'default'), // 'default' uses main DB
+            separateDatabase: parseBoolean(getEnv('AUDIT_SEPARATE_DATABASE', 'false'))
+        }
+    },
+
     // Authentication configuration
     auth: {
         // Token configuration  
@@ -232,7 +284,8 @@ const config = {
             ivLength: parseInt(getEnv('ENCRYPTION_IV_LENGTH', '16'), 10),
             tagLength: parseInt(getEnv('ENCRYPTION_TAG_LENGTH', '16'), 10),
             saltLength: parseInt(getEnv('ENCRYPTION_SALT_LENGTH', '64'), 10),
-            iterations: parseInt(getEnv('ENCRYPTION_ITERATIONS', '100000'), 10)
+            iterations: parseInt(getEnv('ENCRYPTION_ITERATIONS', '100000'), 10),
+            masterKey: getEnv('ENCRYPTION_MASTER_KEY') // For audit log encryption
         },
         ssl: {
             enabled: parseBoolean(getEnv('USE_HTTPS', 'false')),
@@ -580,7 +633,8 @@ const config = {
         organizations: parseBoolean(getEnv('FEATURE_ORGANIZATIONS', 'true')),
         payments: parseBoolean(getEnv('FEATURE_PAYMENTS', 'true')),
         api: parseBoolean(getEnv('FEATURE_API', 'true')),
-        webhooks: parseBoolean(getEnv('FEATURE_WEBHOOKS', 'false'))
+        webhooks: parseBoolean(getEnv('FEATURE_WEBHOOKS', 'false')),
+        auditLogs: parseBoolean(getEnv('FEATURE_AUDIT_LOGS', 'true'))
     },
 
     // Test environment settings

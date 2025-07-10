@@ -28,6 +28,10 @@ const { AppError } = require('./server/shared/utils/app-error');
 // Import the production-grade authentication strategy manager
 const AuthStrategiesManager = require('./server/shared/security/passport/strategies/auth-strategy-index');
 
+// Import audit middleware and service
+const { auditMiddleware } = require('./server/shared/audit/middleware/audit-middleware');
+const AuditService = require('./server/shared/audit/services/audit-service');
+const { AuditEventTypes } = require('./server/shared/audit/services/audit-event-types');
 
 // Import routes
 const authRoutes = require('./server/shared/auth/routes/auth-routes');
@@ -35,13 +39,8 @@ const userRoutes = require('./server/shared/users/routes/user-routes');
 const organizationRoutes = require('./server/organization-tenants/routes/organization-tenant-routes');
 const roleConversionRoutes = require('./server/shared/auth/routes/role-conversion-routes');
 
-// const organizationRoutes = require('./server/hosted-organizations/organizations/routes/organization-routes');
-
 // Import domain apps
-// const coreBusinessApp = require('./server/core-business/app');
 const hostedOrganizations = require('./server/hosted-organizations/app');
-// const recruitmentServicesApp = require('./server/recruitment-services/app');
-// const externalApisApp = require('./server/external-apis/app');
 
 // Middleware imports
 const errorHandler = require('./server/shared/middleware/error-handler');
@@ -66,6 +65,7 @@ class Application {
         this.setupMiddleware();
         this.setupTenantMiddleware();
         await this.setupAuthentication();
+        this.setupAuditMiddleware(); // Add audit middleware after authentication
         this.setupRoutes();
         this.setupErrorHandling();
     }
@@ -89,6 +89,54 @@ class Application {
             res.locals.user = req.user;
             res.locals.isAuthenticated = req.isAuthenticated();
             next();
+        });
+    }
+
+    /**
+     * Setup audit middleware for automatic logging
+     */
+    setupAuditMiddleware() {
+        // Configure audit middleware
+        this.app.use(auditMiddleware({
+            enabled: config.features?.auditLogs !== false, // Enable by default
+            skipRoutes: [
+                '/health',
+                '/metrics',
+                '/public',
+                '/uploads',
+                '/favicon.ico'
+            ],
+            sensitiveFields: [
+                'password',
+                'token',
+                'secret',
+                'key',
+                'authorization',
+                'cookie',
+                'creditCard',
+                'cvv',
+                'ssn'
+            ],
+            includeRequestBody: config.app.env !== 'production', // Only in dev/staging
+            includeResponseBody: false // Generally too verbose
+        }));
+
+        // Add audit context enrichment middleware
+        this.app.use((req, res, next) => {
+            // Enrich audit context with tenant information
+            if (req.tenantId) {
+                req.auditContext = {
+                    ...req.auditContext,
+                    tenantId: req.tenantId,
+                    organizationId: req.user?.organizationId
+                };
+            }
+            next();
+        });
+
+        logger.info('Audit middleware initialized', {
+            enabled: config.features?.auditLogs !== false,
+            environment: config.app.env
         });
     }
 
@@ -417,6 +465,24 @@ class Application {
      */
     async start() {
         try {
+            // Log system startup
+            await AuditService.log({
+                type: AuditEventTypes.SYSTEM_STARTUP,
+                action: 'system_startup',
+                category: 'system',
+                systemGenerated: true,
+                target: {
+                    type: 'application',
+                    id: config.app.name,
+                    metadata: {
+                        version: config.app.version,
+                        environment: config.app.env,
+                        nodeVersion: process.version,
+                        platform: process.platform
+                    }
+                }
+            });
+
             await Database.initialize();
             
             const dbHealth = Database.getHealthStatus();
@@ -433,6 +499,25 @@ class Application {
             return this.app;
         } catch (error) {
             logger.error('Failed to start application', { error });
+            
+            // Log startup failure
+            await AuditService.log({
+                type: AuditEventTypes.SYSTEM_STARTUP,
+                action: 'system_startup',
+                category: 'system',
+                result: 'failure',
+                severity: 'critical',
+                systemGenerated: true,
+                target: {
+                    type: 'application',
+                    id: config.app.name
+                },
+                error: {
+                    message: error.message,
+                    stack: error.stack
+                }
+            });
+            
             throw error;
         }
     }
@@ -444,6 +529,25 @@ class Application {
         try {
             logger.info('Stopping application...');
             this.isShuttingDown = true;
+            
+            // Log system shutdown
+            await AuditService.log({
+                type: AuditEventTypes.SYSTEM_SHUTDOWN,
+                action: 'system_shutdown',
+                category: 'system',
+                systemGenerated: true,
+                target: {
+                    type: 'application',
+                    id: config.app.name,
+                    metadata: {
+                        uptime: process.uptime(),
+                        gracefulShutdown: true
+                    }
+                }
+            });
+            
+            // Flush any remaining audit logs
+            await AuditService.flush();
             
             logger.info('Application stopped successfully');
         } catch (error) {
