@@ -12,7 +12,6 @@
 
 # testing
 /coverage
-/servers
 
 # next.js
 /.next/

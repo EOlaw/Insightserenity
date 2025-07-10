@@ -11,6 +11,7 @@ const qrcode = require('qrcode');
 const speakeasy = require('speakeasy');
 
 const config = require('../../config/config');
+const AuthModel = require('../models/auth-model');
 const AuditService = require('../../security/services/audit-service');
 const EncryptionService = require('../../security/services/encryption-service');
 const { AppError, ValidationError, AuthenticationError } = require('../../utils/app-error');
@@ -225,7 +226,6 @@ class TwoFactorService {
       // Try to get user from AuthModel first, then fallback to User model
       let user;
       try {
-        const AuthModel = require('../models/auth-model');
         const auth = await AuthModel.findOne({ userId }).populate('userId');
         if (auth && auth.mfa.enabled) {
           user = this.createUserFromAuth(auth);
