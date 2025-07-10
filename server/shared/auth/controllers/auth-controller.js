@@ -819,10 +819,12 @@ class AuthController {
   static disableMfa = asyncHandler(async (req, res) => {
     const { method } = req.params;
     const userId = req.user._id;
+    const { password } = req.body; // Password required for security
     
     const context = {
       ip: req.ip,
-      userAgent: req.get('user-agent')
+      userAgent: req.get('user-agent'),
+      password // Pass password in context
     };
     
     const result = await AuthService.disableMfa(userId, method, context);
@@ -837,10 +839,12 @@ class AuthController {
    */
   static regenerateBackupCodes = asyncHandler(async (req, res) => {
     const userId = req.user._id;
+    const { password } = req.body; // Password required for security
     
     const context = {
       ip: req.ip,
-      userAgent: req.get('user-agent')
+      userAgent: req.get('user-agent'),
+      password // Pass password in context
     };
     
     const result = await AuthService.regenerateBackupCodes(userId, context);

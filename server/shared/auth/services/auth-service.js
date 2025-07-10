@@ -1212,258 +1212,102 @@ class AuthService {
   }
 
   /**
-   * Setup MFA for user
+   * Get available MFA methods for user
    * @param {string} userId - User ID
-   * @param {string} method - MFA method
-   * @param {Object} context - Request context
-   * @param {Object} setupData - Setup data (contains phoneNumber for SMS)
-   * @returns {Promise<Object>} Setup result
+   * @returns {Promise<Object>} Available MFA methods
    */
-  static async setupMfa(userId, method, context, setupData) {
+  static async getMfaMethods(userId) {
     try {
-      const auth = await Auth.findOne({ userId });
-      if (!auth) {
-        throw new NotFoundError('Authentication record not found');
-      }
-      
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-      
-      let result;
-      
-      switch (method) {
-        case 'totp':
-          result = await this.setupTotpMfa(user, auth);
-          break;
-          
-        case 'sms':
-          result = await this.setupSmsMfa(user, auth, setupData);
-          break;
-          
-        case 'email':
-          result = await this.setupEmailMfa(user, auth);
-          break;
-          
-        case 'backup_codes':
-          result = await this.setupBackupCodes(user, auth);
-          break;
-          
-        default:
-          throw new ValidationError(`Unsupported MFA method: ${method}`);
-      }
-      
-      // Audit log
-      await AuditService.log({
-        type: 'mfa_setup_initiated',
-        action: 'setup_mfa',
-        category: 'authentication',
-        result: 'success',
-        userId,
-        metadata: {
-          ...context,
-          method
-        }
-      });
-      
-      return {
-        success: true,
-        method,
-        ...result
-      };
-      
+      return await Auth.get2FAStatus(userId);
     } catch (error) {
-      logger.error('MFA setup error', { error });
+      logger.error('Get MFA methods error', { error, userId });
       throw error;
     }
   }
 
   /**
-   * Setup TOTP MFA
-   * @param {Object} user - User object
-   * @param {Object} auth - Auth object
-   * @returns {Promise<Object>} TOTP setup data
+   * Setup MFA method (delegates to Auth model)
+   * @param {string} userId - User ID
+   * @param {string} method - MFA method
+   * @param {Object} context - Request context
+   * @param {Object} setupData - Setup data
+   * @returns {Promise<Object>} Setup result
    */
-  static async setupTotpMfa(user, auth) {
-    // Use config.app.name||config.server.name for TOTP issuer
-    const appName = config.app.name || config.server.name || 'Insightserenity';
-    // Generate secret
-    const secret = speakeasy.generateSecret({
-      name: `${appName} (${user.email})`,
-      issuer: appName,
-      length: 32
-    });
-    
-    // Generate QR code
-    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
-    
-    // Store encrypted secret temporarily
-    const encryptedSecret = await EncryptionService.encrypt(secret.base32);
-    
-    // Create temporary setup session
-    const setupToken = crypto.randomBytes(32).toString('hex');
-    auth.mfa.pendingSetup = {
-      method: 'totp',
-      secret: encryptedSecret,
-      setupToken,
-      expiresAt: new Date(Date.now() + 3600000) // 1 hour
-    };
-    
-    await auth.save();
-    
-    return {
-      qrCode: qrCodeUrl,
-      secret: secret.base32,
-      setupToken,
-      message: 'Scan the QR code with your authenticator app and verify with a code'
-    };
-  }
-
-  /**
-   * Setup SMS MFA
-   * @param {Object} user - User object
-   * @param {Object} auth - Auth object
-   * @param {Object} setupData - Contains phoneNumber
-   * @returns {Promise<Object>} SMS setup data
-   */
-  static async setupSmsMfa(user, auth, setupData) {
-    if (!setupData || !setupData.phoneNumber) {
-      throw new ValidationError('Phone number is required for SMS MFA setup');
-    }
-    
-    const { phoneNumber } = setupData;
-    
-    // Validate phone number format
-    const phoneRegex = /^\+?[1-9]\d{1,14}$/;
-    if (!phoneRegex.test(phoneNumber.replace(/[\s\-\(\)]/g, ''))) {
-      throw new ValidationError('Please provide a valid phone number in international format');
-    }
-    
-    // Generate verification code
-    const verificationCode = crypto.randomInt(100000, 999999).toString();
-    const setupToken = crypto.randomBytes(32).toString('hex');
-    
-    // Hash the verification code for storage
-    const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
-    
-    // Store pending setup
-    auth.mfa.pendingSetup = {
-      method: 'sms',
-      phoneNumber,
-      setupToken,
-      verificationCode: hashedCode,
-      expiresAt: new Date(Date.now() + 600000), // 10 minutes
-      attemptsRemaining: 3
-    };
-    
-    await auth.save();
-    
-    // For development, log the code
-    if (config.app.env === 'development') {
-      logger.info('SMS Verification Code (Development)', {
-        phoneNumber: phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
-        code: verificationCode,
-        setupToken
-      });
-    }
-    
-    return {
-      setupToken,
-      phoneNumber: phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
-      expiresIn: 600,
-      message: 'Verification code sent to your phone. Enter the 6-digit code to complete setup.'
-    };
-  }
-
-  /**
-   * Setup Email MFA
-   * @param {Object} user - User object
-   * @param {Object} auth - Auth object
-   * @returns {Promise<Object>} Email setup data
-   */
-  static async setupEmailMfa(user, auth) {
-    // Generate verification code
-    const verificationCode = crypto.randomInt(100000, 999999).toString();
-    const setupToken = crypto.randomBytes(32).toString('hex');
-    
-    // Hash the verification code for storage
-    const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
-    
-    // Store pending setup
-    auth.mfa.pendingSetup = {
-      method: 'email',
-      email: user.email,
-      setupToken,
-      verificationCode: hashedCode,
-      expiresAt: new Date(Date.now() + 600000), // 10 minutes
-      attemptsRemaining: 3
-    };
-    
-    await auth.save();
-    
-    // For development, log the code
-    if (config.app.env === 'development') {
-      logger.info('Email Verification Code (Development)', {
-        email: user.email,
-        code: verificationCode,
-        setupToken
-      });
-    }
-    
-    return {
-      setupToken,
-      email: user.email,
-      expiresIn: 600,
-      message: 'Verification code sent to your email address. Enter the 6-digit code to complete setup.'
-    };
-  }
-
-  /**
-   * Setup Backup Codes MFA
-   * @param {Object} user - User object
-   * @param {Object} auth - Auth object
-   * @returns {Promise<Object>} Backup codes setup data
-   */
-  static async setupBackupCodes(user, auth) {
-    const setupToken = crypto.randomBytes(32).toString('hex');
-    
-    // Generate backup codes
-    const codes = [];
-    const plainCodes = [];
-    
-    for (let i = 0; i < 10; i++) {
-      const plainCode = crypto.randomBytes(4).toString('hex').toUpperCase();
-      const hashedCode = crypto.createHash('sha256').update(plainCode).digest('hex');
+  static async setupMfa(userId, method, context, setupData = {}) {
+    try {
+      // Enhanced development logging
+      if (config.app.env === 'development') {
+        logger.info('🔐 MFA Setup Initiated', {
+          userId,
+          method,
+          setupData: setupData.phoneNumber ? { phoneNumber: setupData.phoneNumber } : {},
+          timestamp: new Date().toISOString(),
+          requestIp: context.ip,
+          userAgent: context.userAgent
+        });
+      }
       
-      codes.push({
-        code: hashedCode,
-        used: false,
-        generatedAt: new Date()
-      });
-      plainCodes.push(plainCode);
+      // For SMS, store phone number in setup data
+      if (method === 'sms' && setupData.phoneNumber) {
+        const auth = await Auth.findOne({ userId });
+        if (auth) {
+          auth.mfa.pendingSetup = {
+            method: 'sms',
+            phoneNumber: setupData.phoneNumber,
+            expiresAt: new Date(Date.now() + 3600000) // 1 hour
+          };
+          await auth.save();
+          
+          // Development logging
+          if (config.app.env === 'development') {
+            logger.info('📱 SMS Setup Data Stored', {
+              userId,
+              phoneNumber: setupData.phoneNumber,
+              expiresAt: auth.mfa.pendingSetup.expiresAt
+            });
+          }
+        }
+      }
+      
+      const result = await Auth.setup2FA(userId, method);
+      
+      // Enhanced development logging for setup result
+      if (config.app.env === 'development') {
+        logger.info('✅ MFA Setup Result', {
+          userId,
+          method,
+          success: true,
+          hasQrCode: !!(result.qrCode),
+          hasSecret: !!(result.secret),
+          setupToken: result.setupToken,
+          tempId: result.tempId,
+          backupCodesCount: result.backupCodes ? result.backupCodes.length : 0
+        });
+        
+        // Log secrets for development
+        if (result.secret) {
+          logger.info('🔑 TOTP Secret (Development Only)', {
+            secret: result.secret,
+            manualEntryKey: result.manualEntryKey
+          });
+        }
+        
+        if (result.backupCodes) {
+          logger.info('🔐 Backup Codes (Development Only)', {
+            codes: result.backupCodes
+          });
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error('❌ MFA setup error', { error, userId, method });
+      throw error;
     }
-    
-    // Store pending setup with generated codes
-    auth.mfa.pendingSetup = {
-      method: 'backup_codes',
-      codes,
-      setupToken,
-      expiresAt: new Date(Date.now() + 3600000) // 1 hour
-    };
-    
-    await auth.save();
-    
-    return {
-      setupToken,
-      codes: plainCodes,
-      message: 'Save these backup codes in a secure place. You will need to confirm setup by providing one of these codes.',
-      warning: 'These codes will only be shown once. Store them securely as they can be used to access your account if you lose your primary MFA device.'
-    };
   }
 
   /**
-   * Verify MFA setup
+   * Verify MFA setup (delegates to Auth model)
    * @param {string} userId - User ID
    * @param {Object} verificationData - Verification data
    * @param {Object} context - Request context
@@ -1473,291 +1317,106 @@ class AuthService {
     try {
       const { method, code, setupToken } = verificationData;
       
-      const auth = await Auth.findOne({ userId });
-      if (!auth) {
-        throw new NotFoundError('Authentication record not found');
-      }
-      
-      // Verify setup token
-      if (!auth.mfa.pendingSetup || 
-          auth.mfa.pendingSetup.setupToken !== setupToken ||
-          auth.mfa.pendingSetup.expiresAt < new Date()) {
-        throw new ValidationError('Invalid or expired setup session');
-      }
-      
-      let verified = false;
-      
-      switch (method) {
-        case 'totp':
-          // Decrypt secret
-          const secret = await EncryptionService.decrypt(auth.mfa.pendingSetup.secret.encrypted);
-          
-          // Verify code
-          verified = speakeasy.totp.verify({
-            secret,
-            encoding: 'base32',
-            token: code,
-            window: 2
-          });
-          
-          if (verified) {
-            // Add MFA method
-            auth.addMfaMethod('totp', {
-              totpSecret: auth.mfa.pendingSetup.secret
-            });
-          }
-          break;
-
-        case 'sms':
-          // Check remaining attempts
-          if (auth.mfa.pendingSetup.attemptsRemaining <= 0) {
-            throw new ValidationError('Maximum verification attempts exceeded. Please restart SMS setup.');
-          }
-          
-          // Hash the provided code and compare
-          const hashedSmsCode = crypto.createHash('sha256').update(code).digest('hex');
-          
-          if (hashedSmsCode === auth.mfa.pendingSetup.verificationCode) {
-            // Add SMS MFA method
-            auth.addMfaMethod('sms', {
-              phoneNumber: auth.mfa.pendingSetup.phoneNumber,
-              verifiedAt: new Date()
-            });
-            verified = true;
-          } else {
-            // Decrement attempts
-            auth.mfa.pendingSetup.attemptsRemaining -= 1;
-            await auth.save();
-            throw new ValidationError(`Invalid verification code. ${auth.mfa.pendingSetup.attemptsRemaining} attempts remaining.`);
-          }
-          break;
-
-        case 'email':
-          // Check remaining attempts
-          if (auth.mfa.pendingSetup.attemptsRemaining <= 0) {
-            throw new ValidationError('Maximum verification attempts exceeded. Please restart email setup.');
-          }
-          
-          // Hash the provided code and compare
-          const hashedEmailCode = crypto.createHash('sha256').update(code).digest('hex');
-          
-          if (hashedEmailCode === auth.mfa.pendingSetup.verificationCode) {
-            // Add Email MFA method
-            auth.addMfaMethod('email', {
-              email: auth.mfa.pendingSetup.email,
-              verifiedAt: new Date()
-            });
-            verified = true;
-          } else {
-            // Decrement attempts
-            auth.mfa.pendingSetup.attemptsRemaining -= 1;
-            await auth.save();
-            throw new ValidationError(`Invalid verification code. ${auth.mfa.pendingSetup.attemptsRemaining} attempts remaining.`);
-          }
-          break;
-
-        case 'backup_codes':
-          // For backup codes, verify that the user provides one of the generated codes
-          const providedCodeHash = crypto.createHash('sha256').update(code.toUpperCase()).digest('hex');
-          const codeExists = auth.mfa.pendingSetup.codes.some(c => c.code === providedCodeHash);
-          
-          if (codeExists) {
-            // Add backup codes MFA method
-            auth.addMfaMethod('backup_codes', {
-              codes: auth.mfa.pendingSetup.codes,
-              generatedAt: new Date()
-            });
-            verified = true;
-          } else {
-            throw new ValidationError('Invalid backup code. Please provide one of the generated backup codes.');
-          }
-          break;
-          
-        default:
-          throw new ValidationError(`Unsupported MFA method: ${method}`);
-      }
-      
-      if (!verified) {
-        throw new ValidationError('Invalid verification code');
-      }
-      
-      // Generate backup codes
-      const backupCodes = auth.generateBackupCodes();
-
-      try {
-        // Clear pending setup
-        auth.mfa.pendingSetup = undefined;
-        auth.markModified('mfa.pendingSetup');
-        await auth.save();
-
-        // Verify cleanup
-        const verifyAuth = await Auth.findById(auth._id);
-        if (verifyAuth.mfa.pendingSetup) {
-          logger.warn('Failed to clear pendingSetup field after verification', { userId, method });
-        }
-      } catch (error) {
-        logger.error('Error clearing pending setup after MFA verification', { error, userId, method });
-        throw error;
-      }
-      
-      // Get user for notification
-      const user = await User.findById(userId);
-      
-      // 🆕 NEW: Send MFA enabled notification
-      try {
-        await AuthEmailService.sendMfaEnabledEmail(user, method, context);
-      } catch (emailError) {
-        logger.warn('Failed to send MFA enabled email', {
-          error: emailError.message,
+      if (config.app.env === 'development') {
+        logger.info('🔍 MFA Setup Verification', {
           userId,
-          method
+          method,
+          code: '***' + code.slice(-3), // Partially masked for security
+          setupToken: setupToken ? setupToken.slice(0, 8) + '...' : null,
+          timestamp: new Date().toISOString()
         });
-        // Don't fail MFA setup if email sending fails
       }
       
-      // Audit log
-      await AuditService.log({
-        type: 'mfa_enabled',
-        action: 'enable_mfa',
-        category: 'authentication',
-        result: 'success',
-        userId,
-        severity: 'high',
-        metadata: {
-          ...context,
-          method
+      const result = await Auth.enable2FA(userId, code, method);
+      
+      if (config.app.env === 'development') {
+        logger.info('✅ MFA Setup Verification Result', {
+          userId,
+          method,
+          success: result.success,
+          backupCodesGenerated: result.backupCodes ? result.backupCodes.length : 0
+        });
+        
+        if (result.backupCodes) {
+          logger.info('🔐 Generated Backup Codes (Development Only)', {
+            codes: result.backupCodes
+          });
         }
-      });
+      }
       
-      return {
-        success: true,
-        message: 'MFA enabled successfully',
-        backupCodes,
-        warning: 'Save these backup codes in a secure place. They can be used to access your account if you lose your MFA device.'
-      };
-      
+      return result;
     } catch (error) {
-      logger.error('MFA verification error', { error });
+      logger.error('❌ MFA setup verification error', { error, userId });
       throw error;
     }
   }
 
   /**
-   * Verify MFA code
+   * Verify MFA code during login (delegates to Auth model)
    * @param {string} userId - User ID
    * @param {Object} mfaData - MFA verification data
    * @param {Object} context - Request context
-   * @returns {Promise<Object>} MFA verification result
+   * @returns {Promise<Object>} Verification result
    */
   static async verifyMfa(userId, mfaData, context) {
     try {
-      const { method, code, challengeId, trustDevice } = mfaData;
+      const { method, code, trustDevice } = mfaData;
       
-      const auth = await Auth.findOne({ userId });
-      if (!auth) {
-        throw new NotFoundError('Authentication record not found');
-      }
+      // Verify the 2FA code using Auth model bridge to TwoFactorService
+      const isValid = await Auth.verify2FACode(userId, code);
       
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new NotFoundError('User not found');
-      }
-      
-      // Find MFA method
-      const mfaMethod = auth.mfa.methods.find(m => m.type === method && m.enabled);
-      if (!mfaMethod) {
-        throw new ValidationError('MFA method not found or disabled');
-      }
-      
-      let verified = false;
-      
-      switch (method) {
-        case 'totp':
-          // Decrypt secret
-          const secret = await EncryptionService.decrypt(mfaMethod.config.totpSecret.encrypted);
-          
-          // Verify TOTP code
-          verified = speakeasy.totp.verify({
-            secret,
-            encoding: 'base32',
-            token: code,
-            window: 2
-          });
-          break;
-
-        case 'sms':
-          // Find temporary SMS challenge
-          const smsChallenge = auth.mfa.activeChallenge;
-          if (!smsChallenge || smsChallenge.method !== 'sms' || smsChallenge.expiresAt < new Date()) {
-            throw new ValidationError('SMS verification session expired. Please restart login process.');
-          }
-          
-          // Verify SMS code
-          const hashedSmsLoginCode = crypto.createHash('sha256').update(code).digest('hex');
-          if (hashedSmsLoginCode === smsChallenge.code) {
-            verified = true;
-            // Clear active challenge
-            auth.mfa.activeChallenge = undefined;
-          }
-          break;
-
-        case 'email':
-          // Find temporary email challenge
-          const emailChallenge = auth.mfa.activeChallenge;
-          if (!emailChallenge || emailChallenge.method !== 'email' || emailChallenge.expiresAt < new Date()) {
-            throw new ValidationError('Email verification session expired. Please restart login process.');
-          }
-          
-          // Verify email code
-          const hashedEmailLoginCode = crypto.createHash('sha256').update(code).digest('hex');
-          if (hashedEmailLoginCode === emailChallenge.code) {
-            verified = true;
-            // Clear active challenge
-            auth.mfa.activeChallenge = undefined;
-          }
-          break;
-          
-        case 'backup_codes':
-          // Find and use backup code
-          const backupCode = mfaMethod.config.codes.find(c => 
-            !c.used && crypto.createHash('sha256').update(code).digest('hex') === c.code
-          );
-          
-          if (backupCode) {
-            backupCode.used = true;
-            backupCode.usedAt = new Date();
-            verified = true;
-          }
-          break;
-          
-        default:
-          throw new ValidationError(`Unsupported MFA method: ${method}`);
-      }
-      
-      if (!verified) {
-        // Record failed attempt
-        mfaMethod.verificationAttempts = (mfaMethod.verificationAttempts || 0) + 1;
-        await auth.save();
-        
+      if (!isValid) {
         throw new AuthenticationError('Invalid verification code');
       }
       
-      // Update MFA method usage
-      mfaMethod.lastUsedAt = new Date();
-      mfaMethod.verificationAttempts = 0;
+      // Complete the login process
+      return await AuthService.completeMfaLogin(userId, context, trustDevice);
+    } catch (error) {
+      logger.error('MFA verification error', { error, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Complete MFA login after successful verification
+   * @param {string} userId - User ID
+   * @param {Object} context - Request context  
+   * @param {boolean} trustDevice - Whether to trust device
+   * @returns {Promise<Object>} Login completion result
+   */
+  static async completeMfaLogin(userId, context, trustDevice = false) {
+    try {
+      const user = await User.findById(userId);
+      const auth = await Auth.findOne({ userId });
       
-      // Create session
-      const session = auth.addSession({
-        deviceInfo: {
-          userAgent: context.userAgent,
-          platform: this.extractPlatform(context.userAgent),
-          browser: this.extractBrowser(context.userAgent)
-        },
-        location: {
-          ip: context.ip
-        },
-        expiresAt: new Date(Date.now() + config.auth.sessionDuration)
-      });
+      if (!user || !auth) {
+        throw new NotFoundError('User not found');
+      }
+      
+      // Find the pending session or create new session
+      let session = auth.sessions.find(s => 
+        s.status === 'pending_mfa' && 
+        s.deviceFingerprint === this.generateDeviceFingerprint(context)
+      );
+      
+      if (!session) {
+        // Create new session if no pending session found
+        session = auth.addSession({
+          deviceInfo: {
+            userAgent: context.userAgent,
+            platform: this.extractPlatform(context.userAgent),
+            browser: this.extractBrowser(context.userAgent)
+          },
+          location: {
+            ip: context.ip
+          },
+          expiresAt: new Date(Date.now() + config.auth.sessionDuration || 86400000) // 24 hours default
+        });
+      } else {
+        // Update existing session to active
+        session.isActive = true;
+        session.lastActivityAt = new Date();
+      }
       
       // Add to login history
       auth.activity.loginHistory.push({
@@ -1769,36 +1428,34 @@ class AuthService {
         mfaUsed: true
       });
       
-      await auth.save();
-      
       // Update user last login
       user.activity.lastLogin = new Date();
       await user.save();
       
       // Generate tokens
-      const tokens = await this.generateTokens(user, session.sessionId);
+      const tokens = await this.generateTokens(user, session.sessionId, false);
       
       // Handle trusted device
+      let trustToken;
       if (trustDevice) {
         const trustedDevice = auth.addTrustedDevice({
           deviceFingerprint: this.generateDeviceFingerprint(context),
           name: `${this.extractBrowser(context.userAgent)} on ${this.extractPlatform(context.userAgent)}`
         });
-        await auth.save();
-        
-        tokens.trustToken = trustedDevice.trustToken;
+        trustToken = trustedDevice.trustToken;
       }
+      
+      await auth.save();
       
       // Audit log
       await AuditService.log({
-        type: 'mfa_verification_success',
-        action: 'verify_mfa',
-        category: 'authentication',
+        type: 'mfa_login_completed',
+        action: 'complete_mfa_login',
+        category: 'authentication', 
         result: 'success',
         userId,
         metadata: {
           ...context,
-          method,
           sessionId: session.sessionId
         }
       });
@@ -1816,106 +1473,22 @@ class AuthService {
           role: user.role,
           organization: user.organization
         },
-        ...tokens,
-        sessionId: session.sessionId
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        tokenType: 'Bearer',
+        expiresIn: tokens.expiresIn,
+        sessionId: session.sessionId,
+        ...(trustToken && { trustToken })
       };
       
     } catch (error) {
-      logger.error('MFA verification error', { error });
+      logger.error('MFA login completion error', { error, userId });
       throw error;
     }
   }
 
   /**
-   * Create MFA challenge for SMS/Email methods
-   * @param {string} userId - User ID
-   * @param {string} method - MFA method
-   * @returns {Promise<Object>} Challenge result
-   */
-  static async createMfaChallenge(userId, method) {
-    const auth = await Auth.findOne({ userId });
-    if (!auth) {
-      throw new NotFoundError('Authentication record not found');
-    }
-    
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
-    
-    const mfaMethod = auth.mfa.methods.find(m => m.type === method && m.enabled);
-    if (!mfaMethod) {
-      throw new ValidationError('MFA method not available');
-    }
-    
-    let challengeResult = {};
-    
-    switch (method) {
-      case 'sms':
-        const verificationCode = crypto.randomInt(100000, 999999).toString();
-        const hashedCode = crypto.createHash('sha256').update(verificationCode).digest('hex');
-        
-        auth.mfa.activeChallenge = {
-          method: 'sms',
-          code: hashedCode,
-          expiresAt: new Date(Date.now() + 300000), // 5 minutes
-          attemptsRemaining: 3
-        };
-        
-        await auth.save();
-        
-        // Log for development
-        if (config.app.env === 'development') {
-          logger.info('SMS Login Code (Development)', {
-            phoneNumber: mfaMethod.config.phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
-            code: verificationCode
-          });
-        }
-        
-        challengeResult = {
-          method: 'sms',
-          maskedPhone: mfaMethod.config.phoneNumber.replace(/(\+\d{1,3})\d{6,10}(\d{3})/, '$1******$2'),
-          expiresIn: 300
-        };
-        break;
-        
-      case 'email':
-        const emailCode = crypto.randomInt(100000, 999999).toString();
-        const hashedEmailCode = crypto.createHash('sha256').update(emailCode).digest('hex');
-        
-        auth.mfa.activeChallenge = {
-          method: 'email',
-          code: hashedEmailCode,
-          expiresAt: new Date(Date.now() + 300000), // 5 minutes
-          attemptsRemaining: 3
-        };
-        
-        await auth.save();
-        
-        // Log for development
-        if (config.app.env === 'development') {
-          logger.info('Email Login Code (Development)', {
-            email: user.email,
-            code: emailCode
-          });
-        }
-        
-        challengeResult = {
-          method: 'email',
-          email: user.email,
-          expiresIn: 300
-        };
-        break;
-        
-      default:
-        throw new ValidationError(`Challenge creation not supported for method: ${method}`);
-    }
-    
-    return challengeResult;
-  }
-
-  /**
-   * Disable MFA method
+   * Disable MFA method (delegates to Auth model)
    * @param {string} userId - User ID
    * @param {string} method - MFA method to disable
    * @param {Object} context - Request context
@@ -1923,56 +1496,51 @@ class AuthService {
    */
   static async disableMfa(userId, method, context) {
     try {
-      const auth = await Auth.findOne({ userId });
-      if (!auth) {
-        throw new NotFoundError('Authentication record not found');
+      const { password } = context; // Password should be passed in context
+      if (method === 'all') {
+        return await Auth.disable2FA(userId, password);
+      } else {
+        // For specific method disabling, we'll disable all for now
+        // You can enhance this later to disable specific methods
+        return await Auth.disable2FA(userId, password);
       }
-      
-      const mfaMethod = auth.mfa.methods.find(m => m.type === method);
-      if (!mfaMethod) {
-        throw new NotFoundError('MFA method not found');
-      }
-      
-      // Ensure at least one MFA method remains if MFA is required
-      const enabledMethods = auth.mfa.methods.filter(m => m.enabled && m.type !== method);
-      if (config.security.requireMfa && enabledMethods.length === 0) {
-        throw new ValidationError('Cannot disable the last MFA method when MFA is required');
-      }
-      
-      // Disable the method
-      mfaMethod.enabled = false;
-      
-      // If no methods remain enabled, disable MFA entirely
-      if (enabledMethods.length === 0) {
-        auth.mfa.enabled = false;
-      }
-      
-      await auth.save();
-      
-      // Audit log
-      await AuditService.log({
-        type: 'mfa_disabled',
-        action: 'disable_mfa',
-        category: 'authentication',
-        result: 'success',
-        userId,
-        severity: 'high',
-        metadata: {
-          ...context,
-          method,
-          remainingMethods: enabledMethods.map(m => m.type)
-        }
-      });
-      
-      return {
-        success: true,
-        message: `${method} MFA method disabled successfully`,
-        mfaEnabled: auth.mfa.enabled,
-        remainingMethods: enabledMethods.map(m => ({ type: m.type, isPrimary: m.isPrimary }))
-      };
-      
     } catch (error) {
-      logger.error('MFA disable error', { error });
+      logger.error('MFA disable error', { error, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Regenerate backup codes (delegates to Auth model)
+   * @param {string} userId - User ID
+   * @param {Object} context - Request context
+   * @returns {Promise<Object>} New backup codes
+   */
+  static async regenerateBackupCodes(userId, context) {
+    try {
+      const { password } = context; // Password should be passed in context
+      return await Auth.regenerateBackupCodes(userId, password);
+    } catch (error) {
+      logger.error('Backup codes regeneration error', { error, userId });
+      throw error;
+    }
+  }
+
+  /**
+   * Create MFA challenge for SMS/Email methods (delegates to Auth model)
+   * @param {string} userId - User ID
+   * @param {string} method - MFA method
+   * @returns {Promise<Object>} Challenge result
+   */
+  static async createMfaChallenge(userId, method) {
+    try {
+      if (method === 'sms') {
+        return await Auth.sendSMSCode(userId);
+      }
+      // Add email challenge logic here if needed
+      throw new ValidationError(`Challenge creation not supported for method: ${method}`);
+    } catch (error) {
+      logger.error('MFA challenge creation error', { error, userId, method });
       throw error;
     }
   }

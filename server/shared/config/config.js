@@ -309,6 +309,12 @@ const config = {
             tls: {
                 rejectUnauthorized: parseBoolean(getEnv('SMTP_TLS_REJECT_UNAUTHORIZED', 'true'))
             }
+        },
+        templates: {
+            dir: path.join(__dirname, '../templates/emails'),
+            cache: process.env.NODE_ENV === 'production', // Cache in production
+            defaultFrom: 'noreply@insightserenity.com',
+            supportEmail: 'support@insightserenity.com'
         }
     },
 

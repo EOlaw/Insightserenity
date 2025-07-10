@@ -9,9 +9,11 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const TwoFactorService = require('../services/two-factor-service');
 
 const config = require('../../config/config');
 const constants = require('../../config/constants');
+const logger = require('../../utils/logger');
 
 /**
  * Authentication Schema - Complete Fixed Version
@@ -742,6 +744,413 @@ authSchema.methods.acceptConsent = function(type, version, ip) {
 /**
  * Static Methods
  */
+
+/**
+ * Get MFA methods for user (enhanced status)
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} MFA methods and availability
+ */
+authSchema.statics.getMfaMethods = async function(userId) {
+  try {
+    const status = await this.get2FAStatus(userId);
+    
+    return {
+      enabled: status.enabled,
+      available: ['totp', 'sms', 'backup_codes'],
+      configured: status.methods || [],
+      primary: status.method,
+      backupCodesRemaining: status.backupCodesRemaining || 0,
+      recommendations: {
+        setupTOTP: !status.enabled || status.method !== 'totp',
+        setupSMS: !status.enabled || status.method !== 'sms',
+        generateBackupCodes: !status.enabled || status.backupCodesRemaining < 3
+      }
+    };
+  } catch (error) {
+    logger.error('Get MFA methods failed', { error, userId });
+    return { enabled: false, available: [], configured: [] };
+  }
+};
+
+/**
+ * Bridge method to verify 2FA code - connects middleware to TwoFactorService
+ * @param {string} userId - User ID
+ * @param {string} code - 2FA code to verify
+ * @returns {Promise<boolean>} Verification result
+ */
+authSchema.statics.verify2FACode = async function(userId, code) {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth || !auth.isMfaEnabled) {
+      return false;
+    }
+
+    // Create a bridge user object that TwoFactorService expects
+    const bridgeUser = createBridgeUser(auth);
+    
+    // Delegate to TwoFactorService
+    return await TwoFactorService.verifyToken(userId, code);
+  } catch (error) {
+    logger.error('2FA verification failed in AuthModel', { error, userId });
+    return false;
+  }
+};
+
+/**
+ * Setup TOTP for user
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} Setup data including QR code
+ */
+authSchema.statics.setup2FA = async function(userId, method = 'totp') {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth) {
+      throw new Error('User authentication record not found');
+    }
+
+    const bridgeUser = createBridgeUser(auth);
+    
+    let setupResult;
+    switch (method) {
+      case 'totp':
+        setupResult = await TwoFactorService.setupTOTP(bridgeUser);
+        break;
+      case 'sms':
+        const phoneNumber = auth.mfa.pendingSetup?.phoneNumber;
+        if (!phoneNumber) {
+          throw new Error('Phone number required for SMS setup');
+        }
+        setupResult = await TwoFactorService.setupSMS(bridgeUser, phoneNumber);
+        break;
+      default:
+        throw new Error(`Unsupported 2FA method: ${method}`);
+    }
+
+    // Store pending setup in AuthModel format
+    auth.mfa.pendingSetup = {
+      method,
+      secret: setupResult.tempId, // Store tempId for TOTP
+      setupToken: setupResult.tempId,
+      expiresAt: new Date(Date.now() + 3600000), // 1 hour
+      attemptsRemaining: 3
+    };
+
+    await auth.save();
+    return setupResult;
+  } catch (error) {
+    logger.error('2FA setup failed in AuthModel', { error, userId });
+    throw error;
+  }
+};
+
+/**
+ * Enable 2FA for user after verification
+ * @param {string} userId - User ID
+ * @param {string} code - Verification code
+ * @param {string} method - 2FA method
+ * @returns {Promise<Object>} Enable result
+ */
+authSchema.statics.enable2FA = async function(userId, code, method = 'totp') {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth || !auth.mfa.pendingSetup) {
+      throw new Error('No pending 2FA setup found');
+    }
+
+    const bridgeUser = createBridgeUser(auth);
+    const tempId = auth.mfa.pendingSetup.setupToken;
+    
+    let enableResult;
+    switch (method) {
+      case 'totp':
+        enableResult = await TwoFactorService.enableTOTP(bridgeUser, tempId, code);
+        break;
+      case 'sms':
+        const phoneNumber = auth.mfa.pendingSetup.phoneNumber;
+        enableResult = await TwoFactorService.enableSMS(bridgeUser, phoneNumber, code);
+        break;
+      default:
+        throw new Error(`Unsupported 2FA method: ${method}`);
+    }
+
+    // Update AuthModel with enabled 2FA
+    auth.mfa.enabled = true;
+    
+    // Add or update the method
+    const existingMethodIndex = auth.mfa.methods.findIndex(m => m.type === method);
+    const methodConfig = {
+      type: method,
+      enabled: true,
+      isPrimary: auth.mfa.methods.length === 0, // First method is primary
+      config: {},
+      setupAt: new Date(),
+      verificationAttempts: 0
+    };
+
+    if (method === 'totp') {
+      // The TwoFactorService has stored the secret in the user.security format
+      // We need to extract it and store in our format
+      methodConfig.config.totpSecret = bridgeUser.security?.totpSecret;
+    } else if (method === 'sms') {
+      methodConfig.config.phoneNumber = auth.mfa.pendingSetup.phoneNumber;
+      methodConfig.config.phoneVerified = true;
+    }
+
+    // Store backup codes in our format
+    if (enableResult.backupCodes) {
+      methodConfig.config.codes = enableResult.backupCodes.map(code => ({
+        code: crypto.createHash('sha256').update(code).digest('hex'),
+        used: false,
+        usedAt: null
+      }));
+    }
+
+    if (existingMethodIndex >= 0) {
+      auth.mfa.methods[existingMethodIndex] = methodConfig;
+    } else {
+      auth.mfa.methods.push(methodConfig);
+    }
+
+    // Clear pending setup
+    auth.mfa.pendingSetup = undefined;
+
+    await auth.save();
+    return enableResult;
+  } catch (error) {
+    logger.error('2FA enable failed in AuthModel', { error, userId });
+    throw error;
+  }
+};
+
+/**
+ * Disable 2FA for user
+ * @param {string} userId - User ID
+ * @param {string} password - User password for verification
+ * @returns {Promise<Object>} Disable result
+ */
+authSchema.statics.disable2FA = async function(userId, password) {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth) {
+      throw new Error('User authentication record not found');
+    }
+
+    const bridgeUser = createBridgeUser(auth);
+    
+    // Delegate to TwoFactorService for password verification and logging
+    const disableResult = await TwoFactorService.disable2FA(bridgeUser, password);
+
+    // Update AuthModel
+    auth.mfa.enabled = false;
+    auth.mfa.methods = [];
+    auth.mfa.pendingSetup = undefined;
+    auth.mfa.activeChallenge = undefined;
+
+    await auth.save();
+    return disableResult;
+  } catch (error) {
+    logger.error('2FA disable failed in AuthModel', { error, userId });
+    throw error;
+  }
+};
+
+/**
+ * Get 2FA status for user
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} 2FA status
+ */
+authSchema.statics.get2FAStatus = async function(userId) {
+  try {
+    const auth = await this.findOne({ userId });
+    if (!auth) {
+      return { enabled: false };
+    }
+
+    const primaryMethod = auth.mfa.methods.find(m => m.isPrimary && m.enabled);
+    const backupMethod = auth.mfa.methods.find(m => m.type === 'backup_codes');
+    
+    const status = {
+      enabled: auth.mfa.enabled,
+      method: primaryMethod?.type || null,
+      methods: auth.mfa.methods.map(m => ({
+        type: m.type,
+        enabled: m.enabled,
+        isPrimary: m.isPrimary,
+        setupAt: m.setupAt
+      })),
+      backupCodesRemaining: 0,
+      phoneNumberMasked: null,
+      enabledAt: primaryMethod?.setupAt || null
+    };
+
+    // Count remaining backup codes
+    if (backupMethod?.config?.codes) {
+      status.backupCodesRemaining = backupMethod.config.codes.filter(c => !c.used).length;
+    }
+
+    // Mask phone number if SMS is enabled
+    const smsMethod = auth.mfa.methods.find(m => m.type === 'sms' && m.enabled);
+    if (smsMethod?.config?.phoneNumber) {
+      const phoneNumber = smsMethod.config.phoneNumber;
+      status.phoneNumberMasked = phoneNumber.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
+    }
+
+    return status;
+  } catch (error) {
+    logger.error('Get 2FA status failed', { error, userId });
+    return { enabled: false };
+  }
+};
+
+/**
+ * Generate new backup codes
+ * @param {string} userId - User ID
+ * @param {string} password - User password for verification
+ * @returns {Promise<Object>} New backup codes
+ */
+authSchema.statics.regenerateBackupCodes = async function(userId, password) {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth || !auth.mfa.enabled) {
+      throw new Error('2FA not enabled for user');
+    }
+
+    const bridgeUser = createBridgeUser(auth);
+    const result = await TwoFactorService.regenerateBackupCodes(bridgeUser, password);
+
+    // Update backup codes in AuthModel
+    const backupMethod = auth.mfa.methods.find(m => m.type === 'backup_codes');
+    if (backupMethod) {
+      backupMethod.config.codes = result.backupCodes.map(code => ({
+        code: crypto.createHash('sha256').update(code).digest('hex'),
+        used: false,
+        usedAt: null
+      }));
+    } else {
+      auth.mfa.methods.push({
+        type: 'backup_codes',
+        enabled: true,
+        isPrimary: false,
+        config: {
+          codes: result.backupCodes.map(code => ({
+            code: crypto.createHash('sha256').update(code).digest('hex'),
+            used: false,
+            usedAt: null
+          }))
+        },
+        setupAt: new Date(),
+        verificationAttempts: 0
+      });
+    }
+
+    await auth.save();
+    return result;
+  } catch (error) {
+    logger.error('Backup code regeneration failed', { error, userId });
+    throw error;
+  }
+};
+
+/**
+ * Send SMS code for login
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} Send result
+ */
+authSchema.statics.sendSMSCode = async function(userId) {
+  try {
+    const auth = await this.findOne({ userId }).populate('userId');
+    if (!auth) {
+      throw new Error('User authentication record not found');
+    }
+
+    const smsMethod = auth.mfa.methods.find(m => m.type === 'sms' && m.enabled);
+    if (!smsMethod) {
+      throw new Error('SMS 2FA not enabled for user');
+    }
+
+    const bridgeUser = createBridgeUser(auth);
+    return await TwoFactorService.sendSMSCode(bridgeUser);
+  } catch (error) {
+    logger.error('SMS code send failed', { error, userId });
+    throw error;
+  }
+};
+
+/**
+ * Helper function to create bridge user object for TwoFactorService
+ * @param {Object} auth - AuthModel document
+ * @returns {Object} Bridge user object
+ */
+function createBridgeUser(auth) {
+  const user = auth.userId || auth.toObject().userId;
+  const totpMethod = auth.mfa.methods?.find(m => m.type === 'totp' && m.enabled);
+  const smsMethod = auth.mfa.methods?.find(m => m.type === 'sms' && m.enabled);
+  const backupMethod = auth.mfa.methods?.find(m => m.type === 'backup_codes');
+
+  // Create a bridge object that matches what TwoFactorService expects
+  const bridgeUser = {
+    _id: auth.userId._id || auth.userId,
+    email: user.email,
+    security: {
+      twoFactorEnabled: auth.mfa.enabled,
+      twoFactorMethod: auth.mfa.methods.find(m => m.isPrimary)?.type || null,
+      twoFactorEnabledAt: auth.mfa.methods.find(m => m.isPrimary)?.setupAt || null
+    }
+  };
+
+  // Add TOTP secret if available
+  if (totpMethod?.config?.totpSecret) {
+    bridgeUser.security.totpSecret = totpMethod.config.totpSecret;
+  }
+
+  // Add phone number if available
+  if (smsMethod?.config?.phoneNumber) {
+    bridgeUser.security.phoneNumber = smsMethod.config.phoneNumber;
+  }
+
+  // Add backup codes if available
+  if (backupMethod?.config?.codes) {
+    bridgeUser.security.backupCodes = backupMethod.config.codes.map(c => ({
+      code: c.code,
+      used: c.used,
+      usedAt: c.usedAt
+    }));
+  }
+
+  // Add save method that updates the auth document
+  bridgeUser.save = async function() {
+    // Update the original auth document with any changes made by TwoFactorService
+    
+    // Update TOTP secret
+    if (this.security.totpSecret && totpMethod) {
+      totpMethod.config.totpSecret = this.security.totpSecret;
+    }
+
+    // Update backup codes
+    if (this.security.backupCodes && backupMethod) {
+      backupMethod.config.codes = this.security.backupCodes.map(c => ({
+        code: c.code,
+        used: c.used,
+        usedAt: c.usedAt
+      }));
+    }
+
+    // Update 2FA status
+    auth.mfa.enabled = this.security.twoFactorEnabled;
+    if (this.security.twoFactorEnabledAt) {
+      const primaryMethod = auth.mfa.methods.find(m => m.isPrimary);
+      if (primaryMethod) {
+        primaryMethod.setupAt = this.security.twoFactorEnabledAt;
+      }
+    }
+
+    return await auth.save();
+  };
+
+  return bridgeUser;
+}
+
+
 
 // Find by email across auth methods
 authSchema.statics.findByEmail = async function(email) {
