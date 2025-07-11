@@ -13,7 +13,7 @@ const speakeasy = require('speakeasy');
 
 const config = require('../../config/config');
 const constants = require('../../config/constants');
-const AuditService = require('../../security/services/audit-service');
+const AuditService = require('../../audit/services/audit-service');
 const EncryptionService = require('../../security/services/encryption-service');
 const TokenBlacklistService = require('../../security/services/token-blacklist-service');
 const AuthEmailService = require('./auth-email-service'); // 🆕 NEW: Import the email service
