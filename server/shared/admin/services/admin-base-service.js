@@ -1,923 +1,669 @@
 /**
  * @file Admin Base Service
- * @description Base service class for all administrative services with standardized patterns
+ * @description Base service class providing common functionality for all administrative services
  * @version 1.0.0
  */
 
 const mongoose = require('mongoose');
-const AuditService = require('../../../audit/services/audit-service');
-const { CacheService } = require('../../../services/cache-service');
-const AdminAuditLogger = require('../middleware/admin-audit-logging');
-const EncryptionService = require('../../../security/services/encryption-service');
-const logger = require('../../../utils/logger');
-const { 
-  ValidationError, 
-  NotFoundError, 
-  ConflictError,
-  BusinessRuleError 
-} = require('../../../utils/app-error');
+const EventEmitter = require('events');
+
+const config = require('../../../shared/config/config');
+const constants = require('../../../shared/config/constants');
+const { AppError, ValidationError, NotFoundError, AuthorizationError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
+const { CacheService } = require('../../../shared/services/cache-service');
+
+// Import admin models
+const AdminActionLog = require('../models/admin-action-log-model');
+const AdminSession = require('../models/admin-session-model');
+const AdminPreference = require('../models/admin-preference-model');
+const AdminNotification = require('../models/admin-notification-model');
+
+// Import admin configurations
+const { AdminSecurityManager } = require('../config/admin-security-config');
+const { AdminLimitManager } = require('../config/admin-limits-config');
+const { AdminFeatureManager } = require('../config/admin-features-config');
+
+// Import admin constants
+const { AdminPermissions } = require('../constants/admin-permissions');
+const { AdminActions } = require('../constants/admin-actions');
+const { AdminRoles } = require('../constants/admin-roles');
 
 /**
  * Admin Base Service Class
- * @class AdminBaseService
+ * Provides common functionality for all administrative services
  */
-class AdminBaseService {
-  /**
-   * Constructor
-   * @param {string} serviceName - Name of the service
-   * @param {Object} model - Mongoose model
-   * @param {Object} options - Service options
-   */
-  constructor(serviceName, model, options = {}) {
-    this.serviceName = serviceName;
-    this.model = model;
-    this.modelName = model.modelName;
-    this.options = {
-      enableCache: true,
-      cachePrefix: `admin:${serviceName}`,
-      cacheTTL: 300, // 5 minutes
-      enableAuditTrail: true,
-      enableEncryption: true,
-      sensitiveFields: [],
-      requiredPermissions: {},
-      bulkOperationLimit: 100,
-      ...options
-    };
-
-    this.encryptionService = new EncryptionService();
-    this.cache = this.options.enableCache ? new CacheService(this.options.cachePrefix) : null;
+class AdminBaseService extends EventEmitter {
+  constructor(serviceName) {
+    super();
     
-    // Initialize hooks
-    this.initializeHooks();
-  }
-
-  /**
-   * Initialize service hooks
-   */
-  initializeHooks() {
-    this.hooks = {
-      beforeCreate: [],
-      afterCreate: [],
-      beforeUpdate: [],
-      afterUpdate: [],
-      beforeDelete: [],
-      afterDelete: [],
-      beforeBulkOperation: [],
-      afterBulkOperation: []
+    this.serviceName = serviceName;
+    this.cache = new CacheService(`admin:${serviceName}`);
+    this.metrics = {
+      operationsCount: 0,
+      errorsCount: 0,
+      lastOperation: null,
+      startTime: new Date()
     };
+    
+    // Initialize service configurations
+    this.initializeService();
   }
-
+  
   /**
-   * Register hook
-   * @param {string} hookName - Hook name
-   * @param {Function} handler - Hook handler
+   * Initialize service configurations
+   * @private
    */
-  registerHook(hookName, handler) {
-    if (this.hooks[hookName]) {
-      this.hooks[hookName].push(handler);
-    }
+  initializeService() {
+    logger.info(`Initializing admin service: ${this.serviceName}`, {
+      service: this.serviceName,
+      timestamp: new Date()
+    });
+    
+    // Set up error handling
+    this.on('error', this.handleServiceError.bind(this));
+    
+    // Set up metrics collection
+    this.setupMetricsCollection();
   }
-
+  
   /**
-   * Execute hooks
-   * @param {string} hookName - Hook name
-   * @param {Object} context - Hook context
+   * Set up metrics collection
+   * @private
    */
-  async executeHooks(hookName, context) {
-    if (!this.hooks[hookName]) return;
-
-    for (const hook of this.hooks[hookName]) {
-      await hook.call(this, context);
-    }
-  }
-
-  /**
-   * Find one document by ID with admin context
-   * @param {string} id - Document ID
-   * @param {Object} options - Query options
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Document
-   */
-  async findById(id, options = {}, context = {}) {
-    try {
-      logger.debug(`Admin ${this.serviceName}: Finding by ID`, { id, userId: context.userId });
-
-      // Check cache first
-      if (this.cache && !options.skipCache) {
-        const cached = await this.cache.get(`${id}`);
-        if (cached) {
-          logger.debug(`Admin ${this.serviceName}: Cache hit`, { id });
-          return cached;
-        }
-      }
-
-      // Build query
-      let query = this.model.findById(id);
-
-      // Apply population
-      if (options.populate) {
-        const populations = Array.isArray(options.populate) ? options.populate : [options.populate];
-        populations.forEach(pop => query = query.populate(pop));
-      }
-
-      // Apply field selection
-      if (options.select) {
-        query = query.select(options.select);
-      }
-
-      // Execute query
-      const document = await query.lean();
-
-      if (!document) {
-        throw new NotFoundError(`${this.modelName} not found`);
-      }
-
-      // Decrypt sensitive fields if needed
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        this.decryptSensitiveFields(document);
-      }
-
-      // Cache result
-      if (this.cache && !options.skipCache) {
-        await this.cache.set(`${id}`, document, this.options.cacheTTL);
-      }
-
-      // Audit log
-      if (this.options.enableAuditTrail) {
-        await AdminAuditLogger.logAdminEvent({
-          eventType: `admin_${this.serviceName}_viewed`,
-          userId: context.userId,
-          targetId: id,
-          targetType: this.modelName,
-          operation: 'read',
-          metadata: {
-            fields: options.select,
-            populated: options.populate
-          }
-        });
-      }
-
-      return document;
-    } catch (error) {
-      logger.error(`Admin ${this.serviceName}: Error finding by ID`, {
-        error: error.message,
-        id,
-        userId: context.userId
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Find documents with admin filters and pagination
-   * @param {Object} filters - Query filters
-   * @param {Object} options - Query options
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Paginated results
-   */
-  async find(filters = {}, options = {}, context = {}) {
-    try {
-      logger.debug(`Admin ${this.serviceName}: Finding documents`, {
-        filters,
-        options,
-        userId: context.userId
-      });
-
-      // Apply default pagination
-      const page = parseInt(options.page) || 1;
-      const limit = Math.min(parseInt(options.limit) || 20, 100);
-      const skip = (page - 1) * limit;
-
-      // Build query
-      let query = this.model.find(filters);
-
-      // Apply sorting
-      if (options.sort) {
-        query = query.sort(options.sort);
-      } else {
-        query = query.sort('-createdAt');
-      }
-
-      // Apply population
-      if (options.populate) {
-        const populations = Array.isArray(options.populate) ? options.populate : [options.populate];
-        populations.forEach(pop => query = query.populate(pop));
-      }
-
-      // Apply field selection
-      if (options.select) {
-        query = query.select(options.select);
-      }
-
-      // Execute count and paginated query
-      const [total, documents] = await Promise.all([
-        this.model.countDocuments(filters),
-        query.skip(skip).limit(limit).lean()
-      ]);
-
-      // Decrypt sensitive fields
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        documents.forEach(doc => this.decryptSensitiveFields(doc));
-      }
-
-      // Build response
-      const result = {
-        data: documents,
-        pagination: {
-          total,
-          page,
-          limit,
-          pages: Math.ceil(total / limit),
-          hasNext: page < Math.ceil(total / limit),
-          hasPrev: page > 1
-        },
-        filters: filters
+  setupMetricsCollection() {
+    this.on('operation:start', (operation) => {
+      this.metrics.operationsCount++;
+      this.metrics.lastOperation = {
+        name: operation,
+        startTime: new Date()
       };
-
-      // Audit log
-      if (this.options.enableAuditTrail) {
-        await AdminAuditLogger.logAdminEvent({
-          eventType: `admin_${this.serviceName}_listed`,
-          userId: context.userId,
-          targetType: this.modelName,
-          operation: 'list',
-          metadata: {
-            filters,
-            resultCount: documents.length,
-            totalCount: total,
-            page,
-            limit
-          }
-        });
+    });
+    
+    this.on('operation:complete', (operation, duration) => {
+      if (this.metrics.lastOperation && this.metrics.lastOperation.name === operation) {
+        this.metrics.lastOperation.duration = duration;
+        this.metrics.lastOperation.status = 'completed';
       }
-
-      return result;
-    } catch (error) {
-      logger.error(`Admin ${this.serviceName}: Error finding documents`, {
-        error: error.message,
-        filters,
-        userId: context.userId
-      });
-      throw error;
-    }
+    });
+    
+    this.on('operation:error', (operation, error) => {
+      this.metrics.errorsCount++;
+      if (this.metrics.lastOperation && this.metrics.lastOperation.name === operation) {
+        this.metrics.lastOperation.error = error.message;
+        this.metrics.lastOperation.status = 'failed';
+      }
+    });
   }
-
+  
   /**
-   * Create document with admin context
-   * @param {Object} data - Document data
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Created document
+   * Execute operation with common error handling and logging
+   * @param {string} operationName - Name of the operation
+   * @param {Function} operation - Operation function to execute
+   * @param {Object} context - Operation context
+   * @returns {Promise<*>} Operation result
    */
-  async create(data, context = {}) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
+  async executeOperation(operationName, operation, context = {}) {
+    const startTime = new Date();
+    this.emit('operation:start', operationName);
+    
     try {
-      logger.info(`Admin ${this.serviceName}: Creating document`, {
-        userId: context.userId,
-        dataKeys: Object.keys(data)
-      });
-
-      // Execute before create hooks
-      await this.executeHooks('beforeCreate', { data, context });
-
-      // Validate required fields
-      await this.validateRequiredFields(data, 'create');
-
-      // Add admin metadata
-      const documentData = {
-        ...data,
-        createdBy: {
-          userId: context.userId,
-          adminRole: context.adminRole,
-          reason: context.reason,
-          method: 'admin_panel'
-        },
-        metadata: {
-          ...data.metadata,
-          createdViaAdmin: true,
-          adminSessionId: context.sessionId
-        }
-      };
-
-      // Encrypt sensitive fields
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        this.encryptSensitiveFields(documentData);
-      }
-
-      // Create document
-      const document = await this.model.create([documentData], { session });
-      const created = document[0].toObject();
-
-      // Clear cache
-      if (this.cache) {
-        await this.cache.clearPattern('*');
-      }
-
-      // Execute after create hooks
-      await this.executeHooks('afterCreate', { document: created, context });
-
-      // Audit log with trail
-      const auditTrail = AdminAuditLogger.createAuditTrail({
-        name: `create_${this.modelName}`,
-        userId: context.userId
-      });
-
-      await auditTrail.addStep({
-        action: 'validate',
-        result: 'success',
-        details: { fieldsValidated: Object.keys(data) }
-      });
-
-      await auditTrail.addStep({
-        action: 'create',
-        result: 'success',
-        details: { 
-          documentId: created._id,
-          fields: Object.keys(data)
-        }
-      });
-
-      await auditTrail.complete('success');
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      // Decrypt for response
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        this.decryptSensitiveFields(created);
-      }
-
-      return created;
-    } catch (error) {
-      await session.abortTransaction();
-      logger.error(`Admin ${this.serviceName}: Error creating document`, {
-        error: error.message,
-        userId: context.userId
-      });
-      throw error;
-    } finally {
-      session.endSession();
-    }
-  }
-
-  /**
-   * Update document with admin context
-   * @param {string} id - Document ID
-   * @param {Object} updates - Update data
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Updated document
-   */
-  async update(id, updates, context = {}) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      logger.info(`Admin ${this.serviceName}: Updating document`, {
-        id,
-        userId: context.userId,
-        updateKeys: Object.keys(updates)
-      });
-
-      // Find existing document
-      const existing = await this.model.findById(id).session(session);
-      if (!existing) {
-        throw new NotFoundError(`${this.modelName} not found`);
-      }
-
-      // Execute before update hooks
-      await this.executeHooks('beforeUpdate', { 
-        existing: existing.toObject(), 
-        updates, 
-        context 
-      });
-
-      // Track changes for audit
-      const changes = this.trackChanges(existing.toObject(), updates);
-
-      // Add admin metadata
-      updates.lastModifiedBy = {
-        userId: context.userId,
-        adminRole: context.adminRole,
-        reason: context.reason,
-        timestamp: new Date()
-      };
-
-      // Update metadata
-      updates.metadata = {
-        ...existing.metadata,
-        ...updates.metadata,
-        lastAdminUpdate: new Date(),
-        adminUpdateCount: (existing.metadata?.adminUpdateCount || 0) + 1
-      };
-
-      // Encrypt sensitive fields
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        this.encryptSensitiveFields(updates);
-      }
-
-      // Update document
-      Object.assign(existing, updates);
-      const updated = await existing.save({ session });
-
-      // Clear cache
-      if (this.cache) {
-        await this.cache.delete(`${id}`);
-        await this.cache.clearPattern('*');
-      }
-
-      // Execute after update hooks
-      await this.executeHooks('afterUpdate', { 
-        document: updated.toObject(), 
-        changes, 
-        context 
-      });
-
-      // Detailed audit log
-      await AdminAuditLogger.logAdminEvent({
-        eventType: `admin_${this.serviceName}_updated`,
-        userId: context.userId,
-        targetId: id,
-        targetType: this.modelName,
-        operation: 'update',
-        changes,
-        reason: context.reason,
-        metadata: {
-          fieldsUpdated: Object.keys(updates),
-          previousValues: changes.map(c => ({ field: c.field, oldValue: c.oldValue })),
-          sessionId: context.sessionId
-        }
-      });
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      const result = updated.toObject();
+      // Validate operation context
+      this.validateOperationContext(context);
       
-      // Decrypt for response
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        this.decryptSensitiveFields(result);
-      }
-
-      return result;
-    } catch (error) {
-      await session.abortTransaction();
-      logger.error(`Admin ${this.serviceName}: Error updating document`, {
-        error: error.message,
-        id,
-        userId: context.userId
-      });
-      throw error;
-    } finally {
-      session.endSession();
-    }
-  }
-
-  /**
-   * Delete document with admin context
-   * @param {string} id - Document ID
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Deleted document
-   */
-  async delete(id, context = {}) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      logger.warn(`Admin ${this.serviceName}: Deleting document`, {
-        id,
-        userId: context.userId,
-        reason: context.reason
-      });
-
-      // Require reason for deletion
-      if (!context.reason) {
-        throw new ValidationError('Deletion reason is required for admin operations');
-      }
-
-      // Find document
-      const document = await this.model.findById(id).session(session);
-      if (!document) {
-        throw new NotFoundError(`${this.modelName} not found`);
-      }
-
-      // Execute before delete hooks
-      await this.executeHooks('beforeDelete', { 
-        document: document.toObject(), 
-        context 
-      });
-
-      // Create deletion record
-      const deletionRecord = {
-        documentId: id,
-        documentType: this.modelName,
-        documentData: document.toObject(),
-        deletedBy: {
-          userId: context.userId,
-          adminRole: context.adminRole,
-          reason: context.reason,
-          timestamp: new Date()
-        },
-        metadata: context.metadata || {}
-      };
-
-      // Store deletion record (you would have a DeletionLog model)
-      await AuditService.log({
-        type: 'admin_deletion_record',
-        action: 'delete',
-        category: 'data_management',
-        result: 'success',
-        severity: 'high',
-        userId: context.userId,
-        target: {
-          type: this.modelName,
-          id: id
-        },
-        metadata: deletionRecord,
-        retention: 'legal_hold' // Keep deletion records indefinitely
-      });
-
-      // Perform deletion
-      await document.deleteOne({ session });
-
-      // Clear cache
-      if (this.cache) {
-        await this.cache.delete(`${id}`);
-        await this.cache.clearPattern('*');
-      }
-
-      // Execute after delete hooks
-      await this.executeHooks('afterDelete', { 
-        deletedDocument: document.toObject(), 
-        context 
-      });
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      return {
-        success: true,
-        message: `${this.modelName} deleted successfully`,
-        deletedDocument: {
-          _id: id,
-          deletedAt: new Date(),
-          deletedBy: context.userId,
-          reason: context.reason
-        }
-      };
-    } catch (error) {
-      await session.abortTransaction();
-      logger.error(`Admin ${this.serviceName}: Error deleting document`, {
-        error: error.message,
-        id,
-        userId: context.userId
-      });
-      throw error;
-    } finally {
-      session.endSession();
-    }
-  }
-
-  /**
-   * Bulk update documents
-   * @param {Object} filter - Filter criteria
-   * @param {Object} updates - Update data
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Bulk update result
-   */
-  async bulkUpdate(filter, updates, context = {}) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      logger.warn(`Admin ${this.serviceName}: Bulk update operation`, {
-        filter,
-        updateKeys: Object.keys(updates),
-        userId: context.userId
-      });
-
-      // Require reason for bulk operations
-      if (!context.reason) {
-        throw new ValidationError('Reason is required for bulk admin operations');
-      }
-
-      // Execute before bulk operation hooks
-      await this.executeHooks('beforeBulkOperation', { 
-        operation: 'update',
-        filter, 
-        updates, 
-        context 
-      });
-
-      // Find affected documents
-      const documents = await this.model.find(filter).session(session).lean();
+      // Check permissions
+      await this.checkOperationPermissions(operationName, context);
       
-      if (documents.length === 0) {
-        throw new NotFoundError('No documents found matching criteria');
+      // Check rate limits
+      await this.checkRateLimits(operationName, context);
+      
+      // Execute the operation
+      const result = await operation();
+      
+      // Log successful operation
+      await this.logOperation(operationName, context, result, 'success');
+      
+      const duration = new Date() - startTime;
+      this.emit('operation:complete', operationName, duration);
+      
+      return result;
+      
+    } catch (error) {
+      // Log failed operation
+      await this.logOperation(operationName, context, null, 'failure', error);
+      
+      this.emit('operation:error', operationName, error);
+      
+      logger.error(`Admin operation failed: ${operationName}`, {
+        service: this.serviceName,
+        operation: operationName,
+        error: error.message,
+        userId: context.userId,
+        duration: new Date() - startTime
+      });
+      
+      throw error;
+    }
+  }
+  
+  /**
+   * Validate operation context
+   * @param {Object} context - Operation context
+   * @throws {ValidationError} If context is invalid
+   */
+  validateOperationContext(context) {
+    if (!context.userId) {
+      throw new ValidationError('User ID is required in operation context');
+    }
+    
+    if (!context.sessionId) {
+      throw new ValidationError('Session ID is required in operation context');
+    }
+    
+    if (!context.requestContext) {
+      throw new ValidationError('Request context is required for operation');
+    }
+  }
+  
+  /**
+   * Check operation permissions
+   * @param {string} operationName - Name of the operation
+   * @param {Object} context - Operation context
+   * @throws {AuthorizationError} If user lacks permissions
+   */
+  async checkOperationPermissions(operationName, context) {
+    const { user, requiredPermissions } = context;
+    
+    if (!user) {
+      throw new AuthorizationError('User information required for permission check');
+    }
+    
+    // Get operation-specific permissions
+    const permissions = requiredPermissions || this.getRequiredPermissions(operationName);
+    
+    if (permissions && permissions.length > 0) {
+      const hasPermission = permissions.some(permission => 
+        this.checkUserPermission(user, permission)
+      );
+      
+      if (!hasPermission) {
+        throw new AuthorizationError(`Insufficient permissions for operation: ${operationName}`);
       }
-
-      if (documents.length > this.options.bulkOperationLimit) {
-        throw new BusinessRuleError(
-          `Bulk operation limit exceeded. Maximum: ${this.options.bulkOperationLimit}, Found: ${documents.length}`
+    }
+    
+    // Check additional security requirements
+    const securityValidation = AdminSecurityManager.validateSecurityRequirements(
+      operationName, 
+      user, 
+      context
+    );
+    
+    if (!securityValidation.passed) {
+      throw new AuthorizationError('Additional security requirements not met', {
+        requirements: securityValidation.requirements
+      });
+    }
+  }
+  
+  /**
+   * Check rate limits for operation
+   * @param {string} operationName - Name of the operation
+   * @param {Object} context - Operation context
+   * @throws {AppError} If rate limit exceeded
+   */
+  async checkRateLimits(operationName, context) {
+    const { user } = context;
+    const userRole = user.role?.primary || 'default';
+    
+    const rateLimit = AdminLimitManager.getRateLimit(operationName, userRole);
+    
+    if (rateLimit) {
+      const key = `rate_limit:${operationName}:${user._id}`;
+      const current = await this.cache.get(key) || 0;
+      
+      if (current >= rateLimit.max) {
+        throw new AppError(
+          `Rate limit exceeded for operation: ${operationName}`,
+          429,
+          'RATE_LIMIT_EXCEEDED'
         );
       }
-
-      // Create audit trail
-      const auditTrail = AdminAuditLogger.createAuditTrail({
-        name: `bulk_update_${this.modelName}`,
-        userId: context.userId
-      });
-
-      await auditTrail.addStep({
-        action: 'identify_targets',
-        result: 'success',
-        details: {
-          filter,
-          documentCount: documents.length,
-          documentIds: documents.map(d => d._id)
-        }
-      });
-
-      // Perform bulk update
-      const updateData = {
-        ...updates,
-        lastModifiedBy: {
+      
+      // Increment rate limit counter
+      await this.cache.set(key, current + 1, { ttl: rateLimit.windowMs });
+    }
+  }
+  
+  /**
+   * Get required permissions for operation
+   * @param {string} operationName - Name of the operation
+   * @returns {Array} Required permissions
+   */
+  getRequiredPermissions(operationName) {
+    // Define operation to permission mappings
+    const operationPermissions = {
+      'user.create': [AdminPermissions.USER.CREATE],
+      'user.update': [AdminPermissions.USER.UPDATE],
+      'user.delete': [AdminPermissions.USER.DELETE],
+      'organization.create': [AdminPermissions.ORGANIZATION.MANAGE],
+      'organization.delete': [AdminPermissions.ORGANIZATION.DELETE],
+      'system.backup': [AdminPermissions.SYSTEM.BACKUP.CREATE],
+      'system.maintenance': [AdminPermissions.SYSTEM.MAINTENANCE.ENABLE],
+      'security.audit': [AdminPermissions.SECURITY.AUDIT.VIEW]
+    };
+    
+    return operationPermissions[operationName] || [];
+  }
+  
+  /**
+   * Check if user has specific permission
+   * @param {Object} user - User object
+   * @param {string} permission - Permission to check
+   * @returns {boolean} Has permission
+   */
+  checkUserPermission(user, permission) {
+    if (!user.permissions) return false;
+    
+    // Check direct permission
+    if (user.permissions.includes(permission)) return true;
+    
+    // Check wildcard permissions
+    const permissionParts = permission.split('.');
+    for (let i = permissionParts.length; i > 0; i--) {
+      const wildcardPerm = permissionParts.slice(0, i).join('.') + '.*';
+      if (user.permissions.includes(wildcardPerm)) return true;
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Log administrative operation
+   * @param {string} operationName - Name of the operation
+   * @param {Object} context - Operation context
+   * @param {*} result - Operation result
+   * @param {string} status - Operation status
+   * @param {Error} error - Error if operation failed
+   */
+  async logOperation(operationName, context, result, status, error = null) {
+    try {
+      const logData = {
+        action: operationName,
+        category: this.getOperationCategory(operationName),
+        actor: {
           userId: context.userId,
-          adminRole: context.adminRole,
-          reason: context.reason,
-          timestamp: new Date(),
-          bulkOperation: true
-        }
-      };
-
-      const result = await this.model.updateMany(
-        filter,
-        { $set: updateData },
-        { session }
-      );
-
-      await auditTrail.addStep({
-        action: 'execute_update',
-        result: 'success',
-        details: {
-          modifiedCount: result.modifiedCount,
-          matchedCount: result.matchedCount
-        }
-      });
-
-      // Clear cache
-      if (this.cache) {
-        await this.cache.clearPattern('*');
-      }
-
-      // Execute after bulk operation hooks
-      await this.executeHooks('afterBulkOperation', { 
-        operation: 'update',
-        result, 
-        context 
-      });
-
-      await auditTrail.complete('success');
-
-      // Commit transaction
-      await session.commitTransaction();
-
-      return {
-        success: true,
-        matchedCount: result.matchedCount,
-        modifiedCount: result.modifiedCount,
-        documentIds: documents.map(d => d._id),
-        updates: Object.keys(updates),
-        performedBy: context.userId,
-        reason: context.reason
-      };
-    } catch (error) {
-      await session.abortTransaction();
-      logger.error(`Admin ${this.serviceName}: Bulk update error`, {
-        error: error.message,
-        filter,
-        userId: context.userId
-      });
-      throw error;
-    } finally {
-      session.endSession();
-    }
-  }
-
-  /**
-   * Export data with admin privileges
-   * @param {Object} filter - Filter criteria
-   * @param {Object} options - Export options
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Export result
-   */
-  async export(filter = {}, options = {}, context = {}) {
-    try {
-      logger.info(`Admin ${this.serviceName}: Exporting data`, {
-        filter,
-        format: options.format || 'json',
-        userId: context.userId
-      });
-
-      // Build query
-      let query = this.model.find(filter);
-
-      // Apply field selection
-      if (options.fields) {
-        query = query.select(options.fields.join(' '));
-      }
-
-      // Execute query
-      const documents = await query.lean();
-
-      // Decrypt sensitive fields if included
-      if (this.options.enableEncryption && this.options.sensitiveFields.length > 0) {
-        documents.forEach(doc => {
-          // Only decrypt if explicitly requested
-          if (options.includeSensitive && context.canViewSensitive) {
-            this.decryptSensitiveFields(doc);
-          } else {
-            // Remove sensitive fields
-            this.options.sensitiveFields.forEach(field => {
-              delete doc[field];
-            });
-          }
-        });
-      }
-
-      // Audit the export
-      await AdminAuditLogger.logAdminEvent({
-        eventType: 'admin_data_export',
-        userId: context.userId,
-        targetType: this.modelName,
-        operation: 'export',
+          username: context.user?.username,
+          email: context.user?.email,
+          role: context.user?.role?.primary,
+          isSystemAction: false
+        },
+        requestContext: {
+          method: context.requestContext.method,
+          url: context.requestContext.url,
+          sourceIP: context.requestContext.sourceIP,
+          userAgent: context.requestContext.userAgent,
+          sessionId: context.sessionId
+        },
+        target: this.buildOperationTarget(operationName, context, result),
+        changes: this.buildChangeDetails(operationName, context, result),
+        security: this.buildSecurityContext(context),
+        result: {
+          status,
+          message: status === 'success' ? 'Operation completed successfully' : error?.message,
+          errorCode: error?.code,
+          errorDetails: error ? { name: error.name, message: error.message } : null,
+          duration: context.duration
+        },
         metadata: {
-          format: options.format || 'json',
-          recordCount: documents.length,
-          filter,
-          fields: options.fields,
-          includedSensitive: options.includeSensitive || false
-        }
-      });
-
-      return {
-        data: documents,
-        metadata: {
-          exportedAt: new Date(),
-          exportedBy: context.userId,
-          recordCount: documents.length,
-          format: options.format || 'json'
+          environment: config.nodeEnv || 'development',
+          service: this.serviceName,
+          customFields: context.metadata || {}
         }
       };
-    } catch (error) {
-      logger.error(`Admin ${this.serviceName}: Export error`, {
-        error: error.message,
-        userId: context.userId
+      
+      await AdminActionLog.logAction(logData);
+      
+    } catch (logError) {
+      logger.error('Failed to log admin operation', {
+        operation: operationName,
+        logError: logError.message,
+        originalError: error?.message
       });
-      throw error;
     }
   }
-
+  
   /**
-   * Get service statistics
-   * @param {Object} context - Admin context
-   * @returns {Promise<Object>} Service statistics
+   * Get operation category
+   * @param {string} operationName - Name of the operation
+   * @returns {string} Operation category
    */
-  async getStatistics(context = {}) {
-    try {
-      const stats = await this.model.aggregate([
-        {
-          $facet: {
-            total: [{ $count: 'count' }],
-            byStatus: [
-              { $group: { _id: '$status', count: { $sum: 1 } } }
-            ],
-            recentActivity: [
-              { $match: { createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } } },
-              { $count: 'count' }
-            ],
-            byMonth: [
-              {
-                $group: {
-                  _id: {
-                    year: { $year: '$createdAt' },
-                    month: { $month: '$createdAt' }
-                  },
-                  count: { $sum: 1 }
-                }
-              },
-              { $sort: { '_id.year': -1, '_id.month': -1 } },
-              { $limit: 12 }
-            ]
-          }
-        }
-      ]);
-
-      const result = {
-        total: stats[0].total[0]?.count || 0,
-        byStatus: stats[0].byStatus.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
-        last24Hours: stats[0].recentActivity[0]?.count || 0,
-        monthlyTrend: stats[0].byMonth.map(item => ({
-          month: `${item._id.year}-${String(item._id.month).padStart(2, '0')}`,
-          count: item.count
-        }))
-      };
-
-      // Cache statistics
-      if (this.cache) {
-        await this.cache.set('statistics', result, 3600); // 1 hour
-      }
-
-      return result;
-    } catch (error) {
-      logger.error(`Admin ${this.serviceName}: Error getting statistics`, {
-        error: error.message,
-        userId: context.userId
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Validate required fields
-   * @param {Object} data - Data to validate
-   * @param {string} operation - Operation type
-   */
-  async validateRequiredFields(data, operation) {
-    const requiredFields = this.options.requiredFields[operation] || [];
-    const missingFields = requiredFields.filter(field => !data[field]);
-
-    if (missingFields.length > 0) {
-      throw new ValidationError(`Missing required fields: ${missingFields.join(', ')}`);
-    }
-  }
-
-  /**
-   * Track changes between documents
-   * @param {Object} original - Original document
-   * @param {Object} updates - Updates
-   * @returns {Array} Changes
-   */
-  trackChanges(original, updates) {
-    const changes = [];
-
-    for (const [key, value] of Object.entries(updates)) {
-      if (key.startsWith('_') || key === 'metadata') continue;
-
-      const originalValue = original[key];
-      if (JSON.stringify(originalValue) !== JSON.stringify(value)) {
-        changes.push({
-          field: key,
-          oldValue: originalValue,
-          newValue: value,
-          changedAt: new Date()
-        });
+  getOperationCategory(operationName) {
+    const categoryMap = {
+      'user.': 'user',
+      'organization.': 'organization',
+      'system.': 'system',
+      'security.': 'security',
+      'billing.': 'billing',
+      'api.': 'api'
+    };
+    
+    for (const [prefix, category] of Object.entries(categoryMap)) {
+      if (operationName.startsWith(prefix)) {
+        return category;
       }
     }
-
+    
+    return 'platform';
+  }
+  
+  /**
+   * Build operation target information
+   * @param {string} operationName - Name of the operation
+   * @param {Object} context - Operation context
+   * @param {*} result - Operation result
+   * @returns {Object} Target information
+   */
+  buildOperationTarget(operationName, context, result) {
+    const target = {
+      resourceType: this.getResourceType(operationName),
+      resourceId: context.targetId || result?.id || 'unknown',
+      resourceName: context.targetName || result?.name,
+      organizationId: context.user?.organization?.current,
+      tenantId: context.tenantId
+    };
+    
+    return target;
+  }
+  
+  /**
+   * Get resource type from operation name
+   * @param {string} operationName - Name of the operation
+   * @returns {string} Resource type
+   */
+  getResourceType(operationName) {
+    const resourceMap = {
+      'user.': 'user',
+      'organization.': 'organization',
+      'system.': 'system',
+      'security.': 'audit_log',
+      'billing.': 'billing',
+      'backup.': 'backup',
+      'notification.': 'notification'
+    };
+    
+    for (const [prefix, resource] of Object.entries(resourceMap)) {
+      if (operationName.startsWith(prefix)) {
+        return resource;
+      }
+    }
+    
+    return 'system';
+  }
+  
+  /**
+   * Build change details for operation
+   * @param {string} operationName - Name of the operation
+   * @param {Object} context - Operation context
+   * @param {*} result - Operation result
+   * @returns {Object} Change details
+   */
+  buildChangeDetails(operationName, context, result) {
+    const changes = {
+      changeType: this.getChangeType(operationName),
+      fieldChanges: context.fieldChanges || [],
+      bulkOperation: context.bulkOperation || { enabled: false }
+    };
+    
     return changes;
   }
-
+  
   /**
-   * Encrypt sensitive fields
-   * @param {Object} data - Data object
+   * Get change type from operation name
+   * @param {string} operationName - Name of the operation
+   * @returns {string} Change type
    */
-  encryptSensitiveFields(data) {
-    for (const field of this.options.sensitiveFields) {
-      if (data[field] !== undefined && data[field] !== null) {
-        data[field] = this.encryptionService.encryptField(data[field], field);
+  getChangeType(operationName) {
+    if (operationName.includes('create')) return 'create';
+    if (operationName.includes('update')) return 'update';
+    if (operationName.includes('delete')) return 'delete';
+    if (operationName.includes('read') || operationName.includes('get')) return 'read';
+    if (operationName.includes('execute')) return 'execute';
+    
+    return 'execute';
+  }
+  
+  /**
+   * Build security context for operation
+   * @param {Object} context - Operation context
+   * @returns {Object} Security context
+   */
+  buildSecurityContext(context) {
+    return {
+      authenticationMethod: context.authMethod || 'password',
+      mfaVerified: context.mfaVerified || false,
+      permissionsUsed: context.permissionsUsed || [],
+      roleAtTimeOfAction: context.user?.role?.primary,
+      elevatedPrivileges: context.elevatedPrivileges || false,
+      breakGlassAccess: context.breakGlassAccess || false,
+      impersonationActive: context.impersonationActive || false,
+      riskLevel: this.calculateOperationRisk(context),
+      requiresApproval: context.requiresApproval || false,
+      approvalStatus: context.approvalStatus || 'not_required'
+    };
+  }
+  
+  /**
+   * Calculate operation risk level
+   * @param {Object} context - Operation context
+   * @returns {string} Risk level
+   */
+  calculateOperationRisk(context) {
+    let riskScore = 0;
+    
+    // Base risk factors
+    if (context.elevatedPrivileges) riskScore += 20;
+    if (context.breakGlassAccess) riskScore += 40;
+    if (context.impersonationActive) riskScore += 30;
+    if (!context.mfaVerified) riskScore += 15;
+    
+    // Network risk factors
+    if (context.requestContext?.sourceIP) {
+      // This would typically integrate with threat intelligence
+      // For now, we'll use basic heuristics
+      const ip = context.requestContext.sourceIP;
+      if (ip.includes('192.168.') || ip.includes('10.') || ip.includes('172.')) {
+        riskScore -= 5; // Lower risk for internal IPs
+      } else {
+        riskScore += 5; // Higher risk for external IPs
       }
     }
+    
+    // Determine risk level
+    if (riskScore >= 60) return 'critical';
+    if (riskScore >= 40) return 'high';
+    if (riskScore >= 20) return 'medium';
+    return 'low';
   }
-
+  
   /**
-   * Decrypt sensitive fields
-   * @param {Object} data - Data object
+   * Handle service errors
+   * @param {Error} error - Service error
+   * @private
    */
-  decryptSensitiveFields(data) {
-    for (const field of this.options.sensitiveFields) {
-      if (data[field]) {
-        try {
-          data[field] = this.encryptionService.decryptField(data[field]);
-        } catch (error) {
-          logger.error(`Failed to decrypt field ${field}`, { error: error.message });
-          data[field] = '[DECRYPTION_ERROR]';
-        }
+  handleServiceError(error) {
+    logger.error(`Service error in ${this.serviceName}`, {
+      service: this.serviceName,
+      error: error.message,
+      stack: error.stack
+    });
+    
+    // Emit metric event
+    this.metrics.errorsCount++;
+  }
+  
+  /**
+   * Get service metrics
+   * @returns {Object} Service metrics
+   */
+  getMetrics() {
+    return {
+      ...this.metrics,
+      uptime: new Date() - this.metrics.startTime,
+      errorRate: this.metrics.errorsCount / this.metrics.operationsCount || 0
+    };
+  }
+  
+  /**
+   * Check if feature is enabled for user
+   * @param {string} featurePath - Feature path
+   * @param {Object} user - User object
+   * @returns {boolean} Feature enabled
+   */
+  isFeatureEnabled(featurePath, user) {
+    return AdminFeatureManager.isFeatureEnabled(featurePath, user);
+  }
+  
+  /**
+   * Get user preferences
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} User preferences
+   */
+  async getUserPreferences(userId) {
+    const cacheKey = `user_preferences:${userId}`;
+    let preferences = await this.cache.get(cacheKey);
+    
+    if (!preferences) {
+      preferences = await AdminPreference.findOne({ userId });
+      if (preferences) {
+        await this.cache.set(cacheKey, preferences, { ttl: 300000 }); // 5 minutes
       }
     }
+    
+    return preferences;
   }
-
+  
   /**
-   * Clear all caches for this service
+   * Send notification to admin users
+   * @param {Object} notificationData - Notification data
+   * @returns {Promise<Object>} Created notification
    */
-  async clearCache() {
-    if (this.cache) {
-      await this.cache.clearPattern('*');
-      logger.info(`Admin ${this.serviceName}: Cache cleared`);
+  async sendNotification(notificationData) {
+    return AdminNotification.createAndSend(notificationData);
+  }
+  
+  /**
+   * Validate session
+   * @param {string} sessionId - Session ID
+   * @returns {Promise<Object>} Session object
+   * @throws {AuthenticationError} If session is invalid
+   */
+  async validateSession(sessionId) {
+    const session = await AdminSession.findOne({
+      sessionId,
+      status: { $in: ['active', 'idle'] },
+      expiresAt: { $gt: new Date() }
+    });
+    
+    if (!session) {
+      throw new AuthenticationError('Invalid or expired session');
     }
+    
+    if (!session.isValid()) {
+      throw new AuthenticationError('Session validation failed');
+    }
+    
+    return session;
+  }
+  
+  /**
+   * Start database transaction
+   * @returns {Promise<Object>} Transaction session
+   */
+  async startTransaction() {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    return session;
+  }
+  
+  /**
+   * Commit database transaction
+   * @param {Object} session - Transaction session
+   */
+  async commitTransaction(session) {
+    await session.commitTransaction();
+    session.endSession();
+  }
+  
+  /**
+   * Abort database transaction
+   * @param {Object} session - Transaction session
+   */
+  async abortTransaction(session) {
+    await session.abortTransaction();
+    session.endSession();
+  }
+  
+  /**
+   * Paginate query results
+   * @param {Object} query - Mongoose query
+   * @param {Object} options - Pagination options
+   * @returns {Promise<Object>} Paginated results
+   */
+  async paginate(query, options = {}) {
+    const {
+      page = 1,
+      limit = 25,
+      sort = { createdAt: -1 },
+      populate = null
+    } = options;
+    
+    const skip = (page - 1) * limit;
+    
+    let queryBuilder = query.skip(skip).limit(limit).sort(sort);
+    
+    if (populate) {
+      if (Array.isArray(populate)) {
+        populate.forEach(pop => queryBuilder = queryBuilder.populate(pop));
+      } else {
+        queryBuilder = queryBuilder.populate(populate);
+      }
+    }
+    
+    const [results, total] = await Promise.all([
+      queryBuilder.exec(),
+      query.model.countDocuments(query.getQuery())
+    ]);
+    
+    return {
+      data: results,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1
+      }
+    };
+  }
+  
+  /**
+   * Clean up service resources
+   * @returns {Promise<void>}
+   */
+  async cleanup() {
+    logger.info(`Cleaning up admin service: ${this.serviceName}`);
+    
+    // Clear cache
+    await this.cache.clear();
+    
+    // Remove all event listeners
+    this.removeAllListeners();
+    
+    // Log final metrics
+    logger.info(`Service ${this.serviceName} cleanup complete`, {
+      finalMetrics: this.getMetrics()
+    });
   }
 }
 
