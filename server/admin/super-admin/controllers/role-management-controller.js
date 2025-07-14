@@ -1,540 +1,819 @@
+// server/admin/super-admin/controllers/role-management-controller.js
 /**
  * @file Role Management Controller
- * @description Handles admin role and permission management
- * @module admin/super-admin/controllers
+ * @description Controller for system-wide role and permission management
  * @version 1.0.0
  */
 
-const { AdminLogger } = require('../../../shared/admin/utils/admin-logger');
-const { AdminHelpers } = require('../../../shared/admin/utils/admin-helpers');
-const { ADMIN_ACTIONS } = require('../../../shared/admin/constants/admin-actions');
-const { ADMIN_EVENTS } = require('../../../shared/admin/constants/admin-events');
-const { ADMIN_ROLES } = require('../../../shared/admin/constants/admin-roles');
-const { ADMIN_PERMISSIONS } = require('../../../shared/admin/constants/admin-permissions');
+const mongoose = require('mongoose');
+
+// Services
 const RoleManagementService = require('../services/role-management-service');
-const { AuditService } = require('../../../shared/services/audit-service');
+const AuditService = require('../../../shared/security/services/audit-service');
+const CacheService = require('../../../shared/utils/cache-service');
 
+// Utilities
+const { AppError, ValidationError, NotFoundError, ConflictError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
+const ResponseHandler = require('../../../shared/utils/response-handler');
+const AdminHelpers = require('../../../shared/admin/utils/admin-helpers');
+const AdminPermissions = require('../../../shared/admin/constants/admin-permissions');
+const AdminEvents = require('../../../shared/admin/constants/admin-events');
+
+// Validation
+const { validateRequest } = require('../../../shared/middleware/validate-request');
+const RoleManagementValidation = require('../validation/role-management-validation');
+
+/**
+ * Role Management Controller Class
+ * @class RoleManagementController
+ */
 class RoleManagementController {
-    constructor() {
-        this.logger = new AdminLogger('RoleManagementController');
-        this.service = new RoleManagementService();
-        this.auditService = new AuditService();
+  /**
+   * Get all roles
+   * @route GET /api/admin/super-admin/roles
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getAllRoles(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        page = 1,
+        limit = 20,
+        search,
+        category,
+        includeSystem = 'true',
+        includeCustom = 'true',
+        sortBy = 'priority',
+        sortOrder = 'asc'
+      } = req.query;
+
+      logger.info('Get all roles requested', {
+        adminId: adminUser.id,
+        filters: { search, category, includeSystem, includeCustom }
+      });
+
+      const result = await RoleManagementService.getAllRoles(adminUser, {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        search,
+        category,
+        includeSystem: includeSystem === 'true',
+        includeCustom: includeCustom === 'true',
+        sortBy,
+        sortOrder
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Roles retrieved successfully',
+        data: result.roles,
+        pagination: result.pagination,
+        metadata: result.metadata
+      });
+
+    } catch (error) {
+      logger.error('Get all roles error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get all admin roles
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getRoles(req, res, next) {
-        try {
-            const { includePermissions = true, includeUsers = false } = req.query;
+  /**
+   * Get role details
+   * @route GET /api/admin/super-admin/roles/:roleId
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getRoleDetails(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { roleId } = req.params;
 
-            this.logger.info('Fetching admin roles', {
-                adminId: req.user.id,
-                includePermissions,
-                includeUsers
-            });
+      logger.info('Get role details requested', {
+        adminId: adminUser.id,
+        roleId
+      });
 
-            const roles = await this.service.getAllRoles({
-                includePermissions: includePermissions === 'true',
-                includeUsers: includeUsers === 'true'
-            });
+      const roleDetails = await RoleManagementService.getRoleDetails(adminUser, roleId);
 
-            res.json({
-                success: true,
-                data: roles
-            });
-        } catch (error) {
-            this.logger.error('Error fetching roles', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Role details retrieved successfully',
+        data: roleDetails
+      });
+
+    } catch (error) {
+      logger.error('Get role details error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Create new role
+   * @route POST /api/admin/super-admin/roles
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async createRole(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.createRole, req);
+
+      const adminUser = req.user;
+      const roleData = req.body;
+
+      logger.info('Create role requested', {
+        adminId: adminUser.id,
+        roleName: roleData.name,
+        category: roleData.category
+      });
+
+      const result = await RoleManagementService.createRole(adminUser, roleData);
+
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: result.role,
+        metadata: {
+          warnings: result.warnings
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Create role error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleName: req.body?.name,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get role by ID
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getRoleById(req, res, next) {
-        try {
-            const { id } = req.params;
+  /**
+   * Update existing role
+   * @route PUT /api/admin/super-admin/roles/:roleId
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async updateRole(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.updateRole, req);
 
-            this.logger.info('Fetching role details', {
-                adminId: req.user.id,
-                roleId: id
-            });
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const updateData = req.body;
 
-            const role = await this.service.getRoleById(id);
+      logger.info('Update role requested', {
+        adminId: adminUser.id,
+        roleId,
+        updates: Object.keys(updateData)
+      });
 
-            if (!role) {
-                return res.status(404).json({
-                    success: false,
-                    error: {
-                        message: 'Role not found',
-                        code: 'ROLE_NOT_FOUND'
-                    }
-                });
-            }
+      const result = await RoleManagementService.updateRole(adminUser, roleId, updateData);
 
-            res.json({
-                success: true,
-                data: role
-            });
-        } catch (error) {
-            this.logger.error('Error fetching role', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          role: result.role,
+          changes: result.changes,
+          affectedUsers: result.affectedUsers
         }
+      });
+
+    } catch (error) {
+      logger.error('Update role error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Create custom admin role
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async createRole(req, res, next) {
-        try {
-            const { name, description, permissions, isActive = true } = req.body;
+  /**
+   * Delete role
+   * @route DELETE /api/admin/super-admin/roles/:roleId
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async deleteRole(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.deleteRole, req);
 
-            this.logger.info('Creating new admin role', {
-                adminId: req.user.id,
-                roleName: name,
-                permissionCount: permissions?.length
-            });
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const { reassignTo, force = false, reason } = req.body;
 
-            // Validate permissions
-            const invalidPermissions = await this.service.validatePermissions(permissions);
-            if (invalidPermissions.length > 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'Invalid permissions provided',
-                        code: 'INVALID_PERMISSIONS',
-                        details: { invalidPermissions }
-                    }
-                });
-            }
+      logger.warn('Delete role requested', {
+        adminId: adminUser.id,
+        roleId,
+        reassignTo,
+        force
+      });
 
-            const newRole = await this.service.createRole({
-                name,
-                description,
-                permissions,
-                isActive,
-                createdBy: req.user.id
-            });
+      const result = await RoleManagementService.deleteRole(adminUser, roleId, {
+        reassignTo,
+        force,
+        reason
+      });
 
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.CREATE_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_role',
-                resourceId: newRole.id,
-                details: {
-                    name,
-                    permissions,
-                    isActive
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ROLE_CREATED, {
-                roleId: newRole.id,
-                roleName: name,
-                createdBy: req.user.id
-            });
-
-            res.status(201).json({
-                success: true,
-                message: 'Role created successfully',
-                data: newRole
-            });
-        } catch (error) {
-            this.logger.error('Error creating role', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          deletedRole: result.deletedRole,
+          reassignedUsers: result.reassignedUsers
         }
+      });
+
+    } catch (error) {
+      logger.error('Delete role error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Update admin role
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async updateRole(req, res, next) {
-        try {
-            const { id } = req.params;
-            const updates = req.body;
+  /**
+   * Clone existing role
+   * @route POST /api/admin/super-admin/roles/:roleId/clone
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async cloneRole(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.cloneRole, req);
 
-            this.logger.info('Updating admin role', {
-                adminId: req.user.id,
-                roleId: id,
-                updates: Object.keys(updates)
-            });
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const cloneData = req.body;
 
-            // Prevent modification of system roles
-            const systemRoles = Object.values(ADMIN_ROLES).map(r => r.id);
-            if (systemRoles.includes(id)) {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'System roles cannot be modified',
-                        code: 'SYSTEM_ROLE_IMMUTABLE'
-                    }
-                });
-            }
+      logger.info('Clone role requested', {
+        adminId: adminUser.id,
+        sourceRoleId: roleId,
+        newRoleName: cloneData.name
+      });
 
-            // Validate permissions if updating
-            if (updates.permissions) {
-                const invalidPermissions = await this.service.validatePermissions(updates.permissions);
-                if (invalidPermissions.length > 0) {
-                    return res.status(400).json({
-                        success: false,
-                        error: {
-                            message: 'Invalid permissions provided',
-                            code: 'INVALID_PERMISSIONS',
-                            details: { invalidPermissions }
-                        }
-                    });
-                }
-            }
+      const result = await RoleManagementService.cloneRole(adminUser, roleId, cloneData);
 
-            const updatedRole = await this.service.updateRole(id, updates, req.user);
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.UPDATE_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_role',
-                resourceId: id,
-                details: {
-                    updates,
-                    previousPermissions: updatedRole.previousPermissions
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ROLE_UPDATED, {
-                roleId: id,
-                updates,
-                updatedBy: req.user.id
-            });
-
-            res.json({
-                success: true,
-                message: 'Role updated successfully',
-                data: updatedRole
-            });
-        } catch (error) {
-            this.logger.error('Error updating role', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          role: result.role,
+          source: result.source
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Clone role error', {
+        error: error.message,
+        adminId: req.user?.id,
+        sourceRoleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Delete custom admin role
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async deleteRole(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { reassignTo } = req.body;
+  /**
+   * Bulk assign role to users
+   * @route POST /api/admin/super-admin/roles/:roleId/bulk-assign
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async bulkAssignRole(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.bulkAssignRole, req);
 
-            this.logger.warn('Deleting admin role', {
-                adminId: req.user.id,
-                roleId: id,
-                reassignTo
-            });
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const { userIds, notifyUsers = true, reason, effectiveDate, expiryDate } = req.body;
 
-            // Prevent deletion of system roles
-            const systemRoles = Object.values(ADMIN_ROLES).map(r => r.id);
-            if (systemRoles.includes(id)) {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'System roles cannot be deleted',
-                        code: 'SYSTEM_ROLE_PROTECTED'
-                    }
-                });
-            }
+      logger.warn('Bulk assign role requested', {
+        adminId: adminUser.id,
+        roleId,
+        userCount: userIds.length
+      });
 
-            const result = await this.service.deleteRole(id, {
-                reassignTo,
-                deletedBy: req.user.id
-            });
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.DELETE_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_role',
-                resourceId: id,
-                details: {
-                    reassignedTo: reassignTo,
-                    affectedUsers: result.affectedUsers
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ROLE_DELETED, {
-                roleId: id,
-                deletedBy: req.user.id,
-                affectedUsers: result.affectedUsers
-            });
-
-            res.json({
-                success: true,
-                message: 'Role deleted successfully',
-                data: result
-            });
-        } catch (error) {
-            this.logger.error('Error deleting role', error);
-            next(error);
+      const result = await RoleManagementService.bulkAssignRole(
+        adminUser,
+        roleId,
+        userIds,
+        {
+          notifyUsers,
+          reason,
+          effectiveDate,
+          expiryDate
         }
-    }
+      );
 
-    /**
-     * Get all available permissions
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getPermissions(req, res, next) {
-        try {
-            const { category, includeDescription = true } = req.query;
-
-            this.logger.info('Fetching available permissions', {
-                adminId: req.user.id,
-                category
-            });
-
-            const permissions = await this.service.getAllPermissions({
-                category,
-                includeDescription: includeDescription === 'true'
-            });
-
-            res.json({
-                success: true,
-                data: permissions
-            });
-        } catch (error) {
-            this.logger.error('Error fetching permissions', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          role: result.role,
+          results: result.results,
+          summary: result.summary
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Bulk assign role error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        userCount: req.body?.userIds?.length,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Assign role to admin user
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async assignRole(req, res, next) {
-        try {
-            const { userId, roleId, expiresAt } = req.body;
+  /**
+   * Get role permissions
+   * @route GET /api/admin/super-admin/roles/:roleId/permissions
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getRolePermissions(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const { format = 'tree', includeInherited = 'true' } = req.query;
 
-            this.logger.info('Assigning role to admin user', {
-                adminId: req.user.id,
-                targetUserId: userId,
-                roleId,
-                expiresAt
-            });
+      logger.info('Get role permissions requested', {
+        adminId: adminUser.id,
+        roleId,
+        format
+      });
 
-            const result = await this.service.assignRoleToUser({
-                userId,
-                roleId,
-                expiresAt,
-                assignedBy: req.user.id
-            });
+      const permissions = await RoleManagementService.getRolePermissions(adminUser, roleId, {
+        format,
+        includeInherited: includeInherited === 'true'
+      });
 
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.ASSIGN_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_user',
-                resourceId: userId,
-                details: {
-                    roleId,
-                    previousRole: result.previousRole,
-                    expiresAt
-                },
-                severity: 'high'
-            });
+      ResponseHandler.success(res, {
+        message: 'Role permissions retrieved successfully',
+        data: permissions
+      });
 
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ROLE_ASSIGNED, {
-                userId,
-                roleId,
-                previousRole: result.previousRole,
-                assignedBy: req.user.id
-            });
+    } catch (error) {
+      logger.error('Get role permissions error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
 
-            // Send notification
-            await req.adminContext.notifications.sendNotification({
-                userId,
-                type: 'role_assigned',
-                data: {
-                    newRole: result.roleName,
-                    assignedBy: req.user.email,
-                    expiresAt
-                }
-            });
+  /**
+   * Update role permissions
+   * @route PUT /api/admin/super-admin/roles/:roleId/permissions
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async updateRolePermissions(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.updatePermissions, req);
 
-            res.json({
-                success: true,
-                message: 'Role assigned successfully',
-                data: result
-            });
-        } catch (error) {
-            this.logger.error('Error assigning role', error);
-            next(error);
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const { permissions, operation = 'replace' } = req.body;
+
+      logger.warn('Update role permissions requested', {
+        adminId: adminUser.id,
+        roleId,
+        operation,
+        permissionCount: permissions.length
+      });
+
+      const result = await RoleManagementService.updateRolePermissions(
+        adminUser,
+        roleId,
+        permissions,
+        operation
+      );
+
+      ResponseHandler.success(res, {
+        message: 'Role permissions updated successfully',
+        data: {
+          role: result.role,
+          changes: result.changes,
+          affectedUsers: result.affectedUsers
         }
+      });
+
+    } catch (error) {
+      logger.error('Update role permissions error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Revoke role from admin user
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async revokeRole(req, res, next) {
-        try {
-            const { userId } = req.params;
-            const { reason } = req.body;
+  /**
+   * Get role assignment history
+   * @route GET /api/admin/super-admin/roles/assignment-history
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getRoleAssignmentHistory(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        roleId,
+        userId,
+        startDate,
+        endDate,
+        page = 1,
+        limit = 50
+      } = req.query;
 
-            this.logger.warn('Revoking role from admin user', {
-                adminId: req.user.id,
-                targetUserId: userId,
-                reason
-            });
+      logger.info('Get role assignment history requested', {
+        adminId: adminUser.id,
+        filters: { roleId, userId }
+      });
 
-            const result = await this.service.revokeUserRole({
-                userId,
-                reason,
-                revokedBy: req.user.id
-            });
+      const history = await RoleManagementService.getRoleAssignmentHistory(adminUser, {
+        roleId,
+        userId,
+        startDate: startDate ? new Date(startDate) : undefined,
+        endDate: endDate ? new Date(endDate) : undefined,
+        page: parseInt(page),
+        limit: parseInt(limit)
+      });
 
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.REVOKE_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_user',
-                resourceId: userId,
-                details: {
-                    revokedRole: result.revokedRole,
-                    reason
-                },
-                severity: 'high'
-            });
+      ResponseHandler.success(res, {
+        message: 'Assignment history retrieved successfully',
+        data: history.history,
+        pagination: history.pagination
+      });
 
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ROLE_REVOKED, {
-                userId,
-                revokedRole: result.revokedRole,
-                revokedBy: req.user.id,
-                reason
-            });
+    } catch (error) {
+      logger.error('Get role assignment history error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
 
-            res.json({
-                success: true,
-                message: 'Role revoked successfully',
-                data: result
-            });
-        } catch (error) {
-            this.logger.error('Error revoking role', error);
-            next(error);
+  /**
+   * Get available permissions
+   * @route GET /api/admin/super-admin/permissions
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getAvailablePermissions(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { category, search, format = 'list' } = req.query;
+
+      logger.info('Get available permissions requested', {
+        adminId: adminUser.id,
+        category,
+        search
+      });
+
+      const permissions = await RoleManagementService.getAvailablePermissions(adminUser, {
+        category,
+        search,
+        format
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Permissions retrieved successfully',
+        data: permissions
+      });
+
+    } catch (error) {
+      logger.error('Get available permissions error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Create custom permission
+   * @route POST /api/admin/super-admin/permissions
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async createPermission(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.createPermission, req);
+
+      const adminUser = req.user;
+      const permissionData = req.body;
+
+      logger.info('Create permission requested', {
+        adminId: adminUser.id,
+        resource: permissionData.resource,
+        actions: permissionData.actions
+      });
+
+      const permission = await RoleManagementService.createPermission(adminUser, permissionData);
+
+      ResponseHandler.success(res, {
+        message: 'Permission created successfully',
+        data: permission
+      }, 201);
+
+    } catch (error) {
+      logger.error('Create permission error', {
+        error: error.message,
+        adminId: req.user?.id,
+        resource: req.body?.resource,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Analyze role usage
+   * @route GET /api/admin/super-admin/roles/:roleId/analysis
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async analyzeRoleUsage(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { roleId } = req.params;
+      const { period = '30d', includeRecommendations = 'true' } = req.query;
+
+      logger.info('Analyze role usage requested', {
+        adminId: adminUser.id,
+        roleId,
+        period
+      });
+
+      const analysis = await RoleManagementService.analyzeRoleUsage(adminUser, roleId, {
+        period,
+        includeRecommendations: includeRecommendations === 'true'
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Role analysis completed successfully',
+        data: analysis
+      });
+
+    } catch (error) {
+      logger.error('Analyze role usage error', {
+        error: error.message,
+        adminId: req.user?.id,
+        roleId: req.params?.roleId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get role hierarchy
+   * @route GET /api/admin/super-admin/roles/hierarchy
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getRoleHierarchy(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { format = 'tree', includeUsers = 'false' } = req.query;
+
+      logger.info('Get role hierarchy requested', {
+        adminId: adminUser.id,
+        format,
+        includeUsers
+      });
+
+      const hierarchy = await RoleManagementService.getRoleHierarchy(adminUser, {
+        format,
+        includeUsers: includeUsers === 'true'
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Role hierarchy retrieved successfully',
+        data: hierarchy
+      });
+
+    } catch (error) {
+      logger.error('Get role hierarchy error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Merge roles
+   * @route POST /api/admin/super-admin/roles/merge
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async mergeRoles(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.mergeRoles, req);
+
+      const adminUser = req.user;
+      const { sourceRoles, targetRole, mergeOptions } = req.body;
+
+      logger.warn('Merge roles requested', {
+        adminId: adminUser.id,
+        sourceRoles,
+        targetRole
+      });
+
+      const result = await RoleManagementService.mergeRoles(
+        adminUser,
+        sourceRoles,
+        targetRole,
+        mergeOptions
+      );
+
+      ResponseHandler.success(res, {
+        message: 'Roles merged successfully',
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('Merge roles error', {
+        error: error.message,
+        adminId: req.user?.id,
+        sourceRoles: req.body?.sourceRoles,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Export roles configuration
+   * @route GET /api/admin/super-admin/roles/export
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async exportRoles(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { 
+        format = 'json',
+        includePermissions = 'true',
+        includeUsers = 'false',
+        roleIds 
+      } = req.query;
+
+      logger.info('Export roles requested', {
+        adminId: adminUser.id,
+        format,
+        roleCount: roleIds ? roleIds.split(',').length : 'all'
+      });
+
+      const exportData = await RoleManagementService.exportRoles(adminUser, {
+        format,
+        includePermissions: includePermissions === 'true',
+        includeUsers: includeUsers === 'true',
+        roleIds: roleIds ? roleIds.split(',') : null
+      });
+
+      if (req.query.download === 'true') {
+        res.setHeader('Content-Type', exportData.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${exportData.filename}"`);
+        return res.send(exportData.data);
+      }
+
+      ResponseHandler.success(res, {
+        message: 'Roles exported successfully',
+        data: {
+          filename: exportData.filename,
+          size: exportData.size,
+          downloadUrl: exportData.downloadUrl
         }
+      });
+
+    } catch (error) {
+      logger.error('Export roles error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get role assignment history
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getRoleHistory(req, res, next) {
-        try {
-            const { userId } = req.params;
-            const { startDate, endDate, limit = 50 } = req.query;
+  /**
+   * Import roles configuration
+   * @route POST /api/admin/super-admin/roles/import
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async importRoles(req, res, next) {
+    try {
+      await validateRequest(RoleManagementValidation.importRoles, req);
 
-            this.logger.info('Fetching role assignment history', {
-                adminId: req.user.id,
-                userId,
-                dateRange: { startDate, endDate }
-            });
+      const adminUser = req.user;
+      const { data, options = {} } = req.body;
 
-            const history = await this.service.getUserRoleHistory({
-                userId,
-                startDate,
-                endDate,
-                limit: parseInt(limit)
-            });
+      logger.warn('Import roles requested', {
+        adminId: adminUser.id,
+        options
+      });
 
-            res.json({
-                success: true,
-                data: history
-            });
-        } catch (error) {
-            this.logger.error('Error fetching role history', error);
-            next(error);
+      const result = await RoleManagementService.importRoles(adminUser, data, options);
+
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          imported: result.imported,
+          skipped: result.skipped,
+          errors: result.errors,
+          summary: result.summary
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Import roles error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Clone existing role
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async cloneRole(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { name, description, modifications = {} } = req.body;
+  /**
+   * Validate role configuration
+   * @route POST /api/admin/super-admin/roles/validate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async validateRoleConfiguration(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { roleData, checkConflicts = true } = req.body;
 
-            this.logger.info('Cloning admin role', {
-                adminId: req.user.id,
-                sourceRoleId: id,
-                newName: name
-            });
+      logger.info('Validate role configuration requested', {
+        adminId: adminUser.id,
+        roleName: roleData.name
+      });
 
-            const clonedRole = await this.service.cloneRole({
-                sourceRoleId: id,
-                name,
-                description,
-                modifications,
-                clonedBy: req.user.id
-            });
+      const validation = await RoleManagementService.validateRoleConfiguration(
+        adminUser,
+        roleData,
+        { checkConflicts }
+      );
 
-            // Audit action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.ROLE_MANAGEMENT.CLONE_ROLE,
-                userId: req.user.id,
-                resourceType: 'admin_role',
-                resourceId: clonedRole.id,
-                details: {
-                    sourceRoleId: id,
-                    modifications
-                },
-                severity: 'medium'
-            });
+      ResponseHandler.success(res, {
+        message: 'Role configuration validated',
+        data: validation
+      });
 
-            res.status(201).json({
-                success: true,
-                message: 'Role cloned successfully',
-                data: clonedRole
-            });
-        } catch (error) {
-            this.logger.error('Error cloning role', error);
-            next(error);
-        }
+    } catch (error) {
+      logger.error('Validate role configuration error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 }
 
 module.exports = new RoleManagementController();

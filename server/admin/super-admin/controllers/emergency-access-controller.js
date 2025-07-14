@@ -1,603 +1,888 @@
+// server/admin/super-admin/controllers/emergency-access-controller.js
 /**
  * @file Emergency Access Controller
- * @description Handles emergency access procedures and break-glass functionality
- * @module admin/super-admin/controllers
+ * @description Controller for emergency access, break glass procedures, and critical operations
  * @version 1.0.0
  */
 
-const { AdminLogger } = require('../../../shared/admin/utils/admin-logger');
-const { AdminHelpers } = require('../../../shared/admin/utils/admin-helpers');
-const { AdminMetrics } = require('../../../shared/admin/utils/admin-metrics');
-const { ADMIN_ACTIONS } = require('../../../shared/admin/constants/admin-actions');
-const { ADMIN_EVENTS } = require('../../../shared/admin/constants/admin-events');
+const mongoose = require('mongoose');
+
+// Services
 const EmergencyAccessService = require('../services/emergency-access-service');
-const { AuditService } = require('../../../shared/services/audit-service');
-const config = require('../../../config/configuration');
+const SuperAdminService = require('../services/super-admin-service');
+const AuditService = require('../../../shared/security/services/audit-service');
+const NotificationService = require('../../../shared/admin/services/admin-notification-service');
+const SecurityService = require('../../../shared/security/services/security-service');
 
+// Utilities
+const { AppError, ValidationError, NotFoundError, ForbiddenError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
+const ResponseHandler = require('../../../shared/utils/response-handler');
+const AdminHelpers = require('../../../shared/admin/utils/admin-helpers');
+const AdminPermissions = require('../../../shared/admin/constants/admin-permissions');
+const AdminEvents = require('../../../shared/admin/constants/admin-events');
+
+// Validation
+const { validateRequest } = require('../../../shared/middleware/validate-request');
+const EmergencyAccessValidation = require('../validation/emergency-access-validation');
+
+/**
+ * Emergency Access Controller Class
+ * @class EmergencyAccessController
+ */
 class EmergencyAccessController {
-    constructor() {
-        this.logger = new AdminLogger('EmergencyAccessController');
-        this.service = new EmergencyAccessService();
-        this.metrics = AdminMetrics.getInstance();
-        this.auditService = new AuditService();
-    }
+  /**
+   * Request emergency access
+   * @route POST /api/admin/super-admin/emergency-access/request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async requestEmergencyAccess(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.requestAccess, req);
 
-    /**
-     * Request emergency access
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async requestEmergencyAccess(req, res, next) {
-        try {
-            const {
-                reason,
-                resourceType,
-                resourceId,
-                duration,
-                justification,
-                ticketId
-            } = req.body;
+      const adminUser = req.user;
+      const requestData = req.body;
 
-            this.logger.warn('Emergency access requested', {
-                adminId: req.user.id,
-                resourceType,
-                resourceId,
-                duration
-            });
+      logger.critical('Emergency access requested', {
+        adminId: adminUser.id,
+        accessType: requestData.accessType,
+        urgencyLevel: requestData.urgencyLevel,
+        affectedSystems: requestData.affectedSystems
+      });
 
-            const request = await this.service.createEmergencyAccessRequest({
-                requestedBy: req.user.id,
-                reason,
-                resourceType,
-                resourceId,
-                duration,
-                justification,
-                ticketId,
-                requestIp: req.ip,
-                userAgent: req.get('user-agent')
-            });
+      const result = await EmergencyAccessService.requestEmergencyAccess(
+        adminUser,
+        requestData
+      );
 
-            // Record metrics
-            this.metrics.incrementCounter('emergency_access.requests.created');
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.REQUEST,
-                userId: req.user.id,
-                resourceType: 'emergency_access',
-                resourceId: request.id,
-                details: {
-                    requestType: resourceType,
-                    targetResource: resourceId,
-                    reason,
-                    duration,
-                    ticketId
-                },
-                severity: 'critical',
-                ip: req.ip
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.EMERGENCY_ACCESS_REQUESTED, {
-                requestId: request.id,
-                requestedBy: req.user.id,
-                resourceType,
-                resourceId
-            });
-
-            // Send notifications to approvers
-            await req.adminContext.notifications.sendCriticalAlert({
-                type: 'emergency_access_request',
-                recipients: await this.service.getEmergencyApprovers(),
-                data: {
-                    requestId: request.id,
-                    requestedBy: req.user.email,
-                    resourceType,
-                    reason,
-                    urgency: 'high'
-                }
-            });
-
-            res.status(201).json({
-                success: true,
-                message: 'Emergency access request submitted',
-                data: {
-                    requestId: request.id,
-                    status: request.status,
-                    approversNotified: request.approversNotified,
-                    estimatedResponseTime: '15 minutes'
-                }
-            });
-        } catch (error) {
-            this.logger.error('Error requesting emergency access', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          requestId: result.requestId,
+          status: result.status,
+          codeExpiresAt: result.codeExpiresAt,
+          requireDualAuth: result.requireDualAuth,
+          secondaryAdmin: result.secondaryAdmin
+        },
+        metadata: {
+          severity: 'critical',
+          monitoringActive: true
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Request emergency access error', {
+        error: error.message,
+        adminId: req.user?.id,
+        accessType: req.body?.accessType,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Approve emergency access request
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async approveEmergencyAccess(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { comments, conditions, expiresAt } = req.body;
+  /**
+   * Activate emergency access
+   * @route POST /api/admin/super-admin/emergency-access/:requestId/activate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async activateEmergencyAccess(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.activateAccess, req);
 
-            this.logger.warn('Approving emergency access', {
-                adminId: req.user.id,
-                requestId: id
-            });
+      const adminUser = req.user;
+      const { requestId } = req.params;
+      const activationData = req.body;
 
-            const approval = await this.service.approveEmergencyAccess({
-                requestId: id,
-                approvedBy: req.user.id,
-                comments,
-                conditions,
-                expiresAt,
-                approvalIp: req.ip
-            });
+      logger.critical('Emergency access activation requested', {
+        adminId: adminUser.id,
+        requestId,
+        hasPrimaryCode: !!activationData.primaryCode,
+        hasSecondaryCode: !!activationData.secondaryCode
+      });
 
-            // Record metrics
-            this.metrics.incrementCounter('emergency_access.requests.approved');
+      const result = await EmergencyAccessService.activateEmergencyAccess(
+        adminUser,
+        requestId,
+        activationData
+      );
 
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.APPROVE,
-                userId: req.user.id,
-                resourceType: 'emergency_access',
-                resourceId: id,
-                details: {
-                    requesterId: approval.requestedBy,
-                    accessGranted: approval.accessDetails,
-                    conditions,
-                    expiresAt
-                },
-                severity: 'critical',
-                ip: req.ip
-            });
+      // Set emergency access token in response header
+      res.setHeader('X-Emergency-Access-Token', result.accessToken);
 
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.EMERGENCY_ACCESS_APPROVED, {
-                requestId: id,
-                approvedBy: req.user.id,
-                requesterId: approval.requestedBy
-            });
-
-            // Send notification to requester
-            await req.adminContext.notifications.sendNotification({
-                userId: approval.requestedBy,
-                type: 'emergency_access_approved',
-                priority: 'high',
-                data: {
-                    requestId: id,
-                    approvedBy: req.user.email,
-                    accessDetails: approval.accessDetails,
-                    expiresAt
-                }
-            });
-
-            res.json({
-                success: true,
-                message: 'Emergency access approved',
-                data: approval
-            });
-        } catch (error) {
-            this.logger.error('Error approving emergency access', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          success: result.success,
+          expiresAt: result.expiresAt,
+          permissions: result.permissions,
+          restrictions: result.restrictions,
+          monitoringEnabled: result.monitoringEnabled
+        },
+        metadata: {
+          warning: 'All actions under emergency access are monitored and logged',
+          severity: 'critical'
         }
+      });
+
+    } catch (error) {
+      logger.error('Activate emergency access error', {
+        error: error.message,
+        adminId: req.user?.id,
+        requestId: req.params?.requestId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Deny emergency access request
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async denyEmergencyAccess(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { reason, recommendations } = req.body;
+  /**
+   * Revoke emergency access
+   * @route POST /api/admin/super-admin/emergency-access/:requestId/revoke
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async revokeEmergencyAccess(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.revokeAccess, req);
 
-            this.logger.warn('Denying emergency access', {
-                adminId: req.user.id,
-                requestId: id,
-                reason
-            });
+      const adminUser = req.user;
+      const { requestId } = req.params;
+      const revokeData = req.body;
 
-            const denial = await this.service.denyEmergencyAccess({
-                requestId: id,
-                deniedBy: req.user.id,
-                reason,
-                recommendations,
-                denialIp: req.ip
-            });
+      logger.critical('Emergency access revocation requested', {
+        adminId: adminUser.id,
+        requestId,
+        immediate: revokeData.immediate
+      });
 
-            // Record metrics
-            this.metrics.incrementCounter('emergency_access.requests.denied');
+      const result = await EmergencyAccessService.revokeEmergencyAccess(
+        adminUser,
+        requestId,
+        revokeData
+      );
 
-            // Audit action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.DENY,
-                userId: req.user.id,
-                resourceType: 'emergency_access',
-                resourceId: id,
-                details: {
-                    requesterId: denial.requestedBy,
-                    reason,
-                    recommendations
-                },
-                severity: 'high',
-                ip: req.ip
-            });
-
-            // Send notification to requester
-            await req.adminContext.notifications.sendNotification({
-                userId: denial.requestedBy,
-                type: 'emergency_access_denied',
-                data: {
-                    requestId: id,
-                    deniedBy: req.user.email,
-                    reason,
-                    recommendations
-                }
-            });
-
-            res.json({
-                success: true,
-                message: 'Emergency access denied',
-                data: denial
-            });
-        } catch (error) {
-            this.logger.error('Error denying emergency access', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          success: result.success,
+          revokedAt: result.revokedAt,
+          incidentReport: result.incidentReport,
+          actionsPerformed: result.actionsPerformed
         }
+      });
+
+    } catch (error) {
+      logger.error('Revoke emergency access error', {
+        error: error.message,
+        adminId: req.user?.id,
+        requestId: req.params?.requestId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Revoke active emergency access
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async revokeEmergencyAccess(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { reason, immediate = true } = req.body;
+  /**
+   * Get active emergency sessions
+   * @route GET /api/admin/super-admin/emergency-access/active
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getActiveEmergencySessions(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { includeExpired = 'false', includeActions = 'true' } = req.query;
 
-            this.logger.error('Revoking emergency access', {
-                adminId: req.user.id,
-                accessId: id,
-                immediate,
-                reason
-            });
+      logger.info('Get active emergency sessions requested', {
+        adminId: adminUser.id,
+        includeExpired: includeExpired === 'true'
+      });
 
-            const revocation = await this.service.revokeEmergencyAccess({
-                accessId: id,
-                revokedBy: req.user.id,
-                reason,
-                immediate,
-                revocationIp: req.ip
-            });
+      const result = await EmergencyAccessService.getActiveEmergencySessions(adminUser, {
+        includeExpired: includeExpired === 'true',
+        includeActions: includeActions === 'true'
+      });
 
-            // Record metrics
-            this.metrics.incrementCounter('emergency_access.revoked');
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.REVOKE,
-                userId: req.user.id,
-                resourceType: 'emergency_access',
-                resourceId: id,
-                details: {
-                    affectedUser: revocation.userId,
-                    reason,
-                    immediate,
-                    accessDuration: revocation.accessDuration
-                },
-                severity: 'critical',
-                ip: req.ip
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.EMERGENCY_ACCESS_REVOKED, {
-                accessId: id,
-                revokedBy: req.user.id,
-                affectedUser: revocation.userId,
-                immediate
-            });
-
-            res.json({
-                success: true,
-                message: 'Emergency access revoked',
-                data: revocation
-            });
-        } catch (error) {
-            this.logger.error('Error revoking emergency access', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Active emergency sessions retrieved successfully',
+        data: {
+          sessions: result.sessions,
+          systemStatus: result.systemStatus,
+          statistics: result.statistics
         }
+      });
+
+    } catch (error) {
+      logger.error('Get active emergency sessions error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get emergency access requests
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getEmergencyAccessRequests(req, res, next) {
-        try {
-            const {
-                status,
-                requesterId,
-                resourceType,
-                startDate,
-                endDate,
-                page = 1,
-                limit = 20
-            } = req.query;
+  /**
+   * Create break glass access
+   * @route POST /api/admin/super-admin/emergency-access/break-glass
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async createBreakGlassAccess(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.breakGlass, req);
 
-            this.logger.info('Fetching emergency access requests', {
-                adminId: req.user.id,
-                filters: { status, requesterId, resourceType }
-            });
+      const adminUser = req.user;
+      const breakGlassData = req.body;
 
-            const requests = await this.service.getEmergencyAccessRequests({
-                status,
-                requesterId,
-                resourceType,
-                startDate,
-                endDate,
-                page: parseInt(page),
-                limit: parseInt(limit)
-            });
+      logger.critical('Break glass access requested', {
+        adminId: adminUser.id,
+        systems: breakGlassData.systems,
+        hasVideoAuth: !!breakGlassData.videoAuthToken
+      });
 
-            res.json({
-                success: true,
-                data: requests.items,
-                pagination: requests.pagination
-            });
-        } catch (error) {
-            this.logger.error('Error fetching emergency access requests', error);
-            next(error);
+      const result = await EmergencyAccessService.createBreakGlassAccess(
+        adminUser,
+        breakGlassData
+      );
+
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: {
+          breakGlassId: result.breakGlassId,
+          activated: result.activated,
+          expiresAt: result.expiresAt,
+          permissions: result.permissions,
+          monitoringActive: result.monitoringActive,
+          alertsSent: result.alertsSent
+        },
+        metadata: {
+          severity: 'critical',
+          warning: 'Break glass access is for extreme emergencies only'
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Create break glass access error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get active emergency accesses
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getActiveEmergencyAccesses(req, res, next) {
-        try {
-            this.logger.info('Fetching active emergency accesses', {
-                adminId: req.user.id
-            });
+  /**
+   * Get emergency access audit trail
+   * @route GET /api/admin/super-admin/emergency-access/:requestId/audit
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getEmergencyAccessAuditTrail(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { requestId } = req.params;
 
-            const activeAccesses = await this.service.getActiveEmergencyAccesses();
+      logger.info('Emergency access audit trail requested', {
+        adminId: adminUser.id,
+        requestId
+      });
 
-            res.json({
-                success: true,
-                data: activeAccesses,
-                summary: {
-                    total: activeAccesses.length,
-                    byResourceType: this.groupByResourceType(activeAccesses),
-                    expiringIn24Hours: activeAccesses.filter(a => 
-                        this.isExpiringWithin(a.expiresAt, 24)
-                    ).length
-                }
-            });
-        } catch (error) {
-            this.logger.error('Error fetching active emergency accesses', error);
-            next(error);
+      const auditTrail = await EmergencyAccessService.getEmergencyAccessAuditTrail(
+        adminUser,
+        requestId
+      );
+
+      ResponseHandler.success(res, {
+        message: 'Audit trail retrieved successfully',
+        data: auditTrail
+      });
+
+    } catch (error) {
+      logger.error('Get emergency access audit trail error', {
+        error: error.message,
+        adminId: req.user?.id,
+        requestId: req.params?.requestId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Execute system bypass
+   * @route POST /api/admin/super-admin/emergency-access/bypass
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async executeSystemBypass(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.systemBypass, req);
+
+      const adminUser = req.user;
+      const { bypassType, targets, duration, reason } = req.body;
+
+      logger.critical('System bypass requested', {
+        adminId: adminUser.id,
+        bypassType,
+        targetCount: targets.length
+      });
+
+      const result = await EmergencyAccessService.executeSystemBypass(adminUser, {
+        bypassType,
+        targets,
+        duration,
+        reason
+      });
+
+      ResponseHandler.success(res, {
+        message: 'System bypass executed successfully',
+        data: {
+          bypassId: result.bypassId,
+          affectedTargets: result.affectedTargets,
+          expiresAt: result.expiresAt
+        },
+        metadata: {
+          severity: 'critical',
+          reversible: result.reversible
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Execute system bypass error', {
+        error: error.message,
+        adminId: req.user?.id,
+        bypassType: req.body?.bypassType,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get emergency access audit trail
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getEmergencyAccessAuditTrail(req, res, next) {
-        try {
-            const { id } = req.params;
+  /**
+   * Unlock system resources
+   * @route POST /api/admin/super-admin/emergency-access/unlock
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async unlockSystemResources(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.unlockResources, req);
 
-            this.logger.info('Fetching emergency access audit trail', {
-                adminId: req.user.id,
-                accessId: id
-            });
+      const adminUser = req.user;
+      const { resourceType, resourceIds, reason, notifyAffected = true } = req.body;
 
-            const auditTrail = await this.service.getEmergencyAccessAuditTrail(id);
+      logger.warn('System resource unlock requested', {
+        adminId: adminUser.id,
+        resourceType,
+        resourceCount: resourceIds.length
+      });
 
-            res.json({
-                success: true,
-                data: auditTrail
-            });
-        } catch (error) {
-            this.logger.error('Error fetching audit trail', error);
-            next(error);
+      const result = await EmergencyAccessService.unlockSystemResources(adminUser, {
+        resourceType,
+        resourceIds,
+        reason,
+        notifyAffected
+      });
+
+      ResponseHandler.success(res, {
+        message: 'System resources unlocked successfully',
+        data: {
+          unlockedCount: result.unlockedCount,
+          failedUnlocks: result.failedUnlocks,
+          notifications: result.notificationsSent
         }
+      });
+
+    } catch (error) {
+      logger.error('Unlock system resources error', {
+        error: error.message,
+        adminId: req.user?.id,
+        resourceType: req.body?.resourceType,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Execute break-glass procedure
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async executeBreakGlass(req, res, next) {
-        try {
-            const {
-                reason,
-                targetSystem,
-                urgencyLevel,
-                incidentId,
-                verificationCode
-            } = req.body;
+  /**
+   * Get emergency access statistics
+   * @route GET /api/admin/super-admin/emergency-access/statistics
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getEmergencyAccessStatistics(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        period = '30d',
+        groupBy = 'type',
+        includeDetails = 'false'
+      } = req.query;
 
-            this.logger.error('BREAK-GLASS PROCEDURE INITIATED', {
-                adminId: req.user.id,
-                targetSystem,
-                urgencyLevel,
-                incidentId
-            });
+      logger.info('Emergency access statistics requested', {
+        adminId: adminUser.id,
+        period,
+        groupBy
+      });
 
-            // Verify break-glass code
-            const isValidCode = await this.service.verifyBreakGlassCode(
-                req.user.id,
-                verificationCode
-            );
-
-            if (!isValidCode) {
-                return res.status(403).json({
-                    success: false,
-                    error: {
-                        message: 'Invalid break-glass verification code',
-                        code: 'INVALID_BREAK_GLASS_CODE'
-                    }
-                });
-            }
-
-            const breakGlassAccess = await this.service.executeBreakGlass({
-                executedBy: req.user.id,
-                reason,
-                targetSystem,
-                urgencyLevel,
-                incidentId,
-                executionIp: req.ip,
-                userAgent: req.get('user-agent')
-            });
-
-            // Record critical metrics
-            this.metrics.incrementCounter('emergency_access.break_glass.executed');
-            this.metrics.recordGauge('emergency_access.break_glass.active', 1);
-
-            // Audit critical action with highest severity
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.BREAK_GLASS,
-                userId: req.user.id,
-                resourceType: 'break_glass',
-                resourceId: breakGlassAccess.id,
-                details: {
-                    targetSystem,
-                    urgencyLevel,
-                    incidentId,
-                    reason,
-                    accessGranted: breakGlassAccess.permissions
-                },
-                severity: 'critical',
-                ip: req.ip,
-                tags: ['break-glass', 'emergency', urgencyLevel]
-            });
-
-            // Emit critical event
-            req.adminContext.events.emit(ADMIN_EVENTS.BREAK_GLASS_EXECUTED, {
-                accessId: breakGlassAccess.id,
-                executedBy: req.user.id,
-                targetSystem,
-                urgencyLevel,
-                incidentId
-            });
-
-            // Send immediate notifications to all super admins and security team
-            await req.adminContext.notifications.broadcastCriticalAlert({
-                type: 'break_glass_executed',
-                priority: 'critical',
-                data: {
-                    executedBy: req.user.email,
-                    targetSystem,
-                    urgencyLevel,
-                    incidentId,
-                    reason,
-                    timestamp: new Date()
-                }
-            });
-
-            res.json({
-                success: true,
-                message: 'Break-glass access granted',
-                data: {
-                    accessId: breakGlassAccess.id,
-                    permissions: breakGlassAccess.permissions,
-                    expiresAt: breakGlassAccess.expiresAt,
-                    monitoringEnabled: true,
-                    warningMessage: 'All actions are being monitored and logged'
-                }
-            });
-        } catch (error) {
-            this.logger.error('Error executing break-glass procedure', error);
-            next(error);
+      const statistics = await EmergencyAccessService.getEmergencyAccessStatistics(
+        adminUser,
+        {
+          period,
+          groupBy,
+          includeDetails: includeDetails === 'true'
         }
+      );
+
+      ResponseHandler.success(res, {
+        message: 'Emergency access statistics retrieved successfully',
+        data: statistics
+      });
+
+    } catch (error) {
+      logger.error('Get emergency access statistics error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Generate emergency access report
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async generateEmergencyAccessReport(req, res, next) {
-        try {
-            const { startDate, endDate, includeBreakGlass = true } = req.query;
+  /**
+   * Test emergency procedures
+   * @route POST /api/admin/super-admin/emergency-access/test
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async testEmergencyProcedures(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.testProcedures, req);
 
-            this.logger.info('Generating emergency access report', {
-                adminId: req.user.id,
-                dateRange: { startDate, endDate }
-            });
+      const adminUser = req.user;
+      const { procedureType, testScenario, dryRun = true } = req.body;
 
-            const report = await this.service.generateEmergencyAccessReport({
-                startDate,
-                endDate,
-                includeBreakGlass: includeBreakGlass === 'true',
-                generatedBy: req.user.id
-            });
+      logger.info('Emergency procedure test requested', {
+        adminId: adminUser.id,
+        procedureType,
+        testScenario,
+        dryRun
+      });
 
-            // Audit report generation
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.EMERGENCY_ACCESS.GENERATE_REPORT,
-                userId: req.user.id,
-                resourceType: 'emergency_access_report',
-                details: {
-                    dateRange: { startDate, endDate },
-                    recordCount: report.summary.totalRequests
-                },
-                severity: 'medium'
-            });
+      const result = await EmergencyAccessService.testEmergencyProcedures(adminUser, {
+        procedureType,
+        testScenario,
+        dryRun
+      });
 
-            res.json({
-                success: true,
-                data: report
-            });
-        } catch (error) {
-            this.logger.error('Error generating emergency access report', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Emergency procedure test completed',
+        data: {
+          testId: result.testId,
+          results: result.results,
+          recommendations: result.recommendations
+        },
+        metadata: {
+          dryRun,
+          testDuration: result.duration
         }
-    }
+      });
 
-    /**
-     * Helper: Group accesses by resource type
-     * @private
-     */
-    groupByResourceType(accesses) {
-        return accesses.reduce((grouped, access) => {
-            const type = access.resourceType;
-            grouped[type] = (grouped[type] || 0) + 1;
-            return grouped;
-        }, {});
+    } catch (error) {
+      logger.error('Test emergency procedures error', {
+        error: error.message,
+        adminId: req.user?.id,
+        procedureType: req.body?.procedureType,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Helper: Check if access is expiring within hours
-     * @private
-     */
-    isExpiringWithin(expiresAt, hours) {
-        const expiryTime = new Date(expiresAt).getTime();
-        const hoursInMs = hours * 60 * 60 * 1000;
-        return expiryTime - Date.now() <= hoursInMs;
+  /**
+   * Configure emergency contacts
+   * @route PUT /api/admin/super-admin/emergency-access/contacts
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async configureEmergencyContacts(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.configureContacts, req);
+
+      const adminUser = req.user;
+      const { contacts, escalationChain, notificationSettings } = req.body;
+
+      logger.info('Configure emergency contacts requested', {
+        adminId: adminUser.id,
+        contactCount: contacts.length
+      });
+
+      const result = await EmergencyAccessService.configureEmergencyContacts(adminUser, {
+        contacts,
+        escalationChain,
+        notificationSettings
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Emergency contacts configured successfully',
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('Configure emergency contacts error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
+
+  /**
+   * Generate emergency access report
+   * @route POST /api/admin/super-admin/emergency-access/reports/generate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async generateEmergencyAccessReport(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.generateReport, req);
+
+      const adminUser = req.user;
+      const {
+        reportType,
+        dateRange,
+        includeRecommendations = true,
+        format = 'pdf'
+      } = req.body;
+
+      logger.info('Emergency access report requested', {
+        adminId: adminUser.id,
+        reportType,
+        format
+      });
+
+      const report = await EmergencyAccessService.generateEmergencyAccessReport(
+        adminUser,
+        {
+          reportType,
+          dateRange,
+          includeRecommendations,
+          format
+        }
+      );
+
+      if (req.query.download === 'true') {
+        res.setHeader('Content-Type', report.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${report.filename}"`);
+        return res.send(report.data);
+      }
+
+      ResponseHandler.success(res, {
+        message: 'Emergency access report generated successfully',
+        data: {
+          reportId: report.id,
+          filename: report.filename,
+          size: report.size,
+          downloadUrl: report.downloadUrl
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Generate emergency access report error', {
+        error: error.message,
+        adminId: req.user?.id,
+        reportType: req.body?.reportType,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Review emergency access request
+   * @route POST /api/admin/super-admin/emergency-access/:requestId/review
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async reviewEmergencyAccessRequest(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.reviewRequest, req);
+
+      const adminUser = req.user;
+      const { requestId } = req.params;
+      const { decision, comments, conditions } = req.body;
+
+      logger.info('Emergency access review requested', {
+        adminId: adminUser.id,
+        requestId,
+        decision
+      });
+
+      const result = await EmergencyAccessService.reviewEmergencyAccessRequest(
+        adminUser,
+        requestId,
+        {
+          decision,
+          comments,
+          conditions
+        }
+      );
+
+      ResponseHandler.success(res, {
+        message: `Emergency access request ${decision}`,
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('Review emergency access request error', {
+        error: error.message,
+        adminId: req.user?.id,
+        requestId: req.params?.requestId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get emergency protocols
+   * @route GET /api/admin/super-admin/emergency-access/protocols
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getEmergencyProtocols(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { category, active = 'true' } = req.query;
+
+      logger.info('Get emergency protocols requested', {
+        adminId: adminUser.id,
+        category,
+        activeOnly: active === 'true'
+      });
+
+      const protocols = await EmergencyAccessService.getEmergencyProtocols(adminUser, {
+        category,
+        activeOnly: active === 'true'
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Emergency protocols retrieved successfully',
+        data: protocols
+      });
+
+    } catch (error) {
+      logger.error('Get emergency protocols error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Update emergency protocol
+   * @route PUT /api/admin/super-admin/emergency-access/protocols/:protocolId
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async updateEmergencyProtocol(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.updateProtocol, req);
+
+      const adminUser = req.user;
+      const { protocolId } = req.params;
+      const updateData = req.body;
+
+      logger.info('Update emergency protocol requested', {
+        adminId: adminUser.id,
+        protocolId
+      });
+
+      const result = await EmergencyAccessService.updateEmergencyProtocol(
+        adminUser,
+        protocolId,
+        updateData
+      );
+
+      ResponseHandler.success(res, {
+        message: 'Emergency protocol updated successfully',
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('Update emergency protocol error', {
+        error: error.message,
+        adminId: req.user?.id,
+        protocolId: req.params?.protocolId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Simulate emergency scenario
+   * @route POST /api/admin/super-admin/emergency-access/simulate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async simulateEmergencyScenario(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.simulateScenario, req);
+
+      const adminUser = req.user;
+      const { scenario, parameters, recordResults = true } = req.body;
+
+      logger.info('Emergency scenario simulation requested', {
+        adminId: adminUser.id,
+        scenario,
+        recordResults
+      });
+
+      const result = await EmergencyAccessService.simulateEmergencyScenario(adminUser, {
+        scenario,
+        parameters,
+        recordResults
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Emergency scenario simulation completed',
+        data: {
+          simulationId: result.simulationId,
+          results: result.results,
+          insights: result.insights,
+          recommendations: result.recommendations
+        }
+      });
+
+    } catch (error) {
+      logger.error('Simulate emergency scenario error', {
+        error: error.message,
+        adminId: req.user?.id,
+        scenario: req.body?.scenario,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get system recovery options
+   * @route GET /api/admin/super-admin/emergency-access/recovery-options
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getSystemRecoveryOptions(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { systemComponent, severity } = req.query;
+
+      logger.info('System recovery options requested', {
+        adminId: adminUser.id,
+        systemComponent,
+        severity
+      });
+
+      const options = await EmergencyAccessService.getSystemRecoveryOptions(adminUser, {
+        systemComponent,
+        severity
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Recovery options retrieved successfully',
+        data: options
+      });
+
+    } catch (error) {
+      logger.error('Get system recovery options error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Execute recovery procedure
+   * @route POST /api/admin/super-admin/emergency-access/recovery/execute
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async executeRecoveryProcedure(req, res, next) {
+    try {
+      await validateRequest(EmergencyAccessValidation.executeRecovery, req);
+
+      const adminUser = req.user;
+      const { 
+        recoveryType, 
+        targetSystems, 
+        backupId, 
+        verificationRequired = true 
+      } = req.body;
+
+      logger.critical('Recovery procedure execution requested', {
+        adminId: adminUser.id,
+        recoveryType,
+        targetSystems
+      });
+
+      const result = await EmergencyAccessService.executeRecoveryProcedure(adminUser, {
+        recoveryType,
+        targetSystems,
+        backupId,
+        verificationRequired
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Recovery procedure initiated',
+        data: {
+          recoveryId: result.recoveryId,
+          status: result.status,
+          estimatedCompletion: result.estimatedCompletion,
+          affectedSystems: result.affectedSystems
+        },
+        metadata: {
+          severity: 'critical',
+          requiresMonitoring: true
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Execute recovery procedure error', {
+        error: error.message,
+        adminId: req.user?.id,
+        recoveryType: req.body?.recoveryType,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
 }
 
 module.exports = new EmergencyAccessController();

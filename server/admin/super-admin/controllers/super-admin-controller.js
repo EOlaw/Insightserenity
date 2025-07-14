@@ -1,508 +1,833 @@
+// server/admin/super-admin/controllers/super-admin-controller.js
 /**
  * @file Super Admin Controller
- * @description Handles super admin level operations and system management
- * @module admin/super-admin/controllers
+ * @description Controller for super administrator operations and system management
  * @version 1.0.0
  */
 
-const { AdminLogger } = require('../../../shared/admin/utils/admin-logger');
-const { AdminHelpers } = require('../../../shared/admin/utils/admin-helpers');
-const { AdminMetrics } = require('../../../shared/admin/utils/admin-metrics');
-const { ADMIN_ACTIONS } = require('../../../shared/admin/constants/admin-actions');
-const { ADMIN_EVENTS } = require('../../../shared/admin/constants/admin-events');
+const mongoose = require('mongoose');
+
+// Services
 const SuperAdminService = require('../services/super-admin-service');
-const { AuditService } = require('../../../shared/services/audit-service');
-const config = require('../../../config/configuration');
+const RoleManagementService = require('../services/role-management-service');
+const SystemSettingsService = require('../services/system-settings-service');
+const EmergencyAccessService = require('../services/emergency-access-service');
+const AuditService = require('../../../shared/security/services/audit-service');
+const NotificationService = require('../../../shared/admin/services/admin-notification-service');
 
+// Utilities
+const { AppError, ValidationError, NotFoundError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
+const ResponseHandler = require('../../../shared/utils/response-handler');
+const AdminHelpers = require('../../../shared/admin/utils/admin-helpers');
+const AdminPermissions = require('../../../shared/admin/constants/admin-permissions');
+const AdminEvents = require('../../../shared/admin/constants/admin-events');
+
+// Validation
+const { validateRequest } = require('../../../shared/middleware/validate-request');
+const SuperAdminValidation = require('../validation/super-admin-validation');
+
+/**
+ * Super Admin Controller Class
+ * @class SuperAdminController
+ */
 class SuperAdminController {
-    constructor() {
-        this.logger = new AdminLogger('SuperAdminController');
-        this.service = new SuperAdminService();
-        this.metrics = AdminMetrics.getInstance();
-        this.auditService = new AuditService();
-    }
+  /**
+   * Get system overview dashboard
+   * @route GET /api/admin/super-admin/overview
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getSystemOverview(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const options = {
+        skipCache: req.query.refresh === 'true',
+        activityLimit: parseInt(req.query.activityLimit) || 20
+      };
 
-    /**
-     * Get super admin dashboard data
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getDashboard(req, res, next) {
-        try {
-            this.logger.info('Fetching super admin dashboard', {
-                adminId: req.user.id
-            });
+      logger.info('System overview requested', {
+        adminId: adminUser.id,
+        options
+      });
 
-            const dashboardData = await this.service.getSuperAdminDashboard();
+      const overview = await SuperAdminService.getSystemOverview(adminUser, options);
 
-            // Record metrics
-            this.metrics.incrementCounter('super_admin.dashboard.views');
-
-            // Audit the access
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.VIEW_DASHBOARD,
-                userId: req.user.id,
-                resourceType: 'super_admin_dashboard',
-                details: {
-                    ip: req.ip,
-                    userAgent: req.get('user-agent')
-                },
-                severity: 'low'
-            });
-
-            res.json({
-                success: true,
-                data: dashboardData
-            });
-        } catch (error) {
-            this.logger.error('Error fetching super admin dashboard', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'System overview retrieved successfully',
+        data: overview,
+        metadata: {
+          timestamp: new Date(),
+          cached: !options.skipCache
         }
+      });
+
+    } catch (error) {
+      logger.error('Get system overview error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get system overview and statistics
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getSystemOverview(req, res, next) {
-        try {
-            this.logger.info('Fetching system overview', {
-                adminId: req.user.id
-            });
+  /**
+   * Get detailed system statistics
+   * @route GET /api/admin/super-admin/statistics
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getSystemStatistics(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        endDate = new Date(),
+        granularity = 'daily',
+        metrics = 'all'
+      } = req.query;
 
-            const overview = await this.service.getSystemOverview();
+      // Validate date range
+      if (new Date(startDate) > new Date(endDate)) {
+        throw new ValidationError('Start date must be before end date');
+      }
 
-            res.json({
-                success: true,
-                data: overview
-            });
-        } catch (error) {
-            this.logger.error('Error fetching system overview', error);
-            next(error);
+      logger.info('System statistics requested', {
+        adminId: adminUser.id,
+        dateRange: { startDate, endDate },
+        granularity,
+        metrics
+      });
+
+      const statistics = await SuperAdminService.getDetailedStatistics(adminUser, {
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        granularity,
+        metrics: metrics === 'all' ? null : metrics.split(',')
+      });
+
+      ResponseHandler.success(res, {
+        message: 'System statistics retrieved successfully',
+        data: statistics,
+        metadata: {
+          dateRange: { startDate, endDate },
+          granularity,
+          metricsIncluded: metrics
         }
+      });
+
+    } catch (error) {
+      logger.error('Get system statistics error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get all admin users
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getAdminUsers(req, res, next) {
-        try {
-            const { page = 1, limit = 20, role, status, search } = req.query;
+  /**
+   * Search system entities
+   * @route GET /api/admin/super-admin/search
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async searchSystemEntities(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        query,
+        types = 'users,organizations,roles',
+        page = 1,
+        limit = 20
+      } = req.query;
 
-            this.logger.info('Fetching admin users', {
-                adminId: req.user.id,
-                filters: { role, status, search }
-            });
+      if (!query || query.trim().length < 2) {
+        throw new ValidationError('Search query must be at least 2 characters');
+      }
 
-            const result = await this.service.getAdminUsers({
-                page: parseInt(page),
-                limit: parseInt(limit),
-                role,
-                status,
-                search
-            });
+      logger.info('System search requested', {
+        adminId: adminUser.id,
+        query,
+        types
+      });
 
-            // Audit data access
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.LIST_ADMINS,
-                userId: req.user.id,
-                resourceType: 'admin_users',
-                details: {
-                    filters: { role, status, search },
-                    resultCount: result.users.length
-                },
-                severity: 'medium'
-            });
-
-            res.json({
-                success: true,
-                data: result.users,
-                pagination: result.pagination
-            });
-        } catch (error) {
-            this.logger.error('Error fetching admin users', error);
-            next(error);
+      const searchResults = await SuperAdminService.searchSystem(adminUser, {
+        query: query.trim(),
+        entityTypes: types.split(','),
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit)
         }
-    }
+      });
 
-    /**
-     * Create new admin user
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async createAdminUser(req, res, next) {
-        try {
-            const adminData = req.body;
-
-            this.logger.info('Creating new admin user', {
-                adminId: req.user.id,
-                newAdminEmail: adminData.email,
-                role: adminData.role
-            });
-
-            const newAdmin = await this.service.createAdminUser(adminData, req.user);
-
-            // Record metrics
-            this.metrics.incrementCounter('super_admin.admin_users.created');
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.CREATE_ADMIN,
-                userId: req.user.id,
-                resourceType: 'admin_user',
-                resourceId: newAdmin.id,
-                details: {
-                    email: adminData.email,
-                    role: adminData.role,
-                    permissions: adminData.permissions
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ADMIN_USER_CREATED, {
-                adminId: newAdmin.id,
-                createdBy: req.user.id,
-                role: adminData.role
-            });
-
-            res.status(201).json({
-                success: true,
-                message: 'Admin user created successfully',
-                data: {
-                    id: newAdmin.id,
-                    email: newAdmin.email,
-                    role: newAdmin.role,
-                    status: newAdmin.status
-                }
-            });
-        } catch (error) {
-            this.logger.error('Error creating admin user', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Search completed successfully',
+        data: searchResults,
+        metadata: {
+          query,
+          types: types.split(','),
+          resultCount: searchResults.totalResults
         }
+      });
+
+    } catch (error) {
+      logger.error('Search system entities error', {
+        error: error.message,
+        adminId: req.user?.id,
+        query: req.query.query,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Update admin user
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async updateAdminUser(req, res, next) {
-        try {
-            const { id } = req.params;
-            const updates = req.body;
+  /**
+   * Impersonate user
+   * @route POST /api/admin/super-admin/impersonate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async impersonateUser(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.impersonateUser, req);
 
-            this.logger.info('Updating admin user', {
-                adminId: req.user.id,
-                targetAdminId: id,
-                updates: Object.keys(updates)
-            });
+      const adminUser = req.user;
+      const { userId, reason, duration, restrictions, requireMFA, notifyUser } = req.body;
 
-            // Prevent self-demotion for super admins
-            if (id === req.user.id && updates.role && updates.role !== 'super_admin') {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'Cannot change your own super admin role',
-                        code: 'SELF_DEMOTION_PREVENTED'
-                    }
-                });
-            }
+      logger.warn('User impersonation requested', {
+        adminId: adminUser.id,
+        targetUserId: userId,
+        reason: reason.substring(0, 50) + '...'
+      });
 
-            const updatedAdmin = await this.service.updateAdminUser(id, updates, req.user);
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.UPDATE_ADMIN,
-                userId: req.user.id,
-                resourceType: 'admin_user',
-                resourceId: id,
-                details: {
-                    updates,
-                    previousRole: updatedAdmin.previousRole
-                },
-                severity: 'critical'
-            });
-
-            // Emit event if role changed
-            if (updates.role && updates.role !== updatedAdmin.previousRole) {
-                req.adminContext.events.emit(ADMIN_EVENTS.ADMIN_ROLE_CHANGED, {
-                    adminId: id,
-                    previousRole: updatedAdmin.previousRole,
-                    newRole: updates.role,
-                    changedBy: req.user.id
-                });
-            }
-
-            res.json({
-                success: true,
-                message: 'Admin user updated successfully',
-                data: updatedAdmin
-            });
-        } catch (error) {
-            this.logger.error('Error updating admin user', error);
-            next(error);
+      const impersonationResult = await SuperAdminService.impersonateUser(
+        adminUser,
+        userId,
+        {
+          reason,
+          duration: duration || 3600,
+          restrictions: restrictions || [],
+          requireMFA: requireMFA !== false,
+          notifyUser: notifyUser !== false
         }
-    }
+      );
 
-    /**
-     * Revoke admin access
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async revokeAdminAccess(req, res, next) {
-        try {
-            const { id } = req.params;
-            const { reason, immediate = false } = req.body;
+      // Set impersonation token in response header
+      res.setHeader('X-Impersonation-Token', impersonationResult.accessToken);
 
-            this.logger.warn('Revoking admin access', {
-                adminId: req.user.id,
-                targetAdminId: id,
-                immediate,
-                reason
-            });
-
-            // Prevent self-revocation
-            if (id === req.user.id) {
-                return res.status(400).json({
-                    success: false,
-                    error: {
-                        message: 'Cannot revoke your own admin access',
-                        code: 'SELF_REVOCATION_PREVENTED'
-                    }
-                });
-            }
-
-            const result = await this.service.revokeAdminAccess(id, {
-                reason,
-                immediate,
-                revokedBy: req.user.id
-            });
-
-            // Record metrics
-            this.metrics.incrementCounter('super_admin.admin_access.revoked');
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.REVOKE_ACCESS,
-                userId: req.user.id,
-                resourceType: 'admin_user',
-                resourceId: id,
-                details: {
-                    reason,
-                    immediate,
-                    sessionsTerminated: result.sessionsTerminated
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.ADMIN_ACCESS_REVOKED, {
-                adminId: id,
-                revokedBy: req.user.id,
-                reason,
-                immediate
-            });
-
-            // Send notification
-            await req.adminContext.notifications.sendCriticalAlert({
-                type: 'admin_access_revoked',
-                recipients: [id],
-                data: {
-                    revokedBy: req.user.email,
-                    reason,
-                    timestamp: new Date()
-                }
-            });
-
-            res.json({
-                success: true,
-                message: immediate ? 'Admin access revoked immediately' : 'Admin access revocation scheduled',
-                data: result
-            });
-        } catch (error) {
-            this.logger.error('Error revoking admin access', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'User impersonation initiated successfully',
+        data: {
+          sessionId: impersonationResult.sessionId,
+          targetUser: impersonationResult.targetUser,
+          expiresAt: impersonationResult.expiresAt,
+          restrictions: impersonationResult.restrictions,
+          requireMFA: impersonationResult.requireMFA
+        },
+        metadata: {
+          warning: 'All actions are being monitored and logged'
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Impersonate user error', {
+        error: error.message,
+        adminId: req.user?.id,
+        targetUserId: req.body?.userId,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get system activity logs
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getSystemActivityLogs(req, res, next) {
-        try {
-            const {
-                startDate,
-                endDate,
-                userId,
-                action,
-                severity,
-                page = 1,
-                limit = 50
-            } = req.query;
+  /**
+   * End impersonation session
+   * @route POST /api/admin/super-admin/impersonate/:sessionId/end
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async endImpersonation(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { sessionId } = req.params;
 
-            this.logger.info('Fetching system activity logs', {
-                adminId: req.user.id,
-                filters: { startDate, endDate, userId, action, severity }
-            });
+      logger.info('End impersonation requested', {
+        adminId: adminUser.id,
+        sessionId
+      });
 
-            const logs = await this.service.getSystemActivityLogs({
-                startDate,
-                endDate,
-                userId,
-                action,
-                severity,
-                page: parseInt(page),
-                limit: parseInt(limit)
-            });
+      const result = await SuperAdminService.endImpersonation(adminUser, sessionId);
 
-            res.json({
-                success: true,
-                data: logs.activities,
-                pagination: logs.pagination
-            });
-        } catch (error) {
-            this.logger.error('Error fetching system activity logs', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Impersonation session ended successfully',
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('End impersonation error', {
+        error: error.message,
+        adminId: req.user?.id,
+        sessionId: req.params?.sessionId,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Execute emergency action
+   * @route POST /api/admin/super-admin/emergency-action
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async executeEmergencyAction(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.emergencyAction, req);
+
+      const adminUser = req.user;
+      const actionData = req.body;
+
+      logger.critical('Emergency action requested', {
+        adminId: adminUser.id,
+        action: actionData.action,
+        scope: actionData.scope
+      });
+
+      const result = await SuperAdminService.executeEmergencyAction(
+        adminUser,
+        actionData
+      );
+
+      // Handle confirmation requirement
+      if (result.requiresConfirmation) {
+        return ResponseHandler.success(res, {
+          message: result.message,
+          data: {
+            requiresConfirmation: true,
+            action: result.action
+          }
+        }, 202);
+      }
+
+      ResponseHandler.success(res, {
+        message: 'Emergency action executed successfully',
+        data: result,
+        metadata: {
+          severity: 'critical',
+          notificationssSent: true
         }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Execute emergency action error', {
+        error: error.message,
+        adminId: req.user?.id,
+        action: req.body?.action,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Execute system maintenance task
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async executeMaintenanceTask(req, res, next) {
-        try {
-            const { task, parameters = {} } = req.body;
+  /**
+   * Modify system configuration
+   * @route PUT /api/admin/super-admin/configuration
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async modifySystemConfiguration(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.modifyConfiguration, req);
 
-            this.logger.warn('Executing maintenance task', {
-                adminId: req.user.id,
-                task,
-                parameters: Object.keys(parameters)
-            });
+      const adminUser = req.user;
+      const configData = req.body;
 
-            const result = await this.service.executeMaintenanceTask(task, parameters, req.user);
+      logger.warn('System configuration modification requested', {
+        adminId: adminUser.id,
+        category: configData.category,
+        settingsCount: Object.keys(configData.settings).length
+      });
 
-            // Record metrics
-            this.metrics.incrementCounter(`super_admin.maintenance.${task}`);
+      const result = await SuperAdminService.modifySystemConfiguration(
+        adminUser,
+        configData
+      );
 
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.EXECUTE_MAINTENANCE,
-                userId: req.user.id,
-                resourceType: 'system',
-                details: {
-                    task,
-                    parameters,
-                    result: result.summary
-                },
-                severity: 'critical'
-            });
-
-            // Emit event
-            req.adminContext.events.emit(ADMIN_EVENTS.MAINTENANCE_EXECUTED, {
-                task,
-                executedBy: req.user.id,
-                result: result.summary
-            });
-
-            res.json({
-                success: true,
-                message: `Maintenance task '${task}' executed successfully`,
-                data: result
-            });
-        } catch (error) {
-            this.logger.error('Error executing maintenance task', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: result.message,
+        data: result,
+        metadata: {
+          warning: result.testMode ? 
+            'Configuration validated in test mode' : 
+            'Configuration changes are now active'
         }
+      });
+
+    } catch (error) {
+      logger.error('Modify system configuration error', {
+        error: error.message,
+        adminId: req.user?.id,
+        category: req.body?.category,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
 
-    /**
-     * Get super admin permissions
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async getPermissions(req, res, next) {
-        try {
-            const permissions = await this.service.getSuperAdminPermissions();
+  /**
+   * Get system health status
+   * @route GET /api/admin/super-admin/health
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getSystemHealth(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const { detailed = 'false', components = 'all' } = req.query;
 
-            res.json({
-                success: true,
-                data: permissions
-            });
-        } catch (error) {
-            this.logger.error('Error fetching super admin permissions', error);
-            next(error);
+      logger.info('System health check requested', {
+        adminId: adminUser.id,
+        detailed,
+        components
+      });
+
+      const healthStatus = await SuperAdminService.getSystemHealthStatus(adminUser, {
+        detailed: detailed === 'true',
+        components: components === 'all' ? null : components.split(',')
+      });
+
+      const statusCode = healthStatus.overallStatus === 'healthy' ? 200 : 
+                        healthStatus.overallStatus === 'degraded' ? 206 : 503;
+
+      ResponseHandler.success(res, {
+        message: `System status: ${healthStatus.overallStatus}`,
+        data: healthStatus
+      }, statusCode);
+
+    } catch (error) {
+      logger.error('Get system health error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get admin activity logs
+   * @route GET /api/admin/super-admin/activity-logs
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getAdminActivityLogs(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        adminId,
+        action,
+        startDate,
+        endDate,
+        severity,
+        page = 1,
+        limit = 50
+      } = req.query;
+
+      logger.info('Admin activity logs requested', {
+        adminId: adminUser.id,
+        filters: { adminId, action, severity }
+      });
+
+      const logs = await SuperAdminService.getAdminActivityLogs(adminUser, {
+        filters: {
+          adminId,
+          action,
+          startDate: startDate ? new Date(startDate) : undefined,
+          endDate: endDate ? new Date(endDate) : undefined,
+          severity
+        },
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit)
         }
-    }
+      });
 
-    /**
-     * Export system data
-     * @param {Object} req - Express request object
-     * @param {Object} res - Express response object
-     * @param {Function} next - Express next middleware function
-     */
-    async exportSystemData(req, res, next) {
-        try {
-            const { dataType, format = 'json', filters = {} } = req.body;
-
-            this.logger.info('Exporting system data', {
-                adminId: req.user.id,
-                dataType,
-                format
-            });
-
-            const exportResult = await this.service.exportSystemData({
-                dataType,
-                format,
-                filters,
-                requestedBy: req.user
-            });
-
-            // Audit critical action
-            await this.auditService.logAction({
-                action: ADMIN_ACTIONS.SUPER_ADMIN.EXPORT_DATA,
-                userId: req.user.id,
-                resourceType: 'system_data',
-                details: {
-                    dataType,
-                    format,
-                    recordCount: exportResult.recordCount,
-                    fileSize: exportResult.fileSize
-                },
-                severity: 'high'
-            });
-
-            res.json({
-                success: true,
-                message: 'System data export initiated',
-                data: {
-                    exportId: exportResult.exportId,
-                    status: exportResult.status,
-                    downloadUrl: exportResult.downloadUrl,
-                    expiresAt: exportResult.expiresAt
-                }
-            });
-        } catch (error) {
-            this.logger.error('Error exporting system data', error);
-            next(error);
+      ResponseHandler.success(res, {
+        message: 'Activity logs retrieved successfully',
+        data: logs.logs,
+        pagination: logs.pagination,
+        metadata: {
+          totalCritical: logs.statistics.critical,
+          totalHigh: logs.statistics.high
         }
+      });
+
+    } catch (error) {
+      logger.error('Get admin activity logs error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
     }
+  }
+
+  /**
+   * Generate system report
+   * @route POST /api/admin/super-admin/reports/generate
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async generateSystemReport(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.generateReport, req);
+
+      const adminUser = req.user;
+      const {
+        reportType,
+        dateRange,
+        format = 'pdf',
+        includeCharts = true,
+        recipients = []
+      } = req.body;
+
+      logger.info('System report generation requested', {
+        adminId: adminUser.id,
+        reportType,
+        format
+      });
+
+      const report = await SuperAdminService.generateSystemReport(adminUser, {
+        reportType,
+        dateRange,
+        format,
+        includeCharts,
+        recipients
+      });
+
+      // If file download requested
+      if (req.query.download === 'true') {
+        res.setHeader('Content-Type', report.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${report.filename}"`);
+        return res.send(report.data);
+      }
+
+      ResponseHandler.success(res, {
+        message: 'System report generated successfully',
+        data: {
+          reportId: report.id,
+          filename: report.filename,
+          size: report.size,
+          downloadUrl: report.downloadUrl,
+          expiresAt: report.expiresAt
+        },
+        metadata: {
+          recipientCount: recipients.length,
+          format
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Generate system report error', {
+        error: error.message,
+        adminId: req.user?.id,
+        reportType: req.body?.reportType,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Execute system maintenance
+   * @route POST /api/admin/super-admin/maintenance
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async executeSystemMaintenance(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.systemMaintenance, req);
+
+      const adminUser = req.user;
+      const {
+        maintenanceType,
+        scheduledAt,
+        duration,
+        notification,
+        tasks
+      } = req.body;
+
+      logger.warn('System maintenance requested', {
+        adminId: adminUser.id,
+        maintenanceType,
+        scheduledAt
+      });
+
+      const maintenance = await SuperAdminService.scheduleSystemMaintenance(adminUser, {
+        maintenanceType,
+        scheduledAt: new Date(scheduledAt),
+        duration,
+        notification,
+        tasks
+      });
+
+      ResponseHandler.success(res, {
+        message: 'System maintenance scheduled successfully',
+        data: maintenance,
+        metadata: {
+          warning: 'Users will be notified according to the notification settings'
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Execute system maintenance error', {
+        error: error.message,
+        adminId: req.user?.id,
+        maintenanceType: req.body?.maintenanceType,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get platform analytics
+   * @route GET /api/admin/super-admin/analytics
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getPlatformAnalytics(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        metric = 'all',
+        period = '30d',
+        groupBy = 'day',
+        includeProjections = 'false'
+      } = req.query;
+
+      logger.info('Platform analytics requested', {
+        adminId: adminUser.id,
+        metric,
+        period
+      });
+
+      const analytics = await SuperAdminService.getPlatformAnalytics(adminUser, {
+        metrics: metric === 'all' ? null : metric.split(','),
+        period,
+        groupBy,
+        includeProjections: includeProjections === 'true'
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Platform analytics retrieved successfully',
+        data: analytics,
+        metadata: {
+          period,
+          dataPoints: analytics.dataPoints?.length || 0,
+          lastUpdated: analytics.lastUpdated
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get platform analytics error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Manage platform notifications
+   * @route POST /api/admin/super-admin/notifications/broadcast
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async broadcastNotification(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.broadcastNotification, req);
+
+      const adminUser = req.user;
+      const {
+        type,
+        title,
+        message,
+        targetAudience,
+        priority = 'medium',
+        channels = ['in-app', 'email'],
+        scheduledAt
+      } = req.body;
+
+      logger.info('Broadcast notification requested', {
+        adminId: adminUser.id,
+        type,
+        targetAudience,
+        priority
+      });
+
+      const broadcast = await NotificationService.createBroadcast({
+        sender: adminUser,
+        type,
+        title,
+        message,
+        targetAudience,
+        priority,
+        channels,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : null
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Broadcast notification created successfully',
+        data: {
+          broadcastId: broadcast.id,
+          recipientCount: broadcast.recipientCount,
+          scheduledAt: broadcast.scheduledAt,
+          status: broadcast.status
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Broadcast notification error', {
+        error: error.message,
+        adminId: req.user?.id,
+        type: req.body?.type,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Export system data
+   * @route POST /api/admin/super-admin/export
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async exportSystemData(req, res, next) {
+    try {
+      await validateRequest(SuperAdminValidation.exportData, req);
+
+      const adminUser = req.user;
+      const {
+        dataTypes,
+        format = 'json',
+        dateRange,
+        includeMetadata = true,
+        compress = true
+      } = req.body;
+
+      logger.warn('System data export requested', {
+        adminId: adminUser.id,
+        dataTypes,
+        format
+      });
+
+      const exportResult = await SuperAdminService.exportSystemData(adminUser, {
+        dataTypes,
+        format,
+        dateRange,
+        includeMetadata,
+        compress
+      });
+
+      // If direct download
+      if (req.query.download === 'true') {
+        res.setHeader('Content-Type', exportResult.contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${exportResult.filename}"`);
+        if (compress) {
+          res.setHeader('Content-Encoding', 'gzip');
+        }
+        return res.send(exportResult.data);
+      }
+
+      ResponseHandler.success(res, {
+        message: 'System data export initiated',
+        data: {
+          exportId: exportResult.id,
+          filename: exportResult.filename,
+          size: exportResult.size,
+          downloadUrl: exportResult.downloadUrl,
+          expiresAt: exportResult.expiresAt
+        }
+      }, 201);
+
+    } catch (error) {
+      logger.error('Export system data error', {
+        error: error.message,
+        adminId: req.user?.id,
+        dataTypes: req.body?.dataTypes,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
+
+  /**
+   * Get system audit summary
+   * @route GET /api/admin/super-admin/audit-summary
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware
+   */
+  async getAuditSummary(req, res, next) {
+    try {
+      const adminUser = req.user;
+      const {
+        period = '7d',
+        groupBy = 'action',
+        includeRiskAnalysis = 'true'
+      } = req.query;
+
+      logger.info('Audit summary requested', {
+        adminId: adminUser.id,
+        period,
+        groupBy
+      });
+
+      const summary = await AuditService.generateAuditSummary({
+        period,
+        groupBy,
+        includeRiskAnalysis: includeRiskAnalysis === 'true',
+        requester: adminUser
+      });
+
+      ResponseHandler.success(res, {
+        message: 'Audit summary generated successfully',
+        data: summary,
+        metadata: {
+          period,
+          totalEvents: summary.totalEvents,
+          criticalEvents: summary.criticalEvents
+        }
+      });
+
+    } catch (error) {
+      logger.error('Get audit summary error', {
+        error: error.message,
+        adminId: req.user?.id,
+        stack: error.stack
+      });
+      next(error);
+    }
+  }
 }
 
 module.exports = new SuperAdminController();

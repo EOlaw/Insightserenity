@@ -1,634 +1,1247 @@
+// server/admin/super-admin/services/role-management-service.js
 /**
  * @file Role Management Service
- * @description Service for managing admin roles and permissions
- * @module admin/super-admin/services
+ * @description Service for managing system-wide roles and permissions for super administrators
  * @version 1.0.0
  */
 
 const mongoose = require('mongoose');
-const { AdminLogger } = require('../../../shared/admin/utils/admin-logger');
-const { AdminCacheService } = require('../../../shared/admin/services/admin-cache-service');
-const { AdminBaseService } = require('../../../shared/admin/services/admin-base-service');
-const { ADMIN_ROLES } = require('../../../shared/admin/constants/admin-roles');
-const { ADMIN_PERMISSIONS } = require('../../../shared/admin/constants/admin-permissions');
-const User = require('../../../models/user-model');
-const AdminRole = require('../../../models/admin-role-model');
-const AdminRoleAssignment = require('../../../models/admin-role-assignment-model');
+const crypto = require('crypto');
+
+// Core Models
+const Role = require('../../../shared/users/models/role-model');
+const Permission = require('../../../shared/users/models/permission-model');
+const User = require('../../../shared/users/models/user-model');
+const HostedOrganization = require('../../../hosted-organizations/organizations/models/organization-model');
 const AdminActionLog = require('../../../shared/admin/models/admin-action-log-model');
 
+// Shared Services
+const AdminBaseService = require('../../../shared/admin/services/admin-base-service');
+const AuditService = require('../../../shared/security/services/audit-service');
+const CacheService = require('../../../shared/utils/cache-service');
+const NotificationService = require('../../../shared/admin/services/admin-notification-service');
+
+// Utilities
+const { AppError, ValidationError, NotFoundError, ForbiddenError, ConflictError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
+const AdminHelpers = require('../../../shared/admin/utils/admin-helpers');
+const AdminPermissions = require('../../../shared/admin/constants/admin-permissions');
+const AdminEvents = require('../../../shared/admin/constants/admin-events');
+const AdminLimits = require('../../../shared/admin/constants/admin-limits');
+
+// Configuration
+const config = require('../../../config');
+
+/**
+ * Role Management Service Class
+ * @class RoleManagementService
+ * @extends AdminBaseService
+ */
 class RoleManagementService extends AdminBaseService {
-    constructor() {
-        super('RoleManagementService');
-        this.cache = AdminCacheService.getInstance();
-    }
-
-    /**
-     * Get all admin roles
-     * @param {Object} options - Query options
-     * @returns {Promise<Array>}
-     */
-    async getAllRoles(options = {}) {
-        try {
-            const { includePermissions = true, includeUsers = false } = options;
-            const cacheKey = `admin:roles:all:${includePermissions}:${includeUsers}`;
-            
-            const cached = await this.cache.get(cacheKey);
-            if (cached) {
-                return cached;
-            }
-
-            // Get system-defined roles
-            const systemRoles = await Promise.all(
-                Object.entries(ADMIN_ROLES).map(async ([key, role]) => ({
-                    id: key,
-                    name: role.name,
-                    description: role.description,
-                    type: 'system',
-                    isActive: true,
-                    permissions: includePermissions ? role.permissions : undefined,
-                    userCount: includeUsers ? await this.getRoleUserCount(key) : undefined,
-                    users: includeUsers ? await this.getRoleUsers(key) : undefined
-                }))
-            );
-
-            // Get custom roles
-            const customRoles = await AdminRole.find({ isDeleted: false })
-                .lean()
-                .then(roles => Promise.all(
-                    roles.map(async (role) => ({
-                        id: role._id.toString(),
-                        name: role.name,
-                        description: role.description,
-                        type: 'custom',
-                        isActive: role.isActive,
-                        permissions: includePermissions ? role.permissions : undefined,
-                        userCount: includeUsers ? await this.getRoleUserCount(role._id) : undefined,
-                        users: includeUsers ? await this.getRoleUsers(role._id) : undefined,
-                        createdAt: role.createdAt,
-                        createdBy: role.createdBy
-                    }))
-                ));
-
-            const allRoles = [...systemRoles, ...customRoles];
-            
-            // Cache for 10 minutes
-            await this.cache.set(cacheKey, allRoles, 600);
-            
-            return allRoles;
-        } catch (error) {
-            this.logger.error('Error fetching all roles', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get role by ID
-     * @param {String} roleId - Role ID
-     * @returns {Promise<Object>}
-     */
-    async getRoleById(roleId) {
-        try {
-            // Check if it's a system role
-            if (ADMIN_ROLES[roleId]) {
-                const systemRole = ADMIN_ROLES[roleId];
-                return {
-                    id: roleId,
-                    name: systemRole.name,
-                    description: systemRole.description,
-                    type: 'system',
-                    isActive: true,
-                    permissions: systemRole.permissions,
-                    userCount: await this.getRoleUserCount(roleId)
-                };
-            }
-
-            // Check custom roles
-            const customRole = await AdminRole.findById(roleId).lean();
-            if (!customRole) {
-                return null;
-            }
-
-            return {
-                id: customRole._id.toString(),
-                name: customRole.name,
-                description: customRole.description,
-                type: 'custom',
-                isActive: customRole.isActive,
-                permissions: customRole.permissions,
-                userCount: await this.getRoleUserCount(customRole._id),
-                createdAt: customRole.createdAt,
-                createdBy: customRole.createdBy
-            };
-        } catch (error) {
-            this.logger.error('Error fetching role by ID', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Create custom admin role
-     * @param {Object} roleData - Role data
-     * @returns {Promise<Object>}
-     */
-    async createRole(roleData) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-
-        try {
-            const { name, description, permissions, isActive, createdBy } = roleData;
-
-            // Check if role name already exists
-            const existingRole = await AdminRole.findOne({ 
-                name: new RegExp(`^${name}$`, 'i'),
-                isDeleted: false 
-            });
-
-            if (existingRole) {
-                throw new Error('Role name already exists');
-            }
-
-            // Create new role
-            const newRole = new AdminRole({
-                name,
-                description,
-                permissions,
-                isActive,
-                createdBy,
-                metadata: {
-                    version: 1,
-                    lastModified: new Date()
-                }
-            });
-
-            await newRole.save({ session });
-            await session.commitTransaction();
-
-            // Clear roles cache
-            await this.cache.invalidate('admin:roles:*');
-
-            return {
-                id: newRole._id.toString(),
-                name: newRole.name,
-                description: newRole.description,
-                permissions: newRole.permissions,
-                isActive: newRole.isActive,
-                type: 'custom',
-                createdAt: newRole.createdAt
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            this.logger.error('Error creating role', error);
-            throw error;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    /**
-     * Update admin role
-     * @param {String} roleId - Role ID
-     * @param {Object} updates - Updates to apply
-     * @param {Object} updatedBy - User making the update
-     * @returns {Promise<Object>}
-     */
-    async updateRole(roleId, updates, updatedBy) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-
-        try {
-            const role = await AdminRole.findById(roleId).session(session);
-            if (!role || role.isDeleted) {
-                throw new Error('Role not found');
-            }
-
-            const previousPermissions = [...role.permissions];
-            const allowedUpdates = ['name', 'description', 'permissions', 'isActive'];
-            
-            // Apply updates
-            allowedUpdates.forEach(field => {
-                if (updates[field] !== undefined) {
-                    role[field] = updates[field];
-                }
-            });
-
-            role.metadata.lastModified = new Date();
-            role.metadata.lastModifiedBy = updatedBy.id;
-            role.metadata.version += 1;
-
-            await role.save({ session });
-
-            // If permissions changed, update all users with this role
-            if (updates.permissions) {
-                await this.updateRoleUsersPermissions(roleId, updates.permissions, session);
-            }
-
-            await session.commitTransaction();
-
-            // Clear caches
-            await this.cache.invalidate('admin:roles:*');
-            await this.cache.invalidate(`admin:role:${roleId}`);
-
-            return {
-                ...role.toObject(),
-                previousPermissions
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            this.logger.error('Error updating role', error);
-            throw error;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    /**
-     * Delete custom admin role
-     * @param {String} roleId - Role ID
-     * @param {Object} options - Deletion options
-     * @returns {Promise<Object>}
-     */
-    async deleteRole(roleId, options = {}) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-
-        try {
-            const { reassignTo, deletedBy } = options;
-
-            const role = await AdminRole.findById(roleId).session(session);
-            if (!role || role.isDeleted) {
-                throw new Error('Role not found');
-            }
-
-            // Get users with this role
-            const affectedUsers = await User.find({ role: roleId }).session(session);
-
-            // Reassign users if specified
-            if (reassignTo) {
-                await User.updateMany(
-                    { role: roleId },
-                    { 
-                        $set: { 
-                            role: reassignTo,
-                            'adminMetadata.roleChangedAt': new Date(),
-                            'adminMetadata.roleChangedBy': deletedBy
-                        }
-                    },
-                    { session }
-                );
-            } else {
-                // Remove role from users
-                await User.updateMany(
-                    { role: roleId },
-                    { 
-                        $unset: { role: 1 },
-                        $set: {
-                            'adminMetadata.roleRemovedAt': new Date(),
-                            'adminMetadata.roleRemovedBy': deletedBy
-                        }
-                    },
-                    { session }
-                );
-            }
-
-            // Soft delete the role
-            role.isDeleted = true;
-            role.deletedAt = new Date();
-            role.deletedBy = deletedBy;
-            await role.save({ session });
-
-            await session.commitTransaction();
-
-            // Clear caches
-            await this.cache.invalidate('admin:roles:*');
-            await this.cache.invalidate(`admin:role:${roleId}`);
-
-            return {
-                roleId,
-                roleName: role.name,
-                affectedUsers: affectedUsers.length,
-                reassignedTo: reassignTo
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            this.logger.error('Error deleting role', error);
-            throw error;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    /**
-     * Get all available permissions
-     * @param {Object} options - Query options
-     * @returns {Promise<Object>}
-     */
-    async getAllPermissions(options = {}) {
-        try {
-            const { category, includeDescription = true } = options;
-            
-            const permissions = {};
-            
-            Object.entries(ADMIN_PERMISSIONS).forEach(([cat, perms]) => {
-                if (!category || cat === category) {
-                    permissions[cat] = Object.entries(perms).map(([key, perm]) => ({
-                        id: perm,
-                        name: this.formatPermissionName(perm),
-                        description: includeDescription ? this.getPermissionDescription(perm) : undefined,
-                        category: cat
-                    }));
-                }
-            });
-
-            return permissions;
-        } catch (error) {
-            this.logger.error('Error fetching permissions', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Validate permissions
-     * @param {Array} permissions - Permissions to validate
-     * @returns {Promise<Array>} Invalid permissions
-     */
-    async validatePermissions(permissions) {
-        try {
-            const allPermissions = Object.values(ADMIN_PERMISSIONS).flat();
-            const invalidPermissions = permissions.filter(perm => !allPermissions.includes(perm));
-            
-            return invalidPermissions;
-        } catch (error) {
-            this.logger.error('Error validating permissions', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Assign role to user
-     * @param {Object} assignmentData - Assignment data
-     * @returns {Promise<Object>}
-     */
-    async assignRoleToUser(assignmentData) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-
-        try {
-            const { userId, roleId, expiresAt, assignedBy } = assignmentData;
-
-            const user = await User.findById(userId).session(session);
-            if (!user) {
-                throw new Error('User not found');
-            }
-
-            const role = await this.getRoleById(roleId);
-            if (!role) {
-                throw new Error('Role not found');
-            }
-
-            const previousRole = user.role;
-
-            // Update user role
-            user.role = roleId;
-            user.adminMetadata = user.adminMetadata || {};
-            user.adminMetadata.roleAssignedAt = new Date();
-            user.adminMetadata.roleAssignedBy = assignedBy;
-
-            await user.save({ session });
-
-            // Create role assignment record
-            const assignment = new AdminRoleAssignment({
-                userId,
-                roleId,
-                assignedBy,
-                expiresAt,
-                previousRole,
-                metadata: {
-                    userEmail: user.email,
-                    roleName: role.name
-                }
-            });
-
-            await assignment.save({ session });
-            await session.commitTransaction();
-
-            // Clear user cache
-            await this.cache.invalidate(`user:${userId}`);
-
-            return {
-                userId,
-                roleId,
-                roleName: role.name,
-                previousRole,
-                expiresAt
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            this.logger.error('Error assigning role', error);
-            throw error;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    /**
-     * Revoke user role
-     * @param {Object} revocationData - Revocation data
-     * @returns {Promise<Object>}
-     */
-    async revokeUserRole(revocationData) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
-
-        try {
-            const { userId, reason, revokedBy } = revocationData;
-
-            const user = await User.findById(userId).session(session);
-            if (!user || !user.role) {
-                throw new Error('User or role not found');
-            }
-
-            const revokedRole = user.role;
-
-            // Remove role from user
-            user.role = undefined;
-            user.adminMetadata = user.adminMetadata || {};
-            user.adminMetadata.roleRevokedAt = new Date();
-            user.adminMetadata.roleRevokedBy = revokedBy;
-            user.adminMetadata.revocationReason = reason;
-
-            await user.save({ session });
-
-            // Update role assignment record
-            await AdminRoleAssignment.updateOne(
-                { userId, roleId: revokedRole, status: 'active' },
-                {
-                    $set: {
-                        status: 'revoked',
-                        revokedAt: new Date(),
-                        revokedBy,
-                        revocationReason: reason
-                    }
-                },
-                { session }
-            );
-
-            await session.commitTransaction();
-
-            // Clear user cache
-            await this.cache.invalidate(`user:${userId}`);
-
-            return {
-                userId,
-                revokedRole,
-                reason
-            };
-        } catch (error) {
-            await session.abortTransaction();
-            this.logger.error('Error revoking user role', error);
-            throw error;
-        } finally {
-            session.endSession();
-        }
-    }
-
-    /**
-     * Get user role history
-     * @param {Object} options - Query options
-     * @returns {Promise<Array>}
-     */
-    async getUserRoleHistory(options = {}) {
-        try {
-            const { userId, startDate, endDate, limit = 50 } = options;
-
-            const query = { userId };
-            
-            if (startDate || endDate) {
-                query.createdAt = {};
-                if (startDate) query.createdAt.$gte = new Date(startDate);
-                if (endDate) query.createdAt.$lte = new Date(endDate);
-            }
-
-            const history = await AdminRoleAssignment.find(query)
-                .populate('assignedBy', 'email fullName')
-                .populate('revokedBy', 'email fullName')
-                .sort({ createdAt: -1 })
-                .limit(limit)
-                .lean();
-
-            return history.map(record => ({
-                ...record,
-                roleName: this.getRoleNameById(record.roleId),
-                previousRoleName: record.previousRole ? this.getRoleNameById(record.previousRole) : null
-            }));
-        } catch (error) {
-            this.logger.error('Error fetching role history', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Clone existing role
-     * @param {Object} cloneData - Clone data
-     * @returns {Promise<Object>}
-     */
-    async cloneRole(cloneData) {
-        try {
-            const { sourceRoleId, name, description, modifications = {}, clonedBy } = cloneData;
-
-            const sourceRole = await this.getRoleById(sourceRoleId);
-            if (!sourceRole) {
-                throw new Error('Source role not found');
-            }
-
-            // Get source permissions and apply modifications
-            let permissions = [...sourceRole.permissions];
-            
-            if (modifications.addPermissions) {
-                permissions = [...new Set([...permissions, ...modifications.addPermissions])];
-            }
-            
-            if (modifications.removePermissions) {
-                permissions = permissions.filter(p => !modifications.removePermissions.includes(p));
-            }
-
-            // Create cloned role
-            return this.createRole({
-                name,
-                description: description || `Cloned from ${sourceRole.name}`,
-                permissions,
-                isActive: true,
-                createdBy: clonedBy
-            });
-        } catch (error) {
-            this.logger.error('Error cloning role', error);
-            throw error;
-        }
-    }
-
-    // Private helper methods
-
-    async getRoleUserCount(roleId) {
-        return User.countDocuments({ role: roleId, status: 'active' });
-    }
-
-    async getRoleUsers(roleId) {
-        return User.find({ role: roleId, status: 'active' })
-            .select('email fullName status')
-            .limit(10)
-            .lean();
-    }
-
-    async updateRoleUsersPermissions(roleId, newPermissions, session) {
-        await User.updateMany(
-            { role: roleId },
-            {
-                $set: {
-                    permissions: newPermissions,
-                    'adminMetadata.permissionsUpdatedAt': new Date()
-                }
+  constructor() {
+    super();
+    this.serviceName = 'RoleManagementService';
+    this.cachePrefix = 'role-management';
+    this.auditCategory = 'ROLE_MANAGEMENT';
+    this.requiredPermission = AdminPermissions.SUPER_ADMIN.ROLE_MANAGEMENT;
+
+    // Predefined system roles that cannot be deleted
+    this.systemRoles = [
+      'super_admin',
+      'platform_admin',
+      'support_admin',
+      'org_owner',
+      'org_admin',
+      'org_member',
+      'guest'
+    ];
+
+    // Permission categories
+    this.permissionCategories = {
+      SYSTEM: 'system',
+      ORGANIZATION: 'organization',
+      USER: 'user',
+      BILLING: 'billing',
+      CONTENT: 'content',
+      API: 'api',
+      REPORTING: 'reporting'
+    };
+  }
+
+  /**
+   * Get all roles with detailed information
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} Paginated roles list
+   */
+  async getAllRoles(adminUser, options = {}) {
+    try {
+      await this.validateAccess(adminUser, 'read');
+
+      const {
+        page = 1,
+        limit = 20,
+        search = '',
+        category = null,
+        includeSystem = true,
+        includeCustom = true,
+        sortBy = 'priority',
+        sortOrder = 'asc'
+      } = options;
+
+      // Build query
+      const query = {};
+
+      if (search) {
+        query.$or = [
+          { name: new RegExp(search, 'i') },
+          { displayName: new RegExp(search, 'i') },
+          { description: new RegExp(search, 'i') }
+        ];
+      }
+
+      if (category) {
+        query.category = category;
+      }
+
+      if (!includeSystem) {
+        query.isSystem = false;
+      }
+
+      if (!includeCustom) {
+        query.isSystem = true;
+      }
+
+      // Execute query with pagination
+      const skip = (page - 1) * limit;
+      const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+
+      const [roles, totalCount] = await Promise.all([
+        Role.find(query)
+          .populate('permissions')
+          .populate('createdBy', 'email profile.firstName profile.lastName')
+          .populate('updatedBy', 'email profile.firstName profile.lastName')
+          .sort(sort)
+          .limit(limit)
+          .skip(skip),
+        Role.countDocuments(query)
+      ]);
+
+      // Enhance role data with usage statistics
+      const enhancedRoles = await Promise.all(
+        roles.map(async (role) => {
+          const [userCount, orgCount] = await Promise.all([
+            User.countDocuments({ 'role.primary': role.name }),
+            HostedOrganization.countDocuments({ 
+              'settings.defaultRoles': role.name 
+            })
+          ]);
+
+          return {
+            ...role.toObject(),
+            usage: {
+              users: userCount,
+              organizations: orgCount,
+              lastAssigned: await this.getLastAssignedDate(role.name)
             },
-            { session }
-        );
-    }
+            canDelete: !this.systemRoles.includes(role.name) && userCount === 0,
+            canModify: !role.isSystem || adminUser.permissions?.system?.includes('override')
+          };
+        })
+      );
 
-    formatPermissionName(permission) {
-        return permission
-            .split(':')
-            .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-            .join(' - ')
-            .replace(/_/g, ' ');
-    }
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLES_VIEWED, {
+        count: enhancedRoles.length,
+        filters: { search, category, includeSystem, includeCustom }
+      });
 
-    getPermissionDescription(permission) {
-        const descriptions = {
-            'users:read': 'View user information and lists',
-            'users:write': 'Create and update user accounts',
-            'users:delete': 'Delete user accounts',
-            'organizations:read': 'View organization information',
-            'organizations:write': 'Create and update organizations',
-            'organizations:delete': 'Delete organizations',
-            'billing:access': 'Access billing and payment information',
-            'security:access': 'Access security settings and logs',
-            'monitoring:access': 'Access system monitoring data',
-            'platform:read': 'View platform settings',
-            'platform:write': 'Modify platform settings',
-            'system:config:write': 'Modify system configuration',
-            'reports:access': 'Generate and view reports',
-            'support:read': 'View support tickets',
-            'support:write': 'Manage support tickets'
-        };
-
-        return descriptions[permission] || 'No description available';
-    }
-
-    getRoleNameById(roleId) {
-        if (ADMIN_ROLES[roleId]) {
-            return ADMIN_ROLES[roleId].name;
+      return {
+        roles: enhancedRoles,
+        pagination: {
+          page,
+          limit,
+          total: totalCount,
+          pages: Math.ceil(totalCount / limit)
+        },
+        metadata: {
+          systemRolesCount: await Role.countDocuments({ isSystem: true }),
+          customRolesCount: await Role.countDocuments({ isSystem: false }),
+          categories: await this.getRoleCategories()
         }
-        
-        // For custom roles, would need to fetch from DB
-        return roleId;
+      };
+
+    } catch (error) {
+      logger.error('Get all roles error', {
+        error: error.message,
+        adminId: adminUser.id,
+        stack: error.stack
+      });
+      throw error;
     }
+  }
+
+  /**
+   * Get detailed role information
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {string} roleId - Role ID or name
+   * @returns {Promise<Object>} Detailed role information
+   */
+  async getRoleDetails(adminUser, roleId) {
+    try {
+      await this.validateAccess(adminUser, 'read');
+
+      // Find role by ID or name
+      const role = await Role.findOne({
+        $or: [
+          { _id: mongoose.Types.ObjectId.isValid(roleId) ? roleId : null },
+          { name: roleId }
+        ]
+      })
+      .populate('permissions')
+      .populate('inheritedFrom')
+      .populate('createdBy', 'email profile')
+      .populate('updatedBy', 'email profile');
+
+      if (!role) {
+        throw new NotFoundError('Role not found');
+      }
+
+      // Get comprehensive role data
+      const [
+        userCount,
+        recentAssignments,
+        permissionMatrix,
+        auditHistory
+      ] = await Promise.all([
+        User.countDocuments({ 'role.primary': role.name }),
+        this.getRecentRoleAssignments(role.name, 10),
+        this.buildPermissionMatrix(role),
+        this.getRoleAuditHistory(role._id, 20)
+      ]);
+
+      const roleDetails = {
+        ...role.toObject(),
+        statistics: {
+          totalUsers: userCount,
+          activeUsers: await User.countDocuments({ 
+            'role.primary': role.name,
+            status: 'active'
+          }),
+          organizations: await HostedOrganization.countDocuments({
+            'settings.defaultRoles': role.name
+          })
+        },
+        recentAssignments,
+        permissionMatrix,
+        auditHistory,
+        metadata: {
+          isSystemRole: this.systemRoles.includes(role.name),
+          canDelete: !this.systemRoles.includes(role.name) && userCount === 0,
+          canModify: !role.isSystem || adminUser.permissions?.system?.includes('override'),
+          dependencies: await this.getRoleDependencies(role.name)
+        }
+      };
+
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_VIEWED, {
+        roleId: role._id,
+        roleName: role.name
+      });
+
+      return roleDetails;
+
+    } catch (error) {
+      logger.error('Get role details error', {
+        error: error.message,
+        adminId: adminUser.id,
+        roleId,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new custom role
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {Object} roleData - Role creation data
+   * @returns {Promise<Object>} Created role
+   */
+  async createRole(adminUser, roleData) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      await this.validateAccess(adminUser, 'create');
+
+      const {
+        name,
+        displayName,
+        description,
+        category = 'custom',
+        permissions = [],
+        inheritFrom = null,
+        priority = 100,
+        constraints = {},
+        metadata = {}
+      } = roleData;
+
+      // Validate role name
+      if (!name || !/^[a-z0-9_]+$/.test(name)) {
+        throw new ValidationError('Role name must contain only lowercase letters, numbers, and underscores');
+      }
+
+      // Check if role already exists
+      const existingRole = await Role.findOne({ name }).session(session);
+      if (existingRole) {
+        throw new ConflictError(`Role with name '${name}' already exists`);
+      }
+
+      // Validate and process permissions
+      const processedPermissions = await this.validateAndProcessPermissions(
+        permissions,
+        inheritFrom,
+        session
+      );
+
+      // Create role object
+      const newRole = new Role({
+        name,
+        displayName: displayName || name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        description,
+        category,
+        permissions: processedPermissions.permissionIds,
+        inheritedFrom: inheritFrom ? await this.resolveRoleId(inheritFrom, session) : null,
+        priority,
+        constraints: {
+          maxUsers: constraints.maxUsers || null,
+          requireMFA: constraints.requireMFA || false,
+          requireEmailVerification: constraints.requireEmailVerification || true,
+          ipWhitelist: constraints.ipWhitelist || [],
+          timeRestrictions: constraints.timeRestrictions || null,
+          geographicRestrictions: constraints.geographicRestrictions || null
+        },
+        metadata: {
+          ...metadata,
+          source: 'admin_created',
+          createdVia: 'super_admin_panel'
+        },
+        isSystem: false,
+        isActive: true,
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id
+      });
+
+      await newRole.save({ session });
+
+      // Clear role-related caches
+      await this.clearRoleCaches();
+
+      // Create admin action log
+      await AdminActionLog.create([{
+        actionId: crypto.randomUUID(),
+        adminUserId: adminUser.id,
+        action: 'ROLE_CREATED',
+        category: 'ROLE_MANAGEMENT',
+        severity: 'MEDIUM',
+        targetResource: {
+          type: 'role',
+          id: newRole._id,
+          name: newRole.name
+        },
+        data: {
+          role: newRole.toObject(),
+          permissionCount: processedPermissions.permissionIds.length
+        }
+      }], { session });
+
+      // Log audit event
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_CREATED, {
+        roleId: newRole._id,
+        roleName: newRole.name,
+        category,
+        permissionCount: processedPermissions.permissionIds.length
+      }, { session, critical: false });
+
+      // Send notification to other admins
+      await NotificationService.notifyAdmins({
+        type: 'role_created',
+        priority: 'medium',
+        data: {
+          roleName: newRole.displayName,
+          createdBy: `${adminUser.profile?.firstName || ''} ${adminUser.profile?.lastName || ''}`.trim() || adminUser.email,
+          category
+        }
+      });
+
+      await session.commitTransaction();
+
+      // Return populated role
+      const populatedRole = await Role.findById(newRole._id)
+        .populate('permissions')
+        .populate('inheritedFrom');
+
+      return {
+        role: populatedRole,
+        message: 'Role created successfully',
+        warnings: processedPermissions.warnings
+      };
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error('Create role error', {
+        error: error.message,
+        adminId: adminUser.id,
+        roleName: roleData.name,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Update an existing role
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {string} roleId - Role ID or name
+   * @param {Object} updateData - Role update data
+   * @returns {Promise<Object>} Updated role
+   */
+  async updateRole(adminUser, roleId, updateData) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      await this.validateAccess(adminUser, 'update');
+
+      // Find role
+      const role = await Role.findOne({
+        $or: [
+          { _id: mongoose.Types.ObjectId.isValid(roleId) ? roleId : null },
+          { name: roleId }
+        ]
+      }).session(session);
+
+      if (!role) {
+        throw new NotFoundError('Role not found');
+      }
+
+      // Check if role can be modified
+      if (role.isSystem && !adminUser.permissions?.system?.includes('override')) {
+        throw new ForbiddenError('System roles cannot be modified without override permission');
+      }
+
+      // Store original state for comparison
+      const originalRole = role.toObject();
+
+      // Update allowed fields
+      const allowedUpdates = [
+        'displayName',
+        'description',
+        'permissions',
+        'priority',
+        'constraints',
+        'metadata',
+        'isActive'
+      ];
+
+      const updates = {};
+      let permissionsUpdated = false;
+
+      for (const field of allowedUpdates) {
+        if (updateData[field] !== undefined) {
+          if (field === 'permissions') {
+            // Special handling for permissions
+            const processedPermissions = await this.validateAndProcessPermissions(
+              updateData.permissions,
+              role.inheritedFrom,
+              session
+            );
+            updates.permissions = processedPermissions.permissionIds;
+            permissionsUpdated = true;
+          } else if (field === 'constraints') {
+            // Merge constraints
+            updates.constraints = {
+              ...role.constraints,
+              ...updateData.constraints
+            };
+          } else {
+            updates[field] = updateData[field];
+          }
+        }
+      }
+
+      // Apply updates
+      Object.assign(role, updates);
+      role.updatedBy = adminUser.id;
+      role.updatedAt = new Date();
+
+      await role.save({ session });
+
+      // If permissions were updated, check affected users
+      let affectedUsers = [];
+      if (permissionsUpdated) {
+        affectedUsers = await this.handlePermissionChanges(
+          role,
+          originalRole.permissions,
+          updates.permissions,
+          session
+        );
+      }
+
+      // Clear caches
+      await this.clearRoleCaches();
+      if (affectedUsers.length > 0) {
+        await this.clearUserPermissionCaches(affectedUsers);
+      }
+
+      // Create detailed change log
+      const changes = this.compareRoleChanges(originalRole, role.toObject());
+
+      await AdminActionLog.create([{
+        actionId: crypto.randomUUID(),
+        adminUserId: adminUser.id,
+        action: 'ROLE_UPDATED',
+        category: 'ROLE_MANAGEMENT',
+        severity: permissionsUpdated ? 'HIGH' : 'MEDIUM',
+        targetResource: {
+          type: 'role',
+          id: role._id,
+          name: role.name
+        },
+        data: {
+          changes,
+          affectedUsers: affectedUsers.length,
+          originalRole: this.sanitizeRoleForLog(originalRole),
+          updatedRole: this.sanitizeRoleForLog(role.toObject())
+        }
+      }], { session });
+
+      // Log audit event
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_UPDATED, {
+        roleId: role._id,
+        roleName: role.name,
+        changes: Object.keys(changes),
+        affectedUsers: affectedUsers.length
+      }, { 
+        session, 
+        critical: permissionsUpdated && affectedUsers.length > 10 
+      });
+
+      // Notify affected users if significant changes
+      if (permissionsUpdated && affectedUsers.length > 0) {
+        await this.notifyAffectedUsers(role, changes, affectedUsers);
+      }
+
+      await session.commitTransaction();
+
+      // Return updated role
+      const updatedRole = await Role.findById(role._id)
+        .populate('permissions')
+        .populate('inheritedFrom');
+
+      return {
+        role: updatedRole,
+        changes,
+        affectedUsers: affectedUsers.length,
+        message: 'Role updated successfully'
+      };
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error('Update role error', {
+        error: error.message,
+        adminId: adminUser.id,
+        roleId,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Delete a custom role
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {string} roleId - Role ID or name
+   * @param {Object} options - Deletion options
+   * @returns {Promise<Object>} Deletion result
+   */
+  async deleteRole(adminUser, roleId, options = {}) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      await this.validateAccess(adminUser, 'delete');
+
+      const { 
+        reassignTo = null,
+        force = false,
+        reason = 'Administrative action'
+      } = options;
+
+      // Find role
+      const role = await Role.findOne({
+        $or: [
+          { _id: mongoose.Types.ObjectId.isValid(roleId) ? roleId : null },
+          { name: roleId }
+        ]
+      }).session(session);
+
+      if (!role) {
+        throw new NotFoundError('Role not found');
+      }
+
+      // Check if role can be deleted
+      if (this.systemRoles.includes(role.name)) {
+        throw new ForbiddenError('System roles cannot be deleted');
+      }
+
+      if (role.isSystem && !force) {
+        throw new ForbiddenError('System-marked roles require force flag to delete');
+      }
+
+      // Check for existing users
+      const userCount = await User.countDocuments({ 
+        'role.primary': role.name 
+      }).session(session);
+
+      if (userCount > 0 && !reassignTo) {
+        throw new ValidationError(
+          `Cannot delete role with ${userCount} assigned users. Provide reassignTo option.`
+        );
+      }
+
+      // Handle user reassignment if needed
+      let reassignedUsers = [];
+      if (userCount > 0 && reassignTo) {
+        // Validate target role
+        const targetRole = await Role.findOne({
+          $or: [
+            { _id: mongoose.Types.ObjectId.isValid(reassignTo) ? reassignTo : null },
+            { name: reassignTo }
+          ]
+        }).session(session);
+
+        if (!targetRole) {
+          throw new NotFoundError('Target role for reassignment not found');
+        }
+
+        // Reassign users
+        const updateResult = await User.updateMany(
+          { 'role.primary': role.name },
+          {
+            $set: {
+              'role.primary': targetRole.name,
+              'role.updatedAt': new Date(),
+              'role.updatedBy': adminUser.id,
+              'role.reassignedFrom': role.name
+            }
+          },
+          { session }
+        );
+
+        reassignedUsers = await User.find({ 
+          'role.primary': targetRole.name,
+          'role.reassignedFrom': role.name
+        })
+        .select('_id email')
+        .session(session);
+      }
+
+      // Remove role from organization defaults
+      await HostedOrganization.updateMany(
+        { 'settings.defaultRoles': role.name },
+        { $pull: { 'settings.defaultRoles': role.name } },
+        { session }
+      );
+
+      // Soft delete or hard delete based on configuration
+      if (config.platform.softDelete) {
+        role.deleted = true;
+        role.deletedAt = new Date();
+        role.deletedBy = adminUser.id;
+        role.deletionReason = reason;
+        await role.save({ session });
+      } else {
+        await role.deleteOne({ session });
+      }
+
+      // Clear caches
+      await this.clearRoleCaches();
+      if (reassignedUsers.length > 0) {
+        await this.clearUserPermissionCaches(reassignedUsers.map(u => u._id));
+      }
+
+      // Create deletion record
+      await AdminActionLog.create([{
+        actionId: crypto.randomUUID(),
+        adminUserId: adminUser.id,
+        action: 'ROLE_DELETED',
+        category: 'ROLE_MANAGEMENT',
+        severity: 'HIGH',
+        targetResource: {
+          type: 'role',
+          id: role._id,
+          name: role.name
+        },
+        data: {
+          roleData: this.sanitizeRoleForLog(role.toObject()),
+          reassignedTo: reassignTo,
+          reassignedCount: reassignedUsers.length,
+          reason,
+          force
+        }
+      }], { session });
+
+      // Log audit event
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_DELETED, {
+        roleId: role._id,
+        roleName: role.name,
+        reassignedUsers: reassignedUsers.length,
+        reason
+      }, { session, critical: true });
+
+      // Notify reassigned users
+      if (reassignedUsers.length > 0) {
+        await this.notifyReassignedUsers(
+          reassignedUsers,
+          role.displayName,
+          reassignTo
+        );
+      }
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        deletedRole: {
+          id: role._id,
+          name: role.name,
+          displayName: role.displayName
+        },
+        reassignedUsers: reassignedUsers.length,
+        message: `Role deleted successfully. ${reassignedUsers.length} users reassigned.`
+      };
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error('Delete role error', {
+        error: error.message,
+        adminId: adminUser.id,
+        roleId,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Clone an existing role
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {string} sourceRoleId - Source role ID or name
+   * @param {Object} cloneData - Clone configuration
+   * @returns {Promise<Object>} Cloned role
+   */
+  async cloneRole(adminUser, sourceRoleId, cloneData) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      await this.validateAccess(adminUser, 'create');
+
+      const {
+        name,
+        displayName,
+        description,
+        modifyPermissions = {}
+      } = cloneData;
+
+      // Find source role
+      const sourceRole = await Role.findOne({
+        $or: [
+          { _id: mongoose.Types.ObjectId.isValid(sourceRoleId) ? sourceRoleId : null },
+          { name: sourceRoleId }
+        ]
+      })
+      .populate('permissions')
+      .session(session);
+
+      if (!sourceRole) {
+        throw new NotFoundError('Source role not found');
+      }
+
+      // Validate new role name
+      if (!name || !/^[a-z0-9_]+$/.test(name)) {
+        throw new ValidationError('Role name must contain only lowercase letters, numbers, and underscores');
+      }
+
+      // Check if role name already exists
+      const existingRole = await Role.findOne({ name }).session(session);
+      if (existingRole) {
+        throw new ConflictError(`Role with name '${name}' already exists`);
+      }
+
+      // Clone permissions with modifications
+      let clonedPermissions = [...sourceRole.permissions];
+      
+      if (modifyPermissions.add && modifyPermissions.add.length > 0) {
+        const addPermissions = await Permission.find({
+          _id: { $in: modifyPermissions.add }
+        }).session(session);
+        clonedPermissions.push(...addPermissions);
+      }
+
+      if (modifyPermissions.remove && modifyPermissions.remove.length > 0) {
+        clonedPermissions = clonedPermissions.filter(
+          p => !modifyPermissions.remove.includes(p._id.toString())
+        );
+      }
+
+      // Create cloned role
+      const clonedRole = new Role({
+        name,
+        displayName: displayName || `${sourceRole.displayName} (Clone)`,
+        description: description || `Cloned from ${sourceRole.displayName}`,
+        category: sourceRole.category,
+        permissions: clonedPermissions.map(p => p._id),
+        inheritedFrom: sourceRole.inheritedFrom,
+        priority: sourceRole.priority + 1,
+        constraints: { ...sourceRole.constraints },
+        metadata: {
+          ...sourceRole.metadata,
+          clonedFrom: sourceRole._id,
+          clonedAt: new Date()
+        },
+        isSystem: false,
+        isActive: true,
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id
+      });
+
+      await clonedRole.save({ session });
+
+      // Clear caches
+      await this.clearRoleCaches();
+
+      // Log action
+      await AdminActionLog.create([{
+        actionId: crypto.randomUUID(),
+        adminUserId: adminUser.id,
+        action: 'ROLE_CLONED',
+        category: 'ROLE_MANAGEMENT',
+        severity: 'MEDIUM',
+        targetResource: {
+          type: 'role',
+          id: clonedRole._id,
+          name: clonedRole.name
+        },
+        data: {
+          sourceRole: {
+            id: sourceRole._id,
+            name: sourceRole.name
+          },
+          modifications: modifyPermissions
+        }
+      }], { session });
+
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_CLONED, {
+        sourceRoleId: sourceRole._id,
+        sourceRoleName: sourceRole.name,
+        clonedRoleId: clonedRole._id,
+        clonedRoleName: clonedRole.name
+      }, { session });
+
+      await session.commitTransaction();
+
+      // Return populated cloned role
+      const populatedRole = await Role.findById(clonedRole._id)
+        .populate('permissions')
+        .populate('inheritedFrom');
+
+      return {
+        role: populatedRole,
+        message: 'Role cloned successfully',
+        source: {
+          id: sourceRole._id,
+          name: sourceRole.name,
+          displayName: sourceRole.displayName
+        }
+      };
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error('Clone role error', {
+        error: error.message,
+        adminId: adminUser.id,
+        sourceRoleId,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Bulk assign role to multiple users
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {string} roleId - Role ID or name
+   * @param {Array} userIds - Array of user IDs
+   * @param {Object} options - Assignment options
+   * @returns {Promise<Object>} Assignment result
+   */
+  async bulkAssignRole(adminUser, roleId, userIds, options = {}) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      await this.validateAccess(adminUser, 'assign');
+
+      const {
+        notifyUsers = true,
+        reason = 'Administrative role assignment',
+        effectiveDate = new Date(),
+        expiryDate = null
+      } = options;
+
+      // Validate inputs
+      if (!Array.isArray(userIds) || userIds.length === 0) {
+        throw new ValidationError('User IDs must be a non-empty array');
+      }
+
+      if (userIds.length > AdminLimits.BULK_OPERATIONS.MAX_USERS) {
+        throw new ValidationError(`Cannot assign role to more than ${AdminLimits.BULK_OPERATIONS.MAX_USERS} users at once`);
+      }
+
+      // Find role
+      const role = await Role.findOne({
+        $or: [
+          { _id: mongoose.Types.ObjectId.isValid(roleId) ? roleId : null },
+          { name: roleId }
+        ]
+      }).session(session);
+
+      if (!role) {
+        throw new NotFoundError('Role not found');
+      }
+
+      // Find all users
+      const users = await User.find({
+        _id: { $in: userIds },
+        status: { $ne: 'deleted' }
+      }).session(session);
+
+      if (users.length !== userIds.length) {
+        throw new ValidationError(`Found only ${users.length} valid users out of ${userIds.length} provided`);
+      }
+
+      // Process assignments
+      const results = {
+        successful: [],
+        failed: [],
+        skipped: []
+      };
+
+      for (const user of users) {
+        try {
+          // Check if user already has this role
+          if (user.role.primary === role.name) {
+            results.skipped.push({
+              userId: user._id,
+              email: user.email,
+              reason: 'Already has this role'
+            });
+            continue;
+          }
+
+          // Store previous role
+          const previousRole = user.role.primary;
+
+          // Update user role
+          user.role = {
+            primary: role.name,
+            secondary: user.role.secondary || [],
+            assignedBy: adminUser.id,
+            assignedAt: effectiveDate,
+            expiresAt: expiryDate,
+            previousRole: previousRole,
+            assignmentReason: reason
+          };
+
+          user.updatedBy = adminUser.id;
+          await user.save({ session });
+
+          results.successful.push({
+            userId: user._id,
+            email: user.email,
+            previousRole,
+            newRole: role.name
+          });
+
+        } catch (error) {
+          results.failed.push({
+            userId: user._id,
+            email: user.email,
+            error: error.message
+          });
+        }
+      }
+
+      // Clear user permission caches
+      if (results.successful.length > 0) {
+        await this.clearUserPermissionCaches(
+          results.successful.map(r => r.userId)
+        );
+      }
+
+      // Create bulk assignment record
+      await AdminActionLog.create([{
+        actionId: crypto.randomUUID(),
+        adminUserId: adminUser.id,
+        action: 'ROLE_BULK_ASSIGNED',
+        category: 'ROLE_MANAGEMENT',
+        severity: 'HIGH',
+        targetResource: {
+          type: 'role',
+          id: role._id,
+          name: role.name
+        },
+        data: {
+          totalUsers: userIds.length,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          skipped: results.skipped.length,
+          reason,
+          effectiveDate,
+          expiryDate
+        }
+      }], { session });
+
+      // Log audit event
+      await this.auditLog(adminUser, AdminEvents.ROLE_MANAGEMENT.ROLE_BULK_ASSIGNED, {
+        roleId: role._id,
+        roleName: role.name,
+        totalUsers: userIds.length,
+        successful: results.successful.length,
+        failed: results.failed.length
+      }, { session, critical: true });
+
+      // Send notifications if enabled
+      if (notifyUsers && results.successful.length > 0) {
+        await this.notifyRoleAssignment(
+          results.successful,
+          role,
+          reason
+        );
+      }
+
+      await session.commitTransaction();
+
+      return {
+        role: {
+          id: role._id,
+          name: role.name,
+          displayName: role.displayName
+        },
+        results,
+        summary: {
+          total: userIds.length,
+          successful: results.successful.length,
+          failed: results.failed.length,
+          skipped: results.skipped.length
+        },
+        message: `Role assigned to ${results.successful.length} users successfully`
+      };
+
+    } catch (error) {
+      await session.abortTransaction();
+      logger.error('Bulk assign role error', {
+        error: error.message,
+        adminId: adminUser.id,
+        roleId,
+        userCount: userIds.length,
+        stack: error.stack
+      });
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  /**
+   * Get role assignment history
+   * @param {Object} adminUser - Authenticated super admin user
+   * @param {Object} options - Query options
+   * @returns {Promise<Object>} Assignment history
+   */
+  async getRoleAssignmentHistory(adminUser, options = {}) {
+    try {
+      await this.validateAccess(adminUser, 'read');
+
+      const {
+        roleId = null,
+        userId = null,
+        startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        endDate = new Date(),
+        page = 1,
+        limit = 50
+      } = options;
+
+      // Build query
+      const query = {
+        action: { $in: ['ROLE_ASSIGNED', 'ROLE_BULK_ASSIGNED', 'ROLE_REMOVED'] },
+        timestamp: { $gte: startDate, $lte: endDate }
+      };
+
+      if (roleId) {
+        query['targetResource.id'] = roleId;
+      }
+
+      if (userId) {
+        query['data.userId'] = userId;
+      }
+
+      // Execute query
+      const skip = (page - 1) * limit;
+
+      const [history, totalCount] = await Promise.all([
+        AdminActionLog.find(query)
+          .populate('adminUserId', 'email profile')
+          .sort({ timestamp: -1 })
+          .limit(limit)
+          .skip(skip),
+        AdminActionLog.countDocuments(query)
+      ]);
+
+      return {
+        history: history.map(entry => ({
+          id: entry._id,
+          action: entry.action,
+          admin: {
+            id: entry.adminUserId._id,
+            email: entry.adminUserId.email,
+            name: `${entry.adminUserId.profile?.firstName || ''} ${entry.adminUserId.profile?.lastName || ''}`.trim()
+          },
+          role: entry.targetResource,
+          data: entry.data,
+          timestamp: entry.timestamp
+        })),
+        pagination: {
+          page,
+          limit,
+          total: totalCount,
+          pages: Math.ceil(totalCount / limit)
+        }
+      };
+
+    } catch (error) {
+      logger.error('Get role assignment history error', {
+        error: error.message,
+        adminId: adminUser.id,
+        stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Validate access for role management operations
+   * @param {Object} user - User to validate
+   * @param {string} action - Action to perform
+   * @private
+   */
+  async validateAccess(user, action) {
+    const hasPermission = await this.checkPermission(
+      user,
+      this.requiredPermission,
+      action
+    );
+
+    if (!hasPermission) {
+      await this.auditLog(user, AdminEvents.ROLE_MANAGEMENT.UNAUTHORIZED_ACCESS, {
+        attemptedAction: action,
+        permission: this.requiredPermission
+      });
+      throw new ForbiddenError(`Insufficient permissions for role management: ${action}`);
+    }
+
+    // Additional MFA check for critical operations
+    const criticalActions = ['create', 'update', 'delete', 'assign'];
+    if (criticalActions.includes(action) && user.security?.requireMFA && !user.auth?.mfaVerified) {
+      throw new ForbiddenError('MFA verification required for this operation');
+    }
+  }
+
+  /**
+   * Validate and process permissions
+   * @param {Array} permissions - Permission IDs or objects
+   * @param {string} inheritFrom - Role to inherit from
+   * @param {Object} session - Database session
+   * @returns {Promise<Object>} Processed permissions
+   * @private
+   */
+  async validateAndProcessPermissions(permissions, inheritFrom, session) {
+    const processedPermissions = {
+      permissionIds: [],
+      warnings: []
+    };
+
+    // Get inherited permissions if applicable
+    if (inheritFrom) {
+      const parentRole = await Role.findById(inheritFrom)
+        .populate('permissions')
+        .session(session);
+
+      if (parentRole) {
+        processedPermissions.permissionIds.push(
+          ...parentRole.permissions.map(p => p._id)
+        );
+      }
+    }
+
+    // Process provided permissions
+    for (const permission of permissions) {
+      const permissionId = typeof permission === 'string' ? permission : permission._id;
+
+      // Validate permission exists
+      const permissionDoc = await Permission.findById(permissionId).session(session);
+      if (!permissionDoc) {
+        processedPermissions.warnings.push(`Permission ${permissionId} not found`);
+        continue;
+      }
+
+      // Check for dangerous permissions
+      if (permissionDoc.resource.includes('super_admin') || permissionDoc.actions.includes('*')) {
+        processedPermissions.warnings.push(
+          `Permission ${permissionDoc.resource} grants elevated access`
+        );
+      }
+
+      processedPermissions.permissionIds.push(permissionDoc._id);
+    }
+
+    // Remove duplicates
+    processedPermissions.permissionIds = [
+      ...new Set(processedPermissions.permissionIds.map(id => id.toString()))
+    ].map(id => mongoose.Types.ObjectId(id));
+
+    return processedPermissions;
+  }
+
+  /**
+   * Additional helper methods for role management
+   * These would include various utility functions for:
+   * - Permission matrix building
+   * - Role comparison
+   * - Cache management
+   * - Notification handling
+   * - Audit history retrieval
+   * - etc.
+   */
 }
 
-module.exports = RoleManagementService;
+module.exports = new RoleManagementService();
