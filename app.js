@@ -40,6 +40,7 @@ const organizationRoutes = require('./server/organization-tenants/routes/organiz
 const roleConversionRoutes = require('./server/shared/auth/routes/role-conversion-routes');
 
 // Import domain apps
+const coreBusiness = require('./server/core-business/app');
 const hostedOrganizations = require('./server/hosted-organizations/app');
 
 // Middleware imports
@@ -386,7 +387,7 @@ class Application {
         // 4.5 Role Conversion Routes (Prospect to Client, Admin Role Management)
         this.app.use(`${baseApiPath}/role-conversion`, roleConversionRoutes);
         // 5. Core Business Domain Routes
-        // this.app.use(`${baseApiPath}/core-business`, coreBusiness);
+        this.app.use(`${baseApiPath}/core-business`, coreBusiness);
         // 6. Hosted Organizations Domain Routes
         this.app.use(`${baseApiPath}/hosted-organizations`, hostedOrganizations);
         // 7. Recruitment Services Domain Routes

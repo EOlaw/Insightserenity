@@ -5,14 +5,14 @@
  */
 
 const Client = require('../models/client-model');
-const { AppError } = require('../../shared/utils/app-error');
-const logger = require('../../shared/utils/logger');
+const { AppError } = require('../../../shared/utils/app-error');
+const logger = require('../../../shared/utils/logger');
 const mongoose = require('mongoose');
-const { sendEmail } = require('../../shared/services/email-service');
+const { sendEmail } = require('../../../shared/services/email-service');
 const { generatePDF } = require('../../../shared/utils/pdf-generator');
-const { validateVAT } = require('../../shared/utils/vat-validator');
-const { geocodeAddress } = require('../../shared/utils/geocoder');
-const { checkSanctions } = require('../../shared/utils/sanctions-checker');
+const { validateVAT } = require('../../../shared/utils/vat-validator');
+const { geocodeAddress } = require('../../../shared/utils/geocoder');
+const { checkSanctions } = require('../../../shared/utils/sanctions-checker');
 
 class ClientService {
   /**
