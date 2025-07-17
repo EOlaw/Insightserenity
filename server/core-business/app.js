@@ -39,11 +39,11 @@ app.use(express.json({ limit: config.app.requestLimit || '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: config.app.requestLimit || '10mb' }));
 
 // Import route modules
+// const clientRoutes = require('./clients/routes/client-routes');
 // const consultantRoutes = require('./consultants/routes/consultant-routes');
 // const projectRoutes = require('./projects/routes/project-routes');
 // const teamRoutes = require('./teams/routes/team-routes');
 // const serviceRoutes = require('./services/routes/service-routes');
-const clientRoutes = require('./clients/routes/client-routes');
 // const proposalRoutes = require('./proposals/routes/proposal-routes');
 // const contractRoutes = require('./contracts/routes/contract-routes');
 // const deliverableRoutes = require('./deliverables/routes/deliverable-routes');
@@ -55,12 +55,12 @@ const clientRoutes = require('./clients/routes/client-routes');
 // const trainingRoutes = require('./training/routes/training-routes');
 
 // Core business middleware
-const { checkBusinessContext } = require('../shared/middleware/business-context');
-const { enforceBusinessRules } = require('./middleware/business-rules');
-const { auditLog } = require('../shared/middleware/audit-middleware');
+// const { checkBusinessContext } = require('../shared/middleware/business-context');
+// const { enforceBusinessRules } = require('./middleware/business-rules');
+// const { auditLog } = require('../shared/middleware/audit-middleware');
 
 // Apply business context middleware
-app.use(checkBusinessContext);
+// app.use(checkBusinessContext);
 
 // Health check for this module
 app.get('/health', (req, res) => {
@@ -97,7 +97,7 @@ logger.info('Core Business module initialized', {
 // app.use('/consultants', consultantRoutes);
 
 // 2. Client Management (Who we serve)
-app.use('/clients', clientRoutes);
+// app.use('/clients', clientRoutes);
 
 // // 3. Service Catalog (What we offer)
 // app.use('/services', serviceRoutes);
@@ -134,10 +134,10 @@ app.use('/clients', clientRoutes);
 // app.use('/training', trainingRoutes);
 
 // Apply audit logging to all routes
-app.use(auditLog('core-business'));
+// app.use(auditLog('core-business'));
 
 // Business rules enforcement
-app.use(enforceBusinessRules);
+// app.use(enforceBusinessRules);
 
 // Module-specific error handling
 app.use((err, req, res, next) => {

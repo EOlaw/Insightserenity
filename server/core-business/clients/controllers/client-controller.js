@@ -5,11 +5,11 @@
  */
 
 const ClientService = require('../services/client-service');
-const { AppError } = require('../../shared/utils/app-error');
-const { catchAsync } = require('../../shared/utils/catch-async');
-const { sanitizeQuery } = require('../../shared/utils/sanitizers');
-const logger = require('../../shared/utils/logger');
-const { uploadToS3 } = require('../../shared/utils/file-upload');
+const { AppError } = require('../../../shared/utils/app-error');
+const { catchAsync } = require('../../../shared/utils/catch-async');
+const { sanitizeQuery } = require('../../../shared/utils/sanitizers');
+const logger = require('../../../shared/utils/logger');
+const { uploadToS3 } = require('../../../shared/utils/file-upload');
 
 class ClientController {
   /**
